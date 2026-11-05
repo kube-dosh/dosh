@@ -1,0 +1,83 @@
+{{- $networkPolicy := .Values.networkPolicy | default dict }}
+{{- if $networkPolicy.enabled }}
+{{- $dns := $networkPolicy.dns | default dict }}
+{{- $apiServer := $networkPolicy.apiServer | default dict }}
+{{- $cilium := $networkPolicy.ciliumApiServer | default dict }}
+{{- $ciliumApiServer := or $cilium.enabled (and $cilium.autoDetect ($.Capabilities.APIVersions.Has "cilium.io/v2")) }}
+{{- $webhook := $networkPolicy.webhook | default dict }}
+{{- $oidc := $networkPolicy.oidc | default dict }}
+{{- $authMode := include "dosh.authMode" . }}
+{{- if and $.Values.audit.webhook.enabled (not $webhook.ipBlocks) }}
+{{- fail "networkPolicy.webhook.ipBlocks is required when audit.webhook.enabled=true and networkPolicy.enabled=true" }}
+{{- end }}
+{{- if and (eq $authMode "oidc") (not $oidc.ipBlocks) }}
+{{- fail "networkPolicy.oidc.ipBlocks is required when auth.mode=oidc and networkPolicy.enabled=true" }}
+{{- end }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "dosh.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "dosh.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "dosh.selectorLabels" . | nindent 6 }}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - ports:
+        - protocol: TCP
+          port: {{ $networkPolicy.ingressPort | default 32626 }}
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ $dns.namespace | default "kube-system" }}
+          podSelector:
+            matchLabels:
+              {{- toYaml ($dns.podLabels | default (dict "k8s-app" "kube-dns")) | nindent 14 }}
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    {{- if eq $authMode "oidc" }}
+    - to:
+        {{- range ($oidc.ipBlocks | default (list)) }}
+        - ipBlock:
+            cidr: {{ . }}
+        {{- end }}
+      ports:
+        {{- range ($oidc.ports | default (list 443)) }}
+        - protocol: TCP
+          port: {{ . }}
+        {{- end }}
+    {{- end }}
+    {{- if $.Values.audit.webhook.enabled }}
+    - to:
+        {{- range ($webhook.ipBlocks | default (list)) }}
+        - ipBlock:
+            cidr: {{ . }}
+        {{- end }}
+      ports:
+        {{- range ($webhook.ports | default (list 443)) }}
+        - protocol: TCP
+          port: {{ . }}
+        {{- end }}
+    {{- end }}
+    {{- if not $ciliumApiServer }}
+    - to:
+        {{- range ($apiServer.ipBlocks | default (list "0.0.0.0/0")) }}
+        - ipBlock:
+            cidr: {{ . }}
+        {{- end }}
+      ports:
+        {{- range ($apiServer.ports | default (list 443 6443 16443)) }}
+        - protocol: TCP
+          port: {{ . }}
+        {{- end }}
+    {{- end }}
+{{- end }}

@@ -1,0 +1,15 @@
+schema=dosh-documentation-binding-v1
+created_at=2026-11-05T01:46:36Z
+candidate_digest=sha256:c114113009ddad67313f37c288fe4cc6f7d13848de01d22dd68499146744ea2b
+documentation_version=v2.47-final-token-r1
+binding_scope=v2.47-default-kubernetes-token-http-https-rbac-and-isolated-acceptance
+source_binding=deploy/release/bindings/source-binding-v247-token.txt
+source_binding_sha256=74556c0cfbc8d7b66d8c960541dfa5bf8192d972d147a63a5aba6e38ac2f22c7
+evidence_archive=/var/lib/dosh/evidence/c114113009dd/20261105T014514Z-v247-final-token-r1
+evidence_archive_manifest_sha256=734cbdbc10b15e4d48f56665eed24e5e170ec68622ce8a5390b0a92114570005
+
+[sha256]
+160cb9f865545d8a414648152bbdb96e5c9dfb0534fd0627d57b5599791b05f1  README.md
+ff31b6dff69800fac34afd3b3a8eaf9148703dc321903e529abcf7cf7c3db2dc  docs/ears-implementation-plan.md
+d482574fd36a75e10a8feb9c28439e4fb00af09bce62ba6cbaf1c757b7247b3b  docs/operations-runbook.md
+5ade13c8cbd8ae13e85974dfac6012a8241099b2f50161d12837e26f5f67f9bd  deploy/release/README.md

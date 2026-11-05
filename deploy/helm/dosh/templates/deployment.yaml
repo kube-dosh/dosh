@@ -1,0 +1,294 @@
+{{- $authMode := include "dosh.authMode" . -}}
+{{- $oidc := .Values.auth.oidc | default dict -}}
+{{- $imageDigest := .Values.image.digest | default "" -}}
+{{- if .Values.tls.enabled -}}
+{{- $_ := required "tls.existingSecret is required when tls.enabled=true" .Values.tls.existingSecret -}}
+{{- $_ = required "tls.certFile is required when tls.enabled=true" .Values.tls.certFile -}}
+{{- $_ = required "tls.keyFile is required when tls.enabled=true" .Values.tls.keyFile -}}
+{{- end -}}
+{{- if and $imageDigest (not (regexMatch "^sha256:[a-fA-F0-9]{64}$" $imageDigest)) -}}
+{{- fail "image.digest must be sha256:<64 hex characters>" -}}
+{{- end -}}
+{{- if eq $authMode "oidc" -}}
+{{- $issuer := required "auth.oidc.issuer is required when auth.mode=oidc" $oidc.issuer -}}
+{{- if not (hasPrefix "https://" $issuer) -}}
+{{- fail "auth.oidc.issuer must be an absolute https:// URL" -}}
+{{- end -}}
+{{- $redirectURL := required "auth.oidc.redirectURL is required when auth.mode=oidc" $oidc.redirectURL -}}
+{{- if not (hasPrefix "https://" $redirectURL) -}}
+{{- fail "auth.oidc.redirectURL must be an absolute https:// URL" -}}
+{{- end -}}
+{{- $_ := required "auth.oidc.clientID is required when auth.mode=oidc" $oidc.clientID -}}
+{{- $_ = required "auth.oidc.existingSecret is required when auth.mode=oidc" $oidc.existingSecret -}}
+{{- if not (has "openid" ($oidc.scopes | default (list "openid"))) -}}
+{{- fail "auth.oidc.scopes must include openid" -}}
+{{- end -}}
+{{- end -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "dosh.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "dosh.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  revisionHistoryLimit: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      {{- include "dosh.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "dosh.selectorLabels" . | nindent 8 }}
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      annotations:
+        checksum/config: {{ toYaml .Values | sha256sum }}
+        {{- if .Values.tls.enabled }}
+        checksum/tls-secret: {{ (lookup "v1" "Secret" .Release.Namespace .Values.tls.existingSecret).data | toYaml | sha256sum | quote }}
+        {{- end }}
+        checksum/auth-secret: {{ (lookup "v1" "Secret" .Release.Namespace .Values.auth.existingSecret).data | toYaml | sha256sum | quote }}
+        {{- if and (eq $authMode "oidc") $oidc.ca.existingConfigMap }}
+        checksum/oidc-ca: {{ (lookup "v1" "ConfigMap" .Release.Namespace $oidc.ca.existingConfigMap).data | toYaml | sha256sum | quote }}
+        {{- end }}
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      serviceAccountName: {{ include "dosh.serviceAccountName" . }}
+      automountServiceAccountToken: true
+      enableServiceLinks: false
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        {{- toYaml .Values.securityContext | nindent 8 }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- if .Values.antiAffinity.required }}
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels:
+                  {{- include "dosh.selectorLabels" . | nindent 18 }}
+              topologyKey: kubernetes.io/hostname
+      {{- end }}
+      {{- with .Values.topologySpreadConstraints }}
+      topologySpreadConstraints:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: dosh
+          image: "{{ if $imageDigest }}{{ .Values.image.repository }}@{{ $imageDigest }}{{ else }}{{ .Values.image.repository }}:{{ .Values.image.tag }}{{ end }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.containerPort }}
+              protocol: TCP
+          env:
+            - name: DOSH_LISTEN_ADDR
+              value: ":{{ .Values.containerPort }}"
+            - name: DOSH_TLS_ENABLED
+              value: {{ .Values.tls.enabled | quote }}
+            - name: DOSH_TLS_CERT_FILE
+              value: {{ .Values.tls.certFile | quote }}
+            - name: DOSH_TLS_KEY_FILE
+              value: {{ .Values.tls.keyFile | quote }}
+            - name: DOSH_TLS_RELOAD_INTERVAL
+              value: {{ .Values.tls.reloadInterval | quote }}
+            - name: DOSH_AUTH_MODE
+              value: {{ $authMode | quote }}
+            {{- if eq $authMode "local" }}
+            - name: DOSH_ADMIN_USERNAME
+              value: {{ .Values.auth.adminUsername | quote }}
+            - name: DOSH_ADMIN_PASSWORD_HASH
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.auth.existingSecret }}
+                  key: {{ .Values.auth.adminPasswordHashKey }}
+            {{- else if eq $authMode "oidc" }}
+            - name: DOSH_OIDC_ISSUER
+              value: {{ required "auth.oidc.issuer is required when auth.mode=oidc" $oidc.issuer | quote }}
+            - name: DOSH_OIDC_CLIENT_ID
+              value: {{ required "auth.oidc.clientID is required when auth.mode=oidc" $oidc.clientID | quote }}
+            - name: DOSH_OIDC_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "auth.oidc.existingSecret is required when auth.mode=oidc" $oidc.existingSecret }}
+                  key: {{ required "auth.oidc.clientSecretKey is required when auth.mode=oidc" $oidc.clientSecretKey }}
+            - name: DOSH_OIDC_REDIRECT_URL
+              value: {{ required "auth.oidc.redirectURL is required when auth.mode=oidc" $oidc.redirectURL | quote }}
+            - name: DOSH_OIDC_SCOPES
+              value: {{ join "," ($oidc.scopes | default (list "openid" "profile" "email" "groups")) | quote }}
+            - name: DOSH_OIDC_USERNAME_CLAIM
+              value: {{ default "email" $oidc.usernameClaim | quote }}
+            - name: DOSH_OIDC_GROUPS_CLAIM
+              value: {{ default "groups" $oidc.groupsClaim | quote }}
+            - name: DOSH_OIDC_ADMIN_GROUPS
+              value: {{ join "," ($oidc.adminGroups | default (list)) | quote }}
+            - name: DOSH_OIDC_TIMEOUT
+              value: {{ default "10s" $oidc.timeout | quote }}
+            - name: DOSH_OIDC_STATE_TTL
+              value: {{ default "10m" $oidc.stateTTL | quote }}
+            {{- if $oidc.ca.existingConfigMap }}
+            - name: DOSH_OIDC_CA_FILE
+              value: /etc/dosh/oidc/ca.crt
+            {{- end }}
+            {{- else if eq $authMode "token" }}
+            - name: DOSH_TOKEN_REVIEW_AUDIENCE
+              value: {{ default "" .Values.auth.token.audience | quote }}
+            {{- end }}
+            {{- if or (eq $authMode "local") (eq $authMode "token") }}
+            - name: DOSH_LOGIN_RATE_LIMIT_MODE
+              value: "kubernetes"
+            - name: DOSH_LOGIN_RATE_LIMIT_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            {{- end }}
+            - name: DOSH_SESSION_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.auth.existingSecret }}
+                  key: {{ .Values.auth.sessionKeyKey }}
+            - name: DOSH_SESSION_TTL
+              value: {{ .Values.auth.sessionTTL | quote }}
+            - name: DOSH_COOKIE_SECURE
+              value: {{ .Values.auth.cookieSecure | quote }}
+            - name: DOSH_CLUSTER_NAME
+              value: {{ .Values.runtime.clusterName | quote }}
+            - name: DOSH_READ_ONLY
+              value: {{ .Values.runtime.readOnly | quote }}
+            - name: DOSH_LOG_LEVEL
+              value: {{ .Values.runtime.logLevel | quote }}
+            - name: DOSH_KUBE_QPS
+              value: {{ .Values.runtime.kubeQPS | quote }}
+            - name: DOSH_KUBE_BURST
+              value: {{ .Values.runtime.kubeBurst | quote }}
+            - name: DOSH_REQUEST_TIMEOUT
+              value: {{ .Values.runtime.requestTimeout | quote }}
+            - name: DOSH_MAX_REQUEST_BODY
+              value: {{ .Values.runtime.maxRequestBody | int64 | quote }}
+            {{- if .Values.audit.webhook.enabled }}
+            {{- if and (not .Values.audit.webhook.tokenKey) (not .Values.audit.webhook.hmacKeyKey) }}
+            {{- fail "audit.webhook.tokenKey or audit.webhook.hmacKeyKey is required" }}
+            {{- end }}
+            {{- $auditURL := required "audit.webhook.url is required when audit.webhook.enabled=true" .Values.audit.webhook.url }}
+            {{- if not (hasPrefix "https://" $auditURL) }}
+            {{- fail "audit.webhook.url must be an absolute https:// URL" }}
+            {{- end }}
+            - name: DOSH_AUDIT_WEBHOOK_URL
+              value: {{ $auditURL | quote }}
+            {{- if .Values.audit.webhook.tokenKey }}
+            - name: DOSH_AUDIT_WEBHOOK_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "audit.webhook.existingSecret is required" .Values.audit.webhook.existingSecret }}
+                  key: {{ .Values.audit.webhook.tokenKey }}
+            {{- end }}
+            {{- if .Values.audit.webhook.hmacKeyKey }}
+            - name: DOSH_AUDIT_WEBHOOK_HMAC_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "audit.webhook.existingSecret is required" .Values.audit.webhook.existingSecret }}
+                  key: {{ .Values.audit.webhook.hmacKeyKey }}
+            {{- end }}
+            {{- if .Values.audit.webhook.ca.existingConfigMap }}
+            - name: DOSH_AUDIT_WEBHOOK_CA_FILE
+              value: /etc/dosh/audit/ca.crt
+            {{- end }}
+            - name: DOSH_AUDIT_WEBHOOK_TIMEOUT
+              value: {{ .Values.audit.webhook.timeout | quote }}
+            - name: DOSH_AUDIT_WEBHOOK_QUEUE_SIZE
+              value: {{ .Values.audit.webhook.queueSize | quote }}
+            {{- end }}
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: http
+              scheme: {{ include "dosh.tlsScheme" . }}
+            periodSeconds: {{ .Values.probes.startup.periodSeconds }}
+            failureThreshold: {{ .Values.probes.startup.failureThreshold }}
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+              scheme: {{ include "dosh.tlsScheme" . }}
+            periodSeconds: {{ .Values.probes.readiness.periodSeconds }}
+            failureThreshold: {{ .Values.probes.readiness.failureThreshold }}
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+              scheme: {{ include "dosh.tlsScheme" . }}
+            periodSeconds: {{ .Values.probes.liveness.periodSeconds }}
+            failureThreshold: {{ .Values.probes.liveness.failureThreshold }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            {{- if .Values.tls.enabled }}
+            - name: tls
+              mountPath: /etc/dosh/tls
+              readOnly: true
+            {{- end }}
+            {{- if and (eq $authMode "oidc") $oidc.ca.existingConfigMap }}
+            - name: oidc-ca
+              mountPath: /etc/dosh/oidc
+              readOnly: true
+            {{- end }}
+            {{- if and .Values.audit.webhook.enabled .Values.audit.webhook.ca.existingConfigMap }}
+            - name: audit-ca
+              mountPath: /etc/dosh/audit
+              readOnly: true
+            {{- end }}
+      volumes:
+        - name: tmp
+          emptyDir:
+            sizeLimit: 32Mi
+        {{- if .Values.tls.enabled }}
+        - name: tls
+          secret:
+            secretName: {{ .Values.tls.existingSecret }}
+            defaultMode: 0440
+        {{- end }}
+        {{- if and (eq $authMode "oidc") $oidc.ca.existingConfigMap }}
+        - name: oidc-ca
+          configMap:
+            name: {{ $oidc.ca.existingConfigMap }}
+            items:
+              - key: {{ required "auth.oidc.ca.key is required when auth.oidc.ca.existingConfigMap is set" $oidc.ca.key }}
+                path: ca.crt
+            defaultMode: 0444
+        {{- end }}
+        {{- if and .Values.audit.webhook.enabled .Values.audit.webhook.ca.existingConfigMap }}
+        - name: audit-ca
+          configMap:
+            name: {{ .Values.audit.webhook.ca.existingConfigMap }}
+            items:
+              - key: {{ required "audit.webhook.ca.key is required when audit.webhook.ca.existingConfigMap is set" .Values.audit.webhook.ca.key }}
+                path: ca.crt
+            defaultMode: 0444
+        {{- end }}
+      {{- with .Values.priorityClassName }}
+      priorityClassName: {{ . }}
+      {{- end }}

@@ -1,0 +1,17 @@
+schema=dosh-documentation-binding-v1
+created_at=2026-11-03T23:44:46Z
+candidate_digest=sha256:0c61ce34873471d85e9d47b957be81de1a970eb166151477468a197045bc5bda
+documentation_version=v2.34
+binding_scope=final-docs-v2.34-r2-after-cronjob-regression
+evidence_archive=/var/lib/dosh/evidence/0c61ce348734/20261103T232858Z-v234-final
+evidence_archive_manifest_sha256=458283d1b60dbdded045139b77e7111a112c720cd5e09f2ab6ddbccf7618fdc1
+regression_archive=/var/lib/dosh/evidence/0c61ce348734/20261103T234130Z-v234-current-digest-regression
+regression_archive_manifest_sha256=769b9730279f5917a54fc2fd6072dbc53223baff36193dc16c7bc4f025a2dec3
+cronjob_archive=/var/lib/dosh/evidence/0c61ce348734/20261103T234429Z-v234-cronjob-detail
+cronjob_archive_manifest_sha256=b6a6c4e47e868737d865668daa3e6cabbdf45e576227b4211a65fc87e3e5ce60
+supplemental_archive_labels=v234-current-digest-regression,v234-cronjob-detail,v234-final-docs-r2,v234-final-docs-r2-anchor
+
+[sha256]
+af49cbc3b9ca0e6a80b91a22298cc07c37169aacd725d2ab1628f03ec96c8dab  README.md
+e58a7af0323761dabd38d7f775a3b4d357b21c5a7b3f5dee6042654586ac9e9f  docs/ears-implementation-plan.md
+c9edbdbdd39bcb3eebbc65ba156197bd1968fbb1c66926971f3ea12fae354108  docs/operations-runbook.md

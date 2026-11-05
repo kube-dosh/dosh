@@ -1,0 +1,15 @@
+schema=dosh-documentation-binding-v1
+created_at=2026-11-04T13:18:14Z
+candidate_digest=sha256:c7eff34a80ca1be0de50d12cd27b97d52ca54029329ed7b19e4bcc70c283ab06
+documentation_version=v2.45-r4
+binding_scope=v2.45-current-evidence-boundaries-playwright-isolation-and-metrics
+source_binding=deploy/release/bindings/source-binding-v245-secretdecode.txt
+source_binding_sha256=aaea7808935331336c51b34425d57b64ff7cb2e3a0a04c01c21631e72aa93890
+evidence_archive=/var/lib/dosh/evidence/c7eff34a80ca/20261104T125435Z-v245-internal-matrix
+evidence_archive_manifest_sha256=e71c466b80159f51022f3addd0bcbc0c69393dc22d3f0b9b8bdf6a951c9964c6
+
+[sha256]
+b7d06426c7e6c338313a481f4e88494d44d5467d29eacffabc1f16294e343483  README.md
+7d8ee28c78862efe9b2815032279732633fdcef2dee9cbaf7f50dc5653f377bc  docs/ears-implementation-plan.md
+7581da72c6f890f861dced967f9b7f4473684024e04b0d483a70760e2814e82e  docs/operations-runbook.md
+cad5f3aced9478df9c780516e22fc68bb1b9192f76b748a58451a129897f082e  deploy/release/README.md

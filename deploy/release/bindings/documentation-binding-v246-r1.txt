@@ -1,0 +1,15 @@
+schema=dosh-documentation-binding-v1
+created_at=2026-11-04T13:43:01Z
+candidate_digest=sha256:2135c2aea864c25975a172d35c7973c1f15c76db266862cd09f7bc0253307bfd
+documentation_version=v2.46-r1
+binding_scope=v2.46-current-candidate-node-uncordon-fix-and-partial-internal-acceptance
+source_binding=deploy/release/bindings/source-binding-v246-nodeuncordon.txt
+source_binding_sha256=4d2fd3e0d2df61c719c36426be712fcc6bf5736362daffae2286b49e870c047c
+evidence_archive=/var/lib/dosh/evidence/2135c2aea864/20261104T134301Z-v246-interim-matrix-r1
+evidence_archive_manifest_sha256=dbf45a53bd6cace03f9d2e4c66d9d33b090a9b6562ed8ba9f2dbba42d9adccfa
+
+[sha256]
+d50767a47f287f821f9e145040ad3cc265ad627d5d1380fe7681498ed50ca8a3  README.md
+31015b0c3f47b9f05806783bd54307c90d37510be14b37e3cf385387f900513e  docs/ears-implementation-plan.md
+5a22e3d8dbdb94cd71aeb558a8de787c7a45371a61ca59f2c59c838db9dae948  docs/operations-runbook.md
+2b92e28d0812154cd17222b13c4c559dcef9c502692923a9690ae6123af60f98  deploy/release/README.md

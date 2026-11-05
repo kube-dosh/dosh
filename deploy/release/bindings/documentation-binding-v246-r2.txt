@@ -1,0 +1,15 @@
+schema=dosh-documentation-binding-v1
+created_at=2026-11-04T14:50:34Z
+candidate_digest=sha256:2135c2aea864c25975a172d35c7973c1f15c76db266862cd09f7bc0253307bfd
+documentation_version=v2.46-r2
+binding_scope=v2.46-final-internal-acceptance-node-uncordon-browser-audit-loki-soak-performance-security
+source_binding=deploy/release/bindings/source-binding-v246-nodeuncordon.txt
+source_binding_sha256=4d2fd3e0d2df61c719c36426be712fcc6bf5736362daffae2286b49e870c047c
+evidence_archive=/var/lib/dosh/evidence/2135c2aea864/20261104T145034Z-v246-final-internal-matrix-r1
+evidence_archive_manifest_sha256=d761698e13819c4491876a7ee6f905ba37f85d589a895ec494215fab3c6aaff9
+
+[sha256]
+b77f8446c670650d31c9039b1f3c9458e6d8a3cf109a3d1327f6e39410e367f2  README.md
+8e83455dabf84121aa3c983dcdc5d43e57a4786d38f55c3baf720c6a21263e3d  docs/ears-implementation-plan.md
+82564b062c673b0d9c5b1f1bba57bafe18e0b4e8dd3201480b003412921188d4  docs/operations-runbook.md
+f4a2b8872fdf0492439add1059799da9735ed3a900816ffc3482131ecea59e4d  deploy/release/README.md

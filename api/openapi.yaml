@@ -1,0 +1,1836 @@
+openapi: 3.1.0
+info:
+  title: Dosh Kubernetes Operations API
+  version: 0.1.5
+  description: |
+    Same-origin API consumed by the Dosh embedded React console. Session cookies
+    are HttpOnly and every mutating request must include the session CSRF token.
+    Kubernetes objects are translated into stable DTOs; arbitrary Kubernetes API
+    proxying is intentionally not supported.
+servers:
+  - url: /
+tags:
+  - name: auth
+  - name: cluster
+  - name: workloads
+  - name: observability
+  - name: network
+  - name: configuration
+  - name: certificates
+  - name: storage
+  - name: yaml
+security:
+  - cookieAuth: []
+paths:
+  /api/v1/session:
+    get:
+      tags: [auth]
+      summary: Read the current session
+      responses:
+        "200": { $ref: "#/components/responses/Session" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    post:
+      tags: [auth]
+      summary: Authenticate with local credentials or a Kubernetes bearer token
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - type: object
+                  description: Local administrator credentials
+                  required: [username, password]
+                  properties:
+                    username: { type: string, minLength: 1 }
+                    password: { type: string, minLength: 1, format: password }
+                - type: object
+                  description: Kubernetes bearer token validated with TokenReview
+                  required: [token]
+                  properties:
+                    token: { type: string, minLength: 1, maxLength: 16384 }
+      responses:
+        "200": { $ref: "#/components/responses/Session" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+    delete:
+      tags: [auth]
+      summary: Clear the current session cookie
+      responses:
+        "204": { description: Session cleared }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /api/v1/capabilities:
+    get:
+      tags: [auth]
+      summary: Read current user capabilities
+      parameters:
+        - $ref: "#/components/parameters/Namespace"
+      responses:
+        "200":
+          description: Capability flags
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Capabilities" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /api/v1/auth/config:
+    get:
+      tags: [auth]
+      summary: Read public authentication mode
+      security: []
+      responses:
+        "200":
+          description: Authentication configuration
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AuthConfig" }
+  /api/v1/auth/oidc/login:
+    get:
+      tags: [auth]
+      summary: Start OIDC Authorization Code with PKCE
+      security: []
+      parameters:
+        - name: returnTo
+          in: query
+          schema: { type: string }
+      responses:
+        "302": { description: Redirect to the OIDC provider }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/auth/oidc/callback:
+    get:
+      tags: [auth]
+      summary: Complete OIDC Authorization Code flow
+      security: []
+      parameters:
+        - { name: code, in: query, schema: { type: string } }
+        - { name: state, in: query, schema: { type: string } }
+        - { name: error, in: query, schema: { type: string } }
+      responses:
+        "302": { description: Redirect to the validated return path or login error }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/auth/oidc/logout:
+    get:
+      tags: [auth]
+      summary: Clear the session and perform RP-initiated logout when supported
+      responses:
+        "302": { description: Redirect to the provider or local login page }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/overview:
+    get:
+      tags: [cluster]
+      summary: Aggregate cluster overview
+      responses:
+        "200":
+          description: Cluster overview
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Overview" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
+  /api/v1/nodes:
+    get:
+      tags: [cluster]
+      summary: List nodes
+      parameters:
+        - { $ref: "#/components/parameters/Search" }
+        - { $ref: "#/components/parameters/Page" }
+        - { $ref: "#/components/parameters/PageSize" }
+        - { $ref: "#/components/parameters/Sort" }
+        - { $ref: "#/components/parameters/Order" }
+      responses:
+        "200":
+          description: Node list
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, meta]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/NodeSummary" }
+                  meta: { $ref: "#/components/schemas/ListMeta" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
+  /api/v1/nodes/{name}:
+    get:
+      tags: [cluster]
+      summary: Get node detail, conditions, taints and pods
+      parameters:
+        - { $ref: "#/components/parameters/Name" }
+      responses:
+        "200":
+          description: Node detail
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/NodeDetail" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/nodes/{name}/cordon:
+    post:
+      tags: [cluster]
+      summary: Mark a node unschedulable without evicting existing pods
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      parameters:
+        - { $ref: "#/components/parameters/Name" }
+      responses:
+        "200":
+          description: Updated node summary
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/NodeSummary" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
+  /api/v1/nodes/{name}/uncordon:
+    post:
+      tags: [cluster]
+      summary: Restore scheduling on a cordoned node
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      parameters:
+        - { $ref: "#/components/parameters/Name" }
+      responses:
+        "200":
+          description: Updated node summary
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/NodeSummary" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
+  /api/v1/namespaces:
+    get:
+      tags: [cluster]
+      summary: List namespaces
+      parameters:
+        - { $ref: "#/components/parameters/Search" }
+        - { $ref: "#/components/parameters/Page" }
+        - { $ref: "#/components/parameters/PageSize" }
+        - { $ref: "#/components/parameters/Sort" }
+        - { $ref: "#/components/parameters/Order" }
+      responses:
+        "200":
+          description: Namespace list
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, meta]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/Namespace" }
+                  meta: { $ref: "#/components/schemas/ListMeta" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /api/v1/namespaces/{name}:
+    get:
+      tags: [cluster]
+      summary: Get namespace detail
+      parameters:
+        - { $ref: "#/components/parameters/Name" }
+      responses:
+        "200":
+          description: Namespace detail with resource quotas and limit ranges
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/NamespaceDetail" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/workloads:
+    get:
+      tags: [workloads]
+      summary: List supported workload kinds
+      parameters:
+        - { $ref: "#/components/parameters/Namespace" }
+        - { $ref: "#/components/parameters/Search" }
+        - { $ref: "#/components/parameters/Kind" }
+        - { $ref: "#/components/parameters/WorkloadStatus" }
+        - { $ref: "#/components/parameters/Page" }
+        - { $ref: "#/components/parameters/PageSize" }
+        - { $ref: "#/components/parameters/Sort" }
+        - { $ref: "#/components/parameters/Order" }
+      responses:
+        "200":
+          description: Workload list
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, meta]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/WorkloadSummary" }
+                  meta: { $ref: "#/components/schemas/ListMeta" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /api/v1/workloads/deployments:
+    post:
+      tags: [workloads]
+      summary: Validate with API Server dry-run and create a Deployment
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/DeploymentCreateRequest" }
+      responses:
+        "201":
+          description: Deployment created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WorkloadSummary" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
+  /api/v1/workloads/deployments/preview:
+    post:
+      tags: [workloads]
+      summary: Preview the validated Deployment manifest without writing
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/DeploymentCreateRequest" }
+      responses:
+        "200":
+          description: Deployment manifest
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DeploymentPreview" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/workloads/{kind}/{namespace}/{name}:
+    get:
+      tags: [workloads]
+      summary: Get workload detail and owned pods
+      parameters:
+        - { $ref: "#/components/parameters/KindPath" }
+        - { $ref: "#/components/parameters/NamespacePath" }
+        - { $ref: "#/components/parameters/Name" }
+      responses:
+        "200":
+          description: Workload detail
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WorkloadDetail" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "501": { $ref: "#/components/responses/NotSupported" }
+    delete:
+      tags: [workloads]
+      summary: Delete a workload
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      parameters:
+        - { $ref: "#/components/parameters/KindPath" }
+        - { $ref: "#/components/parameters/NamespacePath" }
+        - { $ref: "#/components/parameters/Name" }
+        - name: propagation
+          in: query
+          schema:
+            type: string
+            enum: [Background, Foreground, Orphan]
+            default: Background
+      responses:
+        "202":
+          description: Deletion accepted
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OperationStatus" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/workloads/{kind}/{namespace}/{name}/scale:
+    post:
+      tags: [workloads]
+      summary: Scale a Deployment or StatefulSet
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      parameters:
+        - { $ref: "#/components/parameters/KindPath" }
+        - { $ref: "#/components/parameters/NamespacePath" }
+        - { $ref: "#/components/parameters/Name" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [replicas]
+              properties:
+                replicas: { type: integer, minimum: 0, maximum: 1000 }
+                resourceVersion: { type: string }
+      responses:
+        "200":
+          description: Scale accepted
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OperationStatus" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "501": { $ref: "#/components/responses/NotSupported" }
+  /api/v1/workloads/{kind}/{namespace}/{name}/restart:
+    post:
+      tags: [workloads]
+      summary: Trigger a rolling restart
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      parameters:
+        - { $ref: "#/components/parameters/KindPath" }
+        - { $ref: "#/components/parameters/NamespacePath" }
+        - { $ref: "#/components/parameters/Name" }
+      responses:
+        "200":
+          description: Restart accepted
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OperationStatus" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "501": { $ref: "#/components/responses/NotSupported" }
+  /api/v1/workloads/{kind}/{namespace}/{name}/image:
+    post:
+      tags: [workloads]
+      summary: Update one container image in a Deployment, StatefulSet or DaemonSet
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      parameters:
+        - { $ref: "#/components/parameters/KindPath" }
+        - { $ref: "#/components/parameters/NamespacePath" }
+        - { $ref: "#/components/parameters/Name" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [containerName, image]
+              properties:
+                containerName: { type: string, minLength: 1, maxLength: 63 }
+                image: { type: string, minLength: 1, maxLength: 512 }
+                resourceVersion: { type: string, maxLength: 256 }
+      responses:
+        "200":
+          description: Image update accepted
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OperationStatus" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "501": { $ref: "#/components/responses/NotSupported" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
+  /api/v1/workloads/{kind}/{namespace}/{name}/suspend:
+    post:
+      tags: [workloads]
+      summary: Pause or resume future scheduling for a CronJob
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      parameters:
+        - { $ref: "#/components/parameters/KindPath" }
+        - { $ref: "#/components/parameters/NamespacePath" }
+        - { $ref: "#/components/parameters/Name" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [suspend]
+              properties:
+                suspend: { type: boolean }
+                resourceVersion: { type: string, maxLength: 256 }
+      responses:
+        "200":
+          description: CronJob scheduling state updated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OperationStatus" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "501": { $ref: "#/components/responses/NotSupported" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
+  /api/v1/pods:
+    get:
+      tags: [workloads]
+      summary: List pods
+      parameters:
+        - { $ref: "#/components/parameters/Namespace" }
+        - { $ref: "#/components/parameters/Search" }
+        - { $ref: "#/components/parameters/Page" }
+        - { $ref: "#/components/parameters/PageSize" }
+        - { $ref: "#/components/parameters/Sort" }
+        - { $ref: "#/components/parameters/Order" }
+      responses:
+        "200":
+          description: Pod list
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, meta]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/PodSummary" }
+                  meta: { $ref: "#/components/schemas/ListMeta" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /api/v1/pods/{namespace}/{name}:
+    get:
+      tags: [workloads]
+      summary: Get pod detail
+      parameters:
+        - { $ref: "#/components/parameters/NamespacePath" }
+        - { $ref: "#/components/parameters/Name" }
+      responses:
+        "200":
+          description: Pod detail
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PodDetail" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/pods/{namespace}/{name}/logs:
+    get:
+      tags: [observability]
+      summary: Stream pod container logs as bounded NDJSON frames
+      description: |
+        Streams newline-delimited JSON frames. A `log` frame carries one UTF-8
+        log chunk. A clean EOF terminates with an `end` frame. A stream failure
+        after headers are sent terminates with an `error` frame containing a
+        stable code, safe message and request ID. Errors detected before the
+        stream starts use the normal JSON Problem response.
+      parameters:
+        - { $ref: "#/components/parameters/NamespacePath" }
+        - { $ref: "#/components/parameters/Name" }
+        - name: container
+          in: query
+          schema: { type: string }
+        - name: follow
+          in: query
+          schema: { type: boolean, default: false }
+        - name: tailLines
+          in: query
+          schema: { type: integer, minimum: 0, maximum: 5000, default: 200 }
+        - name: timestamps
+          in: query
+          schema: { type: boolean, default: false }
+      responses:
+        "200":
+          description: NDJSON log stream (`log`, `end` or terminal `error` frames)
+          content:
+            application/x-ndjson:
+              schema: { type: string }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/events:
+    get:
+      tags: [observability]
+      summary: List cluster events
+      parameters:
+        - { $ref: "#/components/parameters/Namespace" }
+        - { $ref: "#/components/parameters/Search" }
+        - { $ref: "#/components/parameters/ObjectKind" }
+        - { $ref: "#/components/parameters/ObjectName" }
+        - { $ref: "#/components/parameters/Page" }
+        - { $ref: "#/components/parameters/PageSize" }
+        - { $ref: "#/components/parameters/Sort" }
+        - { $ref: "#/components/parameters/Order" }
+      responses:
+        "200":
+          description: Event list
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, meta]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/Event" }
+                  meta: { $ref: "#/components/schemas/ListMeta" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /api/v1/events/stream:
+    get:
+      tags: [observability]
+      summary: Watch events over Server-Sent Events
+      parameters:
+        - { $ref: "#/components/parameters/Namespace" }
+      responses:
+        "200":
+          description: SSE stream. Named event `event` contains an Event JSON payload; `error` contains a message.
+          content:
+            text/event-stream:
+              schema: { type: string }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /api/v1/audit-events:
+    get:
+      tags: [observability]
+      summary: List recent audit records retained by the serving dosh instance
+      description: |
+        Returns an in-memory, newest-first snapshot for administrator inspection.
+        Records are retained per process and cleared on restart; durable retention
+        remains the responsibility of stdout collection or the configured webhook sink.
+      parameters:
+        - { $ref: "#/components/parameters/Namespace" }
+        - { $ref: "#/components/parameters/Search" }
+        - name: action
+          in: query
+          description: Case-insensitive exact action filter.
+          schema: { type: string }
+        - name: result
+          in: query
+          description: Case-insensitive exact result filter.
+          schema: { type: string, enum: [success, failure, denied] }
+        - { $ref: "#/components/parameters/Page" }
+        - { $ref: "#/components/parameters/PageSize" }
+        - { $ref: "#/components/parameters/Sort" }
+        - { $ref: "#/components/parameters/Order" }
+      responses:
+        "200":
+          description: Recent audit record list
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AuditRecordList" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/services:
+    get:
+      tags: [network]
+      summary: List services
+      parameters:
+        - { $ref: "#/components/parameters/Namespace" }
+        - { $ref: "#/components/parameters/Search" }
+        - { $ref: "#/components/parameters/Page" }
+        - { $ref: "#/components/parameters/PageSize" }
+        - { $ref: "#/components/parameters/Sort" }
+        - { $ref: "#/components/parameters/Order" }
+      responses:
+        "200":
+          description: Service list
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ServiceList" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /api/v1/services/{namespace}/{name}:
+    get:
+      tags: [network]
+      summary: Get Service detail, ports, selector and EndpointSlice readiness
+      parameters:
+        - { $ref: "#/components/parameters/NamespacePath" }
+        - { $ref: "#/components/parameters/Name" }
+      responses:
+        "200":
+          description: Service detail
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ServiceDetail" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/ingresses:
+    get:
+      tags: [network]
+      summary: List ingresses
+      parameters:
+        - { $ref: "#/components/parameters/Namespace" }
+        - { $ref: "#/components/parameters/Search" }
+        - { $ref: "#/components/parameters/Page" }
+        - { $ref: "#/components/parameters/PageSize" }
+        - { $ref: "#/components/parameters/Sort" }
+        - { $ref: "#/components/parameters/Order" }
+      responses:
+        "200":
+          description: Ingress list
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/IngressList" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /api/v1/ingresses/{namespace}/{name}:
+    get:
+      tags: [network]
+      summary: Get Ingress detail, default backend, TLS secrets and route target status
+      parameters:
+        - { $ref: "#/components/parameters/NamespacePath" }
+        - { $ref: "#/components/parameters/Name" }
+      responses:
+        "200":
+          description: Ingress detail
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/IngressDetail" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/ingressclasses:
+    get:
+      tags: [network]
+      summary: List IngressClasses
+      description: Cluster-scoped IngressClass inventory used to determine whether an Ingress Controller is configured.
+      parameters:
+        - { $ref: "#/components/parameters/Search" }
+        - { $ref: "#/components/parameters/Page" }
+        - { $ref: "#/components/parameters/PageSize" }
+        - { $ref: "#/components/parameters/Sort" }
+        - { $ref: "#/components/parameters/Order" }
+      responses:
+        "200":
+          description: IngressClass list
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/IngressClassList" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /api/v1/certificate:
+    get:
+      tags: [certificates]
+      summary: Read the active HTTPS certificate metadata without private key material
+      responses:
+        "200":
+          description: Server certificate status; HTTP mode returns status disabled
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ServerCertificate" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /api/v1/certificate/reload:
+    post:
+      tags: [certificates]
+      summary: Reload the mounted certificate and key after an audited permission check
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      responses:
+        "200":
+          description: Certificate reloaded or unchanged
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ServerCertificate" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "501": { $ref: "#/components/responses/NotSupported" }
+  /api/v1/configmaps:
+    get:
+      tags: [configuration]
+      summary: List ConfigMaps without values
+      parameters:
+        - { $ref: "#/components/parameters/Namespace" }
+        - { $ref: "#/components/parameters/Search" }
+        - { $ref: "#/components/parameters/Page" }
+        - { $ref: "#/components/parameters/PageSize" }
+        - { $ref: "#/components/parameters/Sort" }
+        - { $ref: "#/components/parameters/Order" }
+      responses:
+        "200":
+          description: ConfigMap list
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ConfigMapList" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /api/v1/configmaps/{namespace}/{name}:
+    get:
+      tags: [configuration]
+      summary: Get ConfigMap data
+      parameters:
+        - { $ref: "#/components/parameters/NamespacePath" }
+        - { $ref: "#/components/parameters/Name" }
+      responses:
+        "200":
+          description: ConfigMap detail
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ConfigMapDetail" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/secrets:
+    get:
+      tags: [configuration]
+      summary: List Secret metadata only
+      parameters:
+        - { $ref: "#/components/parameters/Namespace" }
+        - { $ref: "#/components/parameters/Search" }
+        - { $ref: "#/components/parameters/Page" }
+        - { $ref: "#/components/parameters/PageSize" }
+        - { $ref: "#/components/parameters/Sort" }
+        - { $ref: "#/components/parameters/Order" }
+      responses:
+        "200":
+          description: Secret metadata list. Data values are never included.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SecretList" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /api/v1/secrets/{namespace}/{name}/reveal:
+    post:
+      tags: [configuration]
+      summary: Reveal base64 Secret values after an audited privileged action
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      parameters:
+        - { $ref: "#/components/parameters/NamespacePath" }
+        - { $ref: "#/components/parameters/Name" }
+      responses:
+        "200":
+          description: Secret data
+          headers:
+            Cache-Control:
+              schema: { type: string, const: no-store }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SecretReveal" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/storageclasses:
+    get:
+      tags: [storage]
+      summary: List StorageClasses
+      parameters:
+        - { $ref: "#/components/parameters/Search" }
+        - { $ref: "#/components/parameters/Page" }
+        - { $ref: "#/components/parameters/PageSize" }
+        - { $ref: "#/components/parameters/Sort" }
+        - { $ref: "#/components/parameters/Order" }
+      responses:
+        "200":
+          description: StorageClass list
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, meta]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/StorageClass" }
+                  meta: { $ref: "#/components/schemas/ListMeta" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /api/v1/storageclasses/{name}:
+    get:
+      tags: [storage]
+      summary: Get StorageClass detail, parameters and expansion policy
+      parameters:
+        - { $ref: "#/components/parameters/Name" }
+      responses:
+        "200":
+          description: StorageClass detail
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/StorageClassDetail" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/persistentvolumes:
+    get:
+      tags: [storage]
+      summary: List PersistentVolumes
+      parameters:
+        - { $ref: "#/components/parameters/Search" }
+        - { $ref: "#/components/parameters/Page" }
+        - { $ref: "#/components/parameters/PageSize" }
+        - { $ref: "#/components/parameters/Sort" }
+        - { $ref: "#/components/parameters/Order" }
+      responses:
+        "200":
+          description: PV list
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, meta]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/PersistentVolume" }
+                  meta: { $ref: "#/components/schemas/ListMeta" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /api/v1/persistentvolumes/{name}:
+    get:
+      tags: [storage]
+      summary: Get PersistentVolume detail, claim reference and CSI driver
+      parameters:
+        - { $ref: "#/components/parameters/Name" }
+      responses:
+        "200":
+          description: PersistentVolume detail
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PersistentVolumeDetail" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/persistentvolumeclaims:
+    get:
+      tags: [storage]
+      summary: List PersistentVolumeClaims
+      parameters:
+        - { $ref: "#/components/parameters/Namespace" }
+        - { $ref: "#/components/parameters/Search" }
+        - { $ref: "#/components/parameters/Page" }
+        - { $ref: "#/components/parameters/PageSize" }
+        - { $ref: "#/components/parameters/Sort" }
+        - { $ref: "#/components/parameters/Order" }
+      responses:
+        "200":
+          description: PVC list
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, meta]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/PersistentVolumeClaim" }
+                  meta: { $ref: "#/components/schemas/ListMeta" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /api/v1/persistentvolumeclaims/{namespace}/{name}:
+    get:
+      tags: [storage]
+      summary: Get PersistentVolumeClaim detail, request size and conditions
+      parameters:
+        - { $ref: "#/components/parameters/NamespacePath" }
+        - { $ref: "#/components/parameters/Name" }
+      responses:
+        "200":
+          description: PersistentVolumeClaim detail
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PersistentVolumeClaimDetail" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/yaml:
+    get:
+      tags: [yaml]
+      summary: Read redacted YAML for an allow-listed resource
+      parameters:
+        - name: type
+          in: query
+          required: true
+          schema: { $ref: "#/components/schemas/ResourceType" }
+        - { $ref: "#/components/parameters/Namespace" }
+        - { $ref: "#/components/parameters/Name" }
+      responses:
+        "200":
+          description: YAML resource
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/YAMLResource" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/yaml/apply:
+    post:
+      tags: [yaml]
+      summary: Validate with server-side dry run, then server-side apply
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [yaml, dryRun]
+              properties:
+                yaml:
+                  type: string
+                  minLength: 1
+                  description: Exactly one YAML document. Empty documents, multiple documents and duplicate keys are rejected before authorization or apply.
+                resourceVersion: { type: string }
+                dryRun: { type: boolean }
+      responses:
+        "200":
+          description: Applied YAML, with Secret data redacted
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/YAMLResource" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "501": { $ref: "#/components/responses/NotSupported" }
+components:
+  securitySchemes:
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: dosh_session
+    csrfToken:
+      type: apiKey
+      in: header
+      name: X-CSRF-Token
+  parameters:
+    Namespace:
+      name: namespace
+      in: query
+      schema: { type: string }
+    NamespacePath:
+      name: namespace
+      in: path
+      required: true
+      schema: { type: string }
+    Search:
+      name: q
+      in: query
+      schema: { type: string }
+    Page:
+      name: page
+      in: query
+      schema: { type: integer, minimum: 1, default: 1 }
+    PageSize:
+      name: pageSize
+      in: query
+      schema: { type: integer, minimum: 1, maximum: 200 }
+    Sort:
+      name: sort
+      in: query
+      description: Resource-specific sort field. Unsupported fields return 400.
+      schema: { type: string }
+    Order:
+      name: order
+      in: query
+      description: Sort direction; requires sort.
+      schema: { type: string, enum: [asc, desc], default: asc }
+    ObjectKind:
+      name: objectKind
+      in: query
+      description: Case-insensitive involved object kind filter for events.
+      schema: { type: string }
+    ObjectName:
+      name: objectName
+      in: query
+      description: Involved object name filter for events.
+      schema: { type: string }
+    Kind:
+      name: kind
+      in: query
+      schema: { $ref: "#/components/schemas/WorkloadKind" }
+    WorkloadStatus:
+      name: status
+      in: query
+      description: Case-insensitive workload status filter.
+      schema: { type: string }
+    KindPath:
+      name: kind
+      in: path
+      required: true
+      schema: { $ref: "#/components/schemas/WorkloadKind" }
+    Name:
+      name: name
+      in: path
+      required: true
+      schema: { type: string }
+  responses:
+    Session:
+      description: Authenticated session
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Session" }
+    BadRequest:
+      description: Invalid request
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Problem" }
+    Unauthorized:
+      description: Authentication required
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Problem" }
+    Forbidden:
+      description: Permission or read-only mode denied the operation
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Problem" }
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Problem" }
+    Conflict:
+      description: Resource version conflict
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Problem" }
+    RateLimited:
+      description: Login rate limit exceeded
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Problem" }
+    DependencyUnavailable:
+      description: Kubernetes API unavailable
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Problem" }
+    NotSupported:
+      description: Operation not supported for this resource kind
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Problem" }
+  schemas:
+    Problem:
+      type: object
+      required: [code, message]
+      properties:
+        code: { type: string }
+        message: { type: string }
+        requestId: { type: string }
+        fieldErrors:
+          type: object
+          additionalProperties: { type: string }
+    ListMeta:
+      type: object
+      required: [total, page, pageSize, totalPages]
+      properties:
+        total: { type: integer, minimum: 0 }
+        page: { type: integer, minimum: 1 }
+        pageSize: { type: integer, minimum: 1 }
+        totalPages: { type: integer, minimum: 0 }
+        sort: { type: string }
+        order: { type: string, enum: [asc, desc] }
+        filters:
+          type: object
+          additionalProperties: { type: string }
+        namespace: { type: string }
+        search: { type: string }
+        kind: { type: string }
+        status: { type: string }
+    OperationStatus:
+      type: object
+      required: [status]
+      properties:
+        status: { type: string }
+    Actor:
+      type: object
+      required: [username, admin]
+      properties:
+        username: { type: string }
+        groups:
+          type: array
+          items: { type: string }
+        admin: { type: boolean }
+    Capabilities:
+      type: object
+      required: [read, scale, restart, updateImage, suspendCronJob, delete, create, revealSecrets, editYAML, nodeCordon, reloadCertificate]
+      properties:
+        read: { type: boolean }
+        scale: { type: boolean }
+        restart: { type: boolean }
+        updateImage: { type: boolean }
+        suspendCronJob: { type: boolean }
+        delete: { type: boolean }
+        create: { type: boolean }
+        revealSecrets: { type: boolean }
+        editYAML: { type: boolean }
+        nodeCordon: { type: boolean }
+        reloadCertificate: { type: boolean }
+    ServerCertificate:
+      type: object
+      required: [mode, enabled, configured, status, dnsNames, ipAddresses, daysRemaining, autoReload, reloadIntervalSeconds]
+      properties:
+        mode: { type: string, enum: [https, http] }
+        enabled: { type: boolean }
+        configured: { type: boolean }
+        status: { type: string, enum: [valid, expiring, expired, not_yet_valid, disabled, unavailable] }
+        subject: { type: string }
+        issuer: { type: string }
+        serialNumber: { type: string }
+        dnsNames:
+          type: array
+          items: { type: string }
+        ipAddresses:
+          type: array
+          items: { type: string }
+        notBefore: { type: string, format: date-time }
+        notAfter: { type: string, format: date-time }
+        daysRemaining: { type: integer }
+        fingerprintSha256: { type: string }
+        keyAlgorithm: { type: string }
+        autoReload: { type: boolean }
+        reloadIntervalSeconds: { type: integer, minimum: 0 }
+        lastReloadedAt: { type: string, format: date-time }
+        lastReloadError: { type: string }
+    Session:
+      type: object
+      required: [user, csrfToken, expiresAt, capabilities, authMode]
+      properties:
+        user: { $ref: "#/components/schemas/Actor" }
+        csrfToken: { type: string }
+        expiresAt: { type: string, format: date-time }
+        capabilities: { $ref: "#/components/schemas/Capabilities" }
+        authMode: { type: string, enum: [local, oidc, token] }
+    AuthConfig:
+      type: object
+      required: [mode]
+      properties:
+        mode: { type: string, enum: [local, oidc, token] }
+        providerName: { type: string }
+    Condition:
+      type: object
+      required: [type, status]
+      properties:
+        type: { type: string }
+        status: { type: string }
+        reason: { type: string }
+        message: { type: string }
+        lastTransitionTime: { type: string, format: date-time }
+    Event:
+      type: object
+      required: [uid, namespace, type, reason, message, objectKind, objectName, count, firstSeen, lastSeen]
+      properties:
+        uid: { type: string }
+        namespace: { type: string }
+        type: { type: string }
+        reason: { type: string }
+        message: { type: string }
+        objectKind: { type: string }
+        objectName: { type: string }
+        count: { type: integer }
+        firstSeen: { type: string, format: date-time }
+        lastSeen: { type: string, format: date-time }
+        source: { type: string }
+    AuditRecord:
+      type: object
+      required: [id, timestamp, user, action, resource, result]
+      properties:
+        id: { type: integer, format: int64, minimum: 0 }
+        timestamp: { type: string, format: date-time }
+        user: { type: string }
+        groups:
+          type: array
+          items: { type: string }
+        action: { type: string }
+        resource: { type: string }
+        namespace: { type: string }
+        name: { type: string }
+        result: { type: string, enum: [success, failure, denied] }
+        requestId: { type: string }
+        error: { type: string }
+    AuditRecordList:
+      type: object
+      required: [items, meta]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/AuditRecord" }
+        meta: { $ref: "#/components/schemas/ListMeta" }
+    ClusterInfo:
+      type: object
+      required: [name, version, status, metricsAvailable]
+      properties:
+        name: { type: string }
+        version: { type: string }
+        platform: { type: string }
+        cni: { type: string }
+        status: { type: string }
+        metricsAvailable: { type: boolean }
+    OverviewCounts:
+      type: object
+      required: [nodes, readyNodes, pods, runningPods, workloads, namespaces, unhealthyPods, warningEvents]
+      properties:
+        nodes: { type: integer }
+        readyNodes: { type: integer }
+        pods: { type: integer }
+        runningPods: { type: integer }
+        workloads: { type: integer }
+        namespaces: { type: integer }
+        unhealthyPods: { type: integer }
+        warningEvents: { type: integer }
+    ClusterCapacity:
+      type: object
+      required: [cpuAllocatableMilli, memoryAllocatableBytes, podCapacity, cpuRequestsMilli, memoryRequestsBytes, cpuLimitsMilli, memoryLimitsBytes, cpuUsageMilli, memoryUsageBytes]
+      properties:
+        cpuAllocatableMilli: { type: integer, format: int64 }
+        memoryAllocatableBytes: { type: integer, format: int64 }
+        podCapacity: { type: integer, format: int64 }
+        cpuRequestsMilli: { type: integer, format: int64 }
+        memoryRequestsBytes: { type: integer, format: int64 }
+        cpuLimitsMilli: { type: integer, format: int64 }
+        memoryLimitsBytes: { type: integer, format: int64 }
+        cpuUsageMilli: { type: integer, format: int64 }
+        memoryUsageBytes: { type: integer, format: int64 }
+    Overview:
+      type: object
+      required: [cluster, counts, capacity, recentEvents]
+      properties:
+        cluster: { $ref: "#/components/schemas/ClusterInfo" }
+        counts: { $ref: "#/components/schemas/OverviewCounts" }
+        capacity: { $ref: "#/components/schemas/ClusterCapacity" }
+        recentEvents:
+          type: array
+          items: { $ref: "#/components/schemas/Event" }
+        warnings:
+          type: array
+          items: { type: string }
+    NodeSummary:
+      type: object
+      required: [name, status, roles, internalIP, version, osImage, kernelVersion, containerRuntime, cpuCapacityMilli, memoryCapacityBytes, podCapacity, podCount, cpuRequestsMilli, memoryRequestsBytes, unschedulable, createdAt]
+      properties:
+        name: { type: string }
+        status: { type: string }
+        roles:
+          type: array
+          items: { type: string }
+        internalIP: { type: string }
+        version: { type: string }
+        osImage: { type: string }
+        kernelVersion: { type: string }
+        containerRuntime: { type: string }
+        cpuCapacityMilli: { type: integer, format: int64 }
+        memoryCapacityBytes: { type: integer, format: int64 }
+        podCapacity: { type: integer, format: int64 }
+        podCount: { type: integer }
+        cpuRequestsMilli: { type: integer, format: int64 }
+        memoryRequestsBytes: { type: integer, format: int64 }
+        cpuUsageMilli: { type: integer, format: int64 }
+        memoryUsageBytes: { type: integer, format: int64 }
+        hasMetrics: { type: boolean }
+        unschedulable: { type: boolean }
+        createdAt: { type: string, format: date-time }
+    NodeDetail:
+      allOf:
+        - { $ref: "#/components/schemas/NodeSummary" }
+        - type: object
+          required: [conditions, taints, labels, annotations, pods]
+          properties:
+            conditions:
+              type: array
+              items: { $ref: "#/components/schemas/Condition" }
+            taints:
+              type: array
+              items:
+                type: object
+                properties:
+                  key: { type: string }
+                  value: { type: string }
+                  effect: { type: string }
+                  timeAdded: { type: string }
+            labels:
+              type: object
+              additionalProperties: { type: string }
+            annotations:
+              type: object
+              additionalProperties: { type: string }
+            pods:
+              type: array
+              items: { $ref: "#/components/schemas/PodSummary" }
+    Namespace:
+      type: object
+      required: [name, status, createdAt]
+      properties:
+        name: { type: string }
+        status: { type: string }
+        labels:
+          type: object
+          additionalProperties: { type: string }
+        annotations:
+          type: object
+          additionalProperties: { type: string }
+        createdAt: { type: string, format: date-time }
+    NamespaceDetail:
+      allOf:
+        - { $ref: "#/components/schemas/Namespace" }
+        - type: object
+          required: [resourceQuotas, limitRanges]
+          properties:
+            resourceQuotas:
+              type: array
+              items: { $ref: "#/components/schemas/ResourceQuota" }
+            limitRanges:
+              type: array
+              items: { $ref: "#/components/schemas/LimitRange" }
+    ResourceQuota:
+      type: object
+      required: [name, hard, used, createdAt]
+      properties:
+        name: { type: string }
+        hard:
+          type: object
+          additionalProperties: { type: string }
+        used:
+          type: object
+          additionalProperties: { type: string }
+        createdAt: { type: string, format: date-time }
+    LimitRange:
+      type: object
+      required: [name, limits, createdAt]
+      properties:
+        name: { type: string }
+        limits:
+          type: array
+          items: { $ref: "#/components/schemas/LimitRangeItem" }
+        createdAt: { type: string, format: date-time }
+    LimitRangeItem:
+      type: object
+      required: [type, min, max, default, defaultRequest]
+      properties:
+        type: { type: string }
+        min:
+          type: object
+          additionalProperties: { type: string }
+        max:
+          type: object
+          additionalProperties: { type: string }
+        default:
+          type: object
+          additionalProperties: { type: string }
+        defaultRequest:
+          type: object
+          additionalProperties: { type: string }
+    WorkloadKind:
+      type: string
+      enum: [deployment, statefulset, daemonset, job, cronjob]
+    WorkloadSummary:
+      type: object
+      required: [kind, name, namespace, status, ready, desired, restarts, images, createdAt]
+      properties:
+        kind: { type: string }
+        name: { type: string }
+        namespace: { type: string }
+        resourceVersion: { type: string }
+        status: { type: string }
+        ready: { type: string }
+        desired: { type: integer }
+        restarts: { type: integer }
+        images:
+          type: array
+          items: { type: string }
+        createdAt: { type: string, format: date-time }
+        labels:
+          type: object
+          additionalProperties: { type: string }
+    DeploymentEnvVar:
+      type: object
+      required: [name, value]
+      properties:
+        name: { type: string }
+        value: { type: string }
+    DeploymentCreateRequest:
+      type: object
+      required: [name, namespace, replicas, image, containerPort]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 63 }
+        namespace: { type: string, minLength: 1, maxLength: 63 }
+        replicas: { type: integer, minimum: 0, maximum: 1000 }
+        containerName: { type: string, maxLength: 63 }
+        image: { type: string, minLength: 1, maxLength: 512 }
+        containerPort: { type: integer, minimum: 1, maximum: 65535 }
+        cpuRequestMilli: { type: integer, minimum: 0, maximum: 128000 }
+        cpuLimitMilli: { type: integer, minimum: 0, maximum: 128000 }
+        memoryRequestBytes: { type: integer, minimum: 0, maximum: 1099511627776 }
+        memoryLimitBytes: { type: integer, minimum: 0, maximum: 1099511627776 }
+        env:
+          type: array
+          maxItems: 64
+          items: { $ref: "#/components/schemas/DeploymentEnvVar" }
+        labels:
+          type: object
+          maxProperties: 32
+          additionalProperties: { type: string }
+    DeploymentPreview:
+      type: object
+      required: [yaml]
+      properties:
+        yaml: { type: string }
+    WorkloadDetail:
+      allOf:
+        - { $ref: "#/components/schemas/WorkloadSummary" }
+        - type: object
+          required: [conditions, selector, pods, containers]
+          properties:
+            conditions:
+              type: array
+              items: { $ref: "#/components/schemas/Condition" }
+            selector:
+              type: object
+              additionalProperties: { type: string }
+            pods:
+              type: array
+              items: { $ref: "#/components/schemas/PodSummary" }
+            containers:
+              type: array
+              items: { $ref: "#/components/schemas/WorkloadContainer" }
+    WorkloadContainer:
+      type: object
+      required: [name, image]
+      properties:
+        name: { type: string }
+        image: { type: string }
+    PodSummary:
+      type: object
+      required: [name, namespace, status, ready, restarts, ip, node, createdAt]
+      properties:
+        name: { type: string }
+        namespace: { type: string }
+        status: { type: string }
+        ready: { type: string }
+        restarts: { type: integer }
+        ip: { type: string }
+        node: { type: string }
+        ownerKind: { type: string }
+        ownerName: { type: string }
+        createdAt: { type: string, format: date-time }
+        cpuUsageMilli: { type: integer, format: int64 }
+        memoryUsageBytes: { type: integer, format: int64 }
+        hasMetrics: { type: boolean }
+        labels:
+          type: object
+          additionalProperties: { type: string }
+    Container:
+      type: object
+      required: [name, image, ready, restartCount, state, cpuRequestMilli, cpuLimitMilli, memoryRequestBytes, memoryLimitBytes]
+      properties:
+        name: { type: string }
+        image: { type: string }
+        ready: { type: boolean }
+        restartCount: { type: integer }
+        state: { type: string }
+        reason: { type: string }
+        cpuRequestMilli: { type: integer, format: int64 }
+        cpuLimitMilli: { type: integer, format: int64 }
+        memoryRequestBytes: { type: integer, format: int64 }
+        memoryLimitBytes: { type: integer, format: int64 }
+    PodDetail:
+      allOf:
+        - { $ref: "#/components/schemas/PodSummary" }
+        - type: object
+          required: [containers, conditions, qosClass, serviceAccount]
+          properties:
+            containers:
+              type: array
+              items: { $ref: "#/components/schemas/Container" }
+            conditions:
+              type: array
+              items: { $ref: "#/components/schemas/Condition" }
+            qosClass: { type: string }
+            serviceAccount: { type: string }
+    ServicePort:
+      type: object
+      required: [protocol, port, targetPort]
+      properties:
+        name: { type: string }
+        protocol: { type: string }
+        port: { type: integer }
+        targetPort: { type: string }
+        nodePort: { type: integer }
+    ServiceSummary:
+      type: object
+      required: [name, namespace, type, clusterIP, externalIP, ports, endpointCount, createdAt]
+      properties:
+        name: { type: string }
+        namespace: { type: string }
+        type: { type: string }
+        clusterIP: { type: string }
+        externalIP: { type: string }
+        ports:
+          type: array
+          items: { $ref: "#/components/schemas/ServicePort" }
+        selector:
+          type: object
+          additionalProperties: { type: string }
+        endpointCount: { type: integer, minimum: 0 }
+        createdAt: { type: string, format: date-time }
+    ServiceEndpoint:
+      type: object
+      required: [addresses, ready]
+      properties:
+        addresses:
+          type: array
+          items: { type: string }
+        ready: { type: boolean }
+        targetKind: { type: string }
+        targetName: { type: string }
+        targetNamespace: { type: string }
+        nodeName: { type: string }
+    ServiceDetail:
+      allOf:
+        - { $ref: "#/components/schemas/ServiceSummary" }
+        - type: object
+          required: [sessionAffinity, ipFamilies, endpoints]
+          properties:
+            labels:
+              type: object
+              additionalProperties: { type: string }
+            annotations:
+              type: object
+              additionalProperties: { type: string }
+            externalName: { type: string }
+            sessionAffinity: { type: string }
+            ipFamilies:
+              type: array
+              items: { type: string }
+            ipFamilyPolicy: { type: string }
+            loadBalancerClass: { type: string }
+            endpoints:
+              type: array
+              items: { $ref: "#/components/schemas/ServiceEndpoint" }
+    IngressPath:
+      type: object
+      required: [host, path, pathType, service, port, targetStatus]
+      properties:
+        host: { type: string }
+        path: { type: string }
+        pathType: { type: string }
+        service: { type: string }
+        port: { type: string }
+        targetStatus:
+          type: string
+          enum: [Ready, NoReadyEndpoints, ServiceNotFound, PortNotFound, Unknown]
+          description: Backend Service and ready Endpoint availability for this route.
+    IngressSummary:
+      type: object
+      required: [name, namespace, class, paths, createdAt]
+      properties:
+        name: { type: string }
+        namespace: { type: string }
+        class: { type: string }
+        paths:
+          type: array
+          items: { $ref: "#/components/schemas/IngressPath" }
+        tlsHosts:
+          type: array
+          items: { type: string }
+        createdAt: { type: string, format: date-time }
+    IngressTLS:
+      type: object
+      required: [hosts]
+      properties:
+        hosts:
+          type: array
+          items: { type: string }
+        secretName: { type: string }
+    IngressDetail:
+      allOf:
+        - { $ref: "#/components/schemas/IngressSummary" }
+        - type: object
+          properties:
+            labels:
+              type: object
+              additionalProperties: { type: string }
+            annotations:
+              type: object
+              additionalProperties: { type: string }
+            defaultBackend: { $ref: "#/components/schemas/IngressPath" }
+            tls:
+              type: array
+              items: { $ref: "#/components/schemas/IngressTLS" }
+    ServiceList:
+      type: object
+      required: [items, meta]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/ServiceSummary" }
+        meta: { $ref: "#/components/schemas/ListMeta" }
+    IngressList:
+      type: object
+      required: [items, meta]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/IngressSummary" }
+        meta: { $ref: "#/components/schemas/ListMeta" }
+    IngressClassSummary:
+      type: object
+      required: [name, controller, default, createdAt]
+      properties:
+        name: { type: string }
+        controller: { type: string }
+        default: { type: boolean }
+        createdAt: { type: string, format: date-time }
+    IngressClassList:
+      type: object
+      required: [items, meta]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/IngressClassSummary" }
+        meta: { $ref: "#/components/schemas/ListMeta" }
+    ConfigMapSummary:
+      type: object
+      required: [name, namespace, keys, dataBytes, createdAt]
+      properties:
+        name: { type: string }
+        namespace: { type: string }
+        keys:
+          type: array
+          items: { type: string }
+        dataBytes: { type: integer }
+        createdAt: { type: string, format: date-time }
+    ConfigMapDetail:
+      allOf:
+        - { $ref: "#/components/schemas/ConfigMapSummary" }
+        - type: object
+          required: [data]
+          properties:
+            data:
+              type: object
+              additionalProperties: { type: string }
+    SecretKey:
+      type: object
+      required: [key, size]
+      properties:
+        key: { type: string }
+        size: { type: integer }
+    SecretSummary:
+      type: object
+      required: [name, namespace, type, keys, createdAt]
+      properties:
+        name: { type: string }
+        namespace: { type: string }
+        type: { type: string }
+        keys:
+          type: array
+          items: { $ref: "#/components/schemas/SecretKey" }
+        createdAt: { type: string, format: date-time }
+    SecretReveal:
+      allOf:
+        - { $ref: "#/components/schemas/SecretSummary" }
+        - type: object
+          required: [data]
+          properties:
+            data:
+              type: object
+              additionalProperties: { type: string, contentEncoding: base64 }
+    ConfigMapList:
+      type: object
+      required: [items, meta]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/ConfigMapSummary" }
+        meta: { $ref: "#/components/schemas/ListMeta" }
+    SecretList:
+      type: object
+      required: [items, meta]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/SecretSummary" }
+        meta: { $ref: "#/components/schemas/ListMeta" }
+    StorageClass:
+      type: object
+      required: [name, provisioner, reclaimPolicy, volumeBinding, default, createdAt]
+      properties:
+        name: { type: string }
+        provisioner: { type: string }
+        reclaimPolicy: { type: string }
+        volumeBinding: { type: string }
+        default: { type: boolean }
+        createdAt: { type: string, format: date-time }
+    StorageClassDetail:
+      allOf:
+        - { $ref: "#/components/schemas/StorageClass" }
+        - type: object
+          required: [allowVolumeExpansion]
+          properties:
+            labels:
+              type: object
+              additionalProperties: { type: string }
+            annotations:
+              type: object
+              additionalProperties: { type: string }
+            parameters:
+              type: object
+              additionalProperties: { type: string }
+            mountOptions:
+              type: array
+              items: { type: string }
+            allowVolumeExpansion: { type: boolean }
+    PersistentVolume:
+      type: object
+      required: [name, capacityBytes, accessModes, reclaimPolicy, status, storageClass, createdAt]
+      properties:
+        name: { type: string }
+        capacityBytes: { type: integer, format: int64 }
+        accessModes:
+          type: array
+          items: { type: string }
+        reclaimPolicy: { type: string }
+        status: { type: string }
+        claim: { type: string }
+        storageClass: { type: string }
+        createdAt: { type: string, format: date-time }
+    PersistentVolumeDetail:
+      allOf:
+        - { $ref: "#/components/schemas/PersistentVolume" }
+        - type: object
+          required: [volumeMode]
+          properties:
+            labels:
+              type: object
+              additionalProperties: { type: string }
+            annotations:
+              type: object
+              additionalProperties: { type: string }
+            volumeMode: { type: string }
+            mountOptions:
+              type: array
+              items: { type: string }
+            claimNamespace: { type: string }
+            claimName: { type: string }
+            csiDriver: { type: string }
+    PersistentVolumeClaim:
+      type: object
+      required: [name, namespace, status, capacityBytes, accessModes, storageClass, createdAt]
+      properties:
+        name: { type: string }
+        namespace: { type: string }
+        status: { type: string }
+        volumeName: { type: string }
+        capacityBytes: { type: integer, format: int64 }
+        accessModes:
+          type: array
+          items: { type: string }
+        storageClass: { type: string }
+        createdAt: { type: string, format: date-time }
+    PersistentVolumeClaimDetail:
+      allOf:
+        - { $ref: "#/components/schemas/PersistentVolumeClaim" }
+        - type: object
+          required: [volumeMode, requestedCapacityBytes, conditions]
+          properties:
+            labels:
+              type: object
+              additionalProperties: { type: string }
+            annotations:
+              type: object
+              additionalProperties: { type: string }
+            volumeMode: { type: string }
+            requestedCapacityBytes: { type: integer, format: int64 }
+            conditions:
+              type: array
+              items: { $ref: "#/components/schemas/Condition" }
+    ResourceType:
+      type: string
+      enum: [node, namespace, pod, deployment, statefulset, daemonset, job, cronjob, service, ingress, configmap, secret, storageclass, persistentvolume, persistentvolumeclaim]
+    YAMLResource:
+      type: object
+      required: [kind, name, yaml]
+      properties:
+        kind: { type: string }
+        namespace: { type: string }
+        name: { type: string }
+        yaml: { type: string }

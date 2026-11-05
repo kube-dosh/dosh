@@ -1,0 +1,233 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dosh-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GO_VERSION: "1.26.10"
+  NODE_VERSION: "24"
+  HELM_VERSION: "3.22.0"
+  PLAYWRIGHT_VERSION: "1.64.1"
+  KUBECONFORM_VERSION: "v0.8.0"
+  GOVULNCHECK_VERSION: "v1.9.0"
+  ACTIONLINT_VERSION: "v1.7.7"
+  TRIVY_IMAGE: "ghcr.io/aquasecurity/trivy@sha256:2e6c00d711ab4ae41d8a30c2c1fd3bd3b62704c177bb120f95012e939edfb3df"
+
+jobs:
+  backend:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+      - name: Format
+        run: test -z "$(gofmt -l cmd internal web/embed.go)"
+      - name: Vet
+        run: go vet ./...
+      - name: Architecture boundary
+        run: make arch
+      - name: Version consistency
+        run: make version-check
+      - name: Race tests
+        run: go test -race ./...
+      - name: Capacity SLO
+        run: make capacity-test
+
+  frontend:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+        working-directory: web
+      - run: npm run typecheck
+        working-directory: web
+      - run: npm test
+        working-directory: web
+      - run: npm run build
+        working-directory: web
+      - run: npm run bundle:check
+        working-directory: web
+      - run: make api-check
+
+  e2e:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        project: [chromium, firefox, webkit]
+    name: e2e (${{ matrix.project }})
+    container:
+      image: mcr.microsoft.com/playwright:v1.64.1-noble
+      options: --shm-size=1g --memory=4g --memory-swap=4g --cpus=2 --pids-limit=2048 --ulimit core=0
+    steps:
+      - uses: actions/checkout@v4
+      - run: npm ci
+        working-directory: web
+      - run: npx playwright test --project=${{ matrix.project }} --workers=1 --retries=0
+        working-directory: web
+        env:
+          CI: "1"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: playwright-e2e-${{ matrix.project }}
+          path: |
+            web/playwright-report
+            web/test-results
+          retention-days: 30
+
+  performance:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    container:
+      image: mcr.microsoft.com/playwright:v1.64.1-noble
+      options: --shm-size=1g --memory=4g --memory-swap=4g --cpus=2 --pids-limit=2048 --ulimit core=0
+    steps:
+      - uses: actions/checkout@v4
+      - run: npm ci
+        working-directory: web
+      - run: npx playwright test --config=playwright.performance.config.ts --workers=1 --retries=0
+        working-directory: web
+        env:
+          CI: "1"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: playwright-performance
+          path: |
+            web/playwright-report/performance
+            web/test-results/performance
+          retention-days: 30
+
+  helm:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+      - uses: azure/setup-helm@v4.3.0
+        with:
+          version: ${{ env.HELM_VERSION }}
+      - name: Lint and render auth/network modes
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          ARTIFACT_DIR="$PWD/artifacts" bash scripts/check-helm.sh
+          mv artifacts/dosh-local.yaml artifacts/dosh-plain.yaml
+          mv artifacts/dosh-local-cilium.yaml artifacts/dosh-cilium.yaml
+          grep -q 'kind: CiliumNetworkPolicy' artifacts/dosh-cilium.yaml
+          grep -q 'kube-apiserver' artifacts/dosh-cilium.yaml
+          ! grep -q '0.0.0.0/0' artifacts/dosh-cilium.yaml
+      - name: Validate rendered manifests
+        run: |
+          go install github.com/yannh/kubeconform/cmd/kubeconform@${KUBECONFORM_VERSION}
+          "$(go env GOPATH)/bin/kubeconform" -strict -summary artifacts/dosh-plain.yaml
+      - uses: actions/upload-artifact@v4
+        with:
+          name: helm-rendered
+          path: |
+            artifacts/dosh-plain.yaml
+            artifacts/dosh-cilium.yaml
+            artifacts/dosh-oidc.yaml
+            artifacts/dosh-oidc-cilium.yaml
+          retention-days: 30
+
+  security:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Go vulnerability scan
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@${GOVULNCHECK_VERSION}
+          "$(go env GOPATH)/bin/govulncheck" ./...
+      - name: Production dependency audit
+        working-directory: web
+        run: |
+          npm ci
+          npm audit --omit=dev --audit-level=high --registry=https://registry.npmjs.org
+      - name: Build image
+        run: make build VERSION="ci-${GITHUB_SHA::12}" COMMIT="${GITHUB_SHA::12}"
+      - name: Build runtime image
+        run: docker build -t dosh:ci .
+      - name: Trivy image scan
+        run: |
+          mkdir -p security
+          docker run --rm --network=host \
+            -e GODEBUG=http2client=0 \
+            -e TRIVY_DB_REPOSITORY=ghcr.io/aquasecurity/trivy-db:2 \
+            -e TRIVY_JAVA_DB_REPOSITORY=ghcr.io/aquasecurity/trivy-java-db:1 \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -v "${RUNNER_TEMP}/trivy-cache:/root/.cache/trivy" \
+            "${TRIVY_IMAGE}" image --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 --format table dosh:ci | tee security/trivy-results.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: security-reports
+          path: security/trivy-results.txt
+          retention-days: 30
+
+  policy:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+      - name: Install actionlint
+        run: go install github.com/rhysd/actionlint/cmd/actionlint@${ACTIONLINT_VERSION}
+      - name: Lint workflows
+        run: '"$(go env GOPATH)/bin/actionlint" .github/workflows/ci.yml'
+      - name: Playwright isolation policy
+        run: make playwright-check
+      - name: E2E image binding policy
+        run: make e2e-image-check
+      - name: Evidence archive regression
+        run: make evidence-check
+      - name: Commercial release gate schema
+        run: make release-gate-schema-check
+
+  release-summary:
+    if: always()
+    needs: [backend, frontend, e2e, performance, helm, security, policy]
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Require all release gates
+        run: |
+          set -euo pipefail
+          results='${{ toJSON(needs) }}'
+          echo "$results" >> "$GITHUB_STEP_SUMMARY"
+          echo "$results" | grep -q '"result": "success"'
+          if echo "$results" | grep -Eq '"result": "(failure|cancelled|skipped)"'; then
+            exit 1
+          fi

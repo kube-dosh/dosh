@@ -1,0 +1,10 @@
+.git
+.gitignore
+web/node_modules
+web/dist
+web/coverage
+deploy
+docs
+api
+*.md
+*.log

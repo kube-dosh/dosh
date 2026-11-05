@@ -1,0 +1,17 @@
+schema=dosh-documentation-binding-v1
+created_at=2026-11-04T11:52:29Z
+candidate_digest=sha256:e4a27d8b153b8f96ad52ba5f82f92fa3ddaf22e13bc69432c72d16e8ea449439
+documentation_version=v2.44-r4
+binding_scope=v2.44-internal-matrix-and-webkit-lab-acceptance-docs-with-playwright-resource-policy
+source_binding=deploy/release/bindings/source-binding-v244.txt
+source_binding_sha256=ee2f8869be60d48f44d44299e29d2e69f27590df4b1cbce33ed69db6d944ec86
+evidence_archive=/var/lib/dosh/evidence/e4a27d8b153b/20261104T112513Z-v244-internal-matrix-r2
+evidence_archive_manifest_sha256=9f9560d2a7d0e30dd0c163e2ed8a5d674ee93f2bbef7dcd4d1f90c5c569472b9
+webkit_evidence_archive=/var/lib/dosh/evidence/e4a27d8b153b/20261104T114204Z-v244-webkit-r2
+webkit_evidence_archive_manifest_sha256=be5d5c1f4a15f041274869a83e24573ccf501ef0a05d9f60da6ccf9c8fc9f653
+
+[sha256]
+3379ca2e194214b5c1a3148297f12278213eb027bfa62bba59866a3932dd30f5  README.md
+3b8ca673788f8942f13a6634c0f9e7e02ca7867f137c05fe456e71d0b39b6c8b  docs/ears-implementation-plan.md
+549a3f29345fbf082b62396c28f4d4ec103ee6ef9b6303becbbe52ac44ef2801  docs/operations-runbook.md
+418dfa035f8ec17bb7cac1802f687998bda590913dcdc6c96e8274f5cfd44cf8  deploy/release/README.md

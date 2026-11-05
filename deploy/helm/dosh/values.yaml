@@ -1,0 +1,165 @@
+nameOverride: dosh
+
+replicaCount: 2
+
+image:
+  repository: 192.168.122.10:5000/dosh/dosh
+  tag: "0.1.5"
+  # 生产发布优先设置 sha256 digest；设置后忽略 tag。
+  digest: ""
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+
+service:
+  type: NodePort
+  port: 32626
+  nodePort: 32626
+
+containerPort: 32626
+
+networkPolicy:
+  enabled: true
+  ingressPort: 32626
+  ciliumApiServer:
+    # Cilium CRD 存在时自动创建 CNP；失败场景可显式关闭 autoDetect。
+    enabled: false
+    autoDetect: true
+  dns:
+    namespace: kube-system
+    podLabels:
+      k8s-app: kube-dns
+  apiServer:
+    ipBlocks:
+      - 0.0.0.0/0
+    ports:
+      - 443
+      - 6443
+      - 16443
+  webhook:
+    ipBlocks: []
+    ports:
+      - 443
+  oidc:
+    # OIDC 模式必须显式填写 IdP 出口 CIDR，避免使用 0.0.0.0/0。
+    ipBlocks: []
+    ports:
+      - 443
+
+serviceAccount:
+  create: true
+  name: dosh
+
+rbac:
+  create: true
+  clusterRoleName: dosh
+
+auth:
+  mode: token
+  existingSecret: dosh-auth
+  adminPasswordHashKey: admin-password-hash
+  sessionKeyKey: session-key
+  adminUsername: admin
+  sessionTTL: 8h
+  cookieSecure: true
+  oidc:
+    issuer: ""
+    clientID: ""
+    clientSecretKey: client-secret
+    existingSecret: dosh-oidc
+    redirectURL: ""
+    scopes:
+      - openid
+      - profile
+      - email
+      - groups
+    usernameClaim: email
+    groupsClaim: groups
+    adminGroups: []
+    timeout: 10s
+    stateTTL: 10m
+    ca:
+      existingConfigMap: ""
+      key: ca.crt
+  token:
+    # 可选。设置后 TokenReview 会校验该 audience，适合使用 projected SA Token。
+    audience: ""
+
+audit:
+  webhook:
+    enabled: false
+    # 启用时必须为绝对 https:// URL；明文 HTTP 会在渲染阶段失败。
+    url: ""
+    existingSecret: dosh-audit
+    tokenKey: ""
+    hmacKeyKey: hmac-key
+    ca:
+      existingConfigMap: ""
+      key: ca.crt
+    timeout: 3s
+    queueSize: 1024
+
+tls:
+  enabled: true
+  existingSecret: dosh-tls
+  certFile: /etc/dosh/tls/tls.crt
+  keyFile: /etc/dosh/tls/tls.key
+  # 挂载证书变化后自动热加载的轮询间隔；0 表示仅允许通过 API 手动重载。
+  reloadInterval: 30s
+
+runtime:
+  clusterName: kubedo-lab
+  readOnly: false
+  logLevel: info
+  kubeQPS: 50
+  kubeBurst: 100
+  requestTimeout: 15s
+  maxRequestBody: 2097152
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+
+antiAffinity:
+  required: true
+
+probes:
+  startup:
+    periodSeconds: 2
+    failureThreshold: 30
+  readiness:
+    periodSeconds: 5
+    failureThreshold: 3
+  liveness:
+    periodSeconds: 10
+    failureThreshold: 3
+
+podAnnotations: {}
+podLabels: {}
+
+securityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  fsGroup: 65532
+  seccompProfile:
+    type: RuntimeDefault
+
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: ["ALL"]
+
+priorityClassName: ""
+nodeSelector: {}
+tolerations: []
+topologySpreadConstraints: []

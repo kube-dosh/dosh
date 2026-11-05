@@ -1,0 +1,35 @@
+{
+  "schema": "dosh-commercial-gates-v1",
+  "candidate": {
+    "tag": "0.1.5-rc-token-20261105T012750Z",
+    "digest": "sha256:c114113009ddad67313f37c288fe4cc6f7d13848de01d22dd68499146744ea2b",
+    "appVersion": "0.1.5",
+    "chartVersion": "0.1.7",
+    "sourceBindingSha256": "sha256:74556c0cfbc8d7b66d8c960541dfa5bf8192d972d147a63a5aba6e38ac2f22c7",
+    "sourceBindingPath": "deploy/release/bindings/source-binding-v247-token.txt",
+    "documentationBindingSha256": "sha256:28dcb33bffd3254a1c6547d472d02a9b27d5104cb957ca3b596981828466a689",
+    "documentationBindingPath": "deploy/release/bindings/documentation-binding-v247-token.txt"
+  },
+  "gates": [
+    {
+      "id": "production-siem-retention-alerting",
+      "status": "pending"
+    },
+    {
+      "id": "edge-safari-real",
+      "status": "pending"
+    },
+    {
+      "id": "github-actions-branch-protection",
+      "status": "pending"
+    },
+    {
+      "id": "offsite-worm-retention",
+      "status": "pending"
+    },
+    {
+      "id": "production-change-authorization",
+      "status": "pending"
+    }
+  ]
+}

@@ -1,0 +1,13 @@
+schema=dosh-documentation-binding-v1
+created_at=2026-11-04T03:24:48Z
+candidate_digest=sha256:d75a7eaf2159f8cfeb74b97e288d60ebb572ab02e72f717af75caa73852d5b51
+documentation_version=v2.37
+binding_scope=v2.37-current-candidate-final-docs
+source_binding=deploy/release/bindings/source-binding-v237.txt
+source_binding_sha256=c0f67e0ccd14eb5f63e3c2160f374fbd0085cbac1874b20e34d445754bcea6aa
+evidence_archive=/var/lib/dosh/evidence/d75a7eaf2159/
+
+[sha256]
+eba83950185aaefe5760e62dd9b262cc8e17c2c666cd6789d9801d754adc4644  README.md
+f1063261658d97ed02928dc1c023a1af5450653e6f0811905429671309002a4b  docs/ears-implementation-plan.md
+761e251223b5b232ab7e12109b68902736b930baf7e274a44fbf080ade24ef27  docs/operations-runbook.md

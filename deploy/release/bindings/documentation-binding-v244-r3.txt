@@ -1,0 +1,17 @@
+schema=dosh-documentation-binding-v1
+created_at=2026-11-04T11:50:22Z
+candidate_digest=sha256:e4a27d8b153b8f96ad52ba5f82f92fa3ddaf22e13bc69432c72d16e8ea449439
+documentation_version=v2.44-r3
+binding_scope=v2.44-internal-matrix-and-webkit-lab-acceptance-docs
+source_binding=deploy/release/bindings/source-binding-v244.txt
+source_binding_sha256=ee2f8869be60d48f44d44299e29d2e69f27590df4b1cbce33ed69db6d944ec86
+evidence_archive=/var/lib/dosh/evidence/e4a27d8b153b/20261104T112513Z-v244-internal-matrix-r2
+evidence_archive_manifest_sha256=9f9560d2a7d0e30dd0c163e2ed8a5d674ee93f2bbef7dcd4d1f90c5c569472b9
+webkit_evidence_archive=/var/lib/dosh/evidence/e4a27d8b153b/20261104T114204Z-v244-webkit-r2
+webkit_evidence_archive_manifest_sha256=be5d5c1f4a15f041274869a83e24573ccf501ef0a05d9f60da6ccf9c8fc9f653
+
+[sha256]
+983b55a94645c015de635bba265fed7f59832c37a5e0a4a843f25ca1ef484321  README.md
+7f5bf1e75f4a9134e8f500cb8a453f336d7570f1a751f955d48a78674d210702  docs/ears-implementation-plan.md
+c62f9968c63b2e887355cf5664194183d6b7988a1656e82d0a37c72e848fc390  docs/operations-runbook.md
+418dfa035f8ec17bb7cac1802f687998bda590913dcdc6c96e8274f5cfd44cf8  deploy/release/README.md

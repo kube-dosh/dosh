@@ -1,0 +1,7 @@
+apiVersion: v2
+name: dosh
+description: Lightweight Kubernetes operations console with a Go BFF and embedded React UI
+type: application
+version: 0.1.7
+appVersion: "0.1.5"
+kubeVersion: ">=1.30.0-0"

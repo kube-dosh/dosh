@@ -1,0 +1,27 @@
+# Build output
+bin/
+dist/
+web/node_modules/
+web/dist/
+web/coverage/
+web/playwright-report*/
+web/test-results*/
+web/.playwright/
+web/npm-audit.log
+web/npm-audit.exit
+*.test
+
+# Local secrets and generated deployment values
+.env
+.env.*
+deploy/helm/dosh/values-lab.yaml
+deploy/helm/dosh/*.local.yaml
+*.pem
+*.key
+*.crt
+
+# Tooling
+.idea/
+.vscode/
+.DS_Store
+*.swp

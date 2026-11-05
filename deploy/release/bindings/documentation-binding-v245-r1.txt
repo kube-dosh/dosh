@@ -1,0 +1,13 @@
+schema=dosh-documentation-binding-v1
+created_at=2026-11-04T12:14:00Z
+candidate_digest=sha256:c7eff34a80ca1be0de50d12cd27b97d52ca54029329ed7b19e4bcc70c283ab06
+documentation_version=v2.45-r1
+binding_scope=v2.45-secret-reveal-decoding-and-serial-playwright-resource-policy
+source_binding=deploy/release/bindings/source-binding-v245-secretdecode.txt
+source_binding_sha256=aaea7808935331336c51b34425d57b64ff7cb2e3a0a04c01c21631e72aa93890
+
+[sha256]
+8fef4629366afcdb55edddcbc2c2ca6a2356da382a690c9928886fa5e8240ff9  README.md
+d8e839f2e29ea29034191af84844f663416a67e33ae2ded49d9a0ad88ba35c0d  docs/ears-implementation-plan.md
+25c0752cce02c0f59dca54f064a8ec800e3f8e3075883ad3c7db5eb96fa18b57  docs/operations-runbook.md
+12483364f13ad7530cfdeebb7a3f67222fcdb09bf5508fe4b274b570328e924f  deploy/release/README.md
