@@ -104,7 +104,7 @@ export function AuditPage() {
               {selected.error ? (
                 <div>
                   <p className="mb-1 font-medium">错误信息</p>
-                  <pre className="max-h-56 overflow-auto whitespace-pre-wrap rounded-md border bg-muted/40 p-3 font-mono text-xs text-destructive-strong">{selected.error}</pre>
+                  <pre className="soft-wrap max-h-56 max-w-full overflow-auto whitespace-pre-wrap rounded-md border bg-muted/40 p-3 font-mono text-xs text-destructive-strong">{selected.error}</pre>
                 </div>
               ) : null}
             </div>

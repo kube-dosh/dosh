@@ -61,7 +61,11 @@ func (c *Client) GetConfigMap(ctx context.Context, namespace, name string) (doma
 	if err != nil {
 		return domain.ConfigMapDetail{}, mapKubeError(err)
 	}
-	return domain.ConfigMapDetail{ConfigMapSummary: configMapSummary(*item), Data: item.Data}, nil
+	data := make(map[string]string, len(item.Data))
+	for key, value := range item.Data {
+		data[key] = value
+	}
+	return domain.ConfigMapDetail{ConfigMapSummary: configMapSummary(*item), Data: data}, nil
 }
 
 func (c *Client) ListSecrets(ctx context.Context, query domain.ListQuery) ([]domain.SecretSummary, error) {

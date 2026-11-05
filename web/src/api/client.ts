@@ -84,6 +84,100 @@ function query(params?: ListParams): string {
   return value ? `?${value}` : "";
 }
 
+function list<T>(value: T[] | null | undefined): T[] {
+  return value ?? [];
+}
+
+function record<T>(value: Record<string, T> | null | undefined): Record<string, T> {
+  return value ?? {};
+}
+
+function normalizeWorkloadDetail(value: WorkloadDetail): WorkloadDetail {
+  return {
+    ...value,
+    images: list(value.images),
+    conditions: list(value.conditions),
+    selector: record(value.selector),
+    pods: list(value.pods),
+    containers: list(value.containers),
+  };
+}
+
+function normalizePodDetail(value: PodDetail): PodDetail {
+  return { ...value, containers: list(value.containers), conditions: list(value.conditions) };
+}
+
+function normalizeNodeDetail(value: NodeDetail): NodeDetail {
+  return {
+    ...value,
+    roles: list(value.roles),
+    conditions: list(value.conditions),
+    taints: list(value.taints),
+    labels: record(value.labels),
+    annotations: record(value.annotations),
+    pods: list(value.pods),
+  };
+}
+
+function normalizeNamespaceDetail(value: NamespaceDetail): NamespaceDetail {
+  return {
+    ...value,
+    resourceQuotas: list(value.resourceQuotas).map((quota) => ({
+      ...quota,
+      hard: record(quota.hard),
+      used: record(quota.used),
+    })),
+    limitRanges: list(value.limitRanges).map((limitRange) => ({
+      ...limitRange,
+      limits: list(limitRange.limits).map((limit) => ({
+        ...limit,
+        min: record(limit.min),
+        max: record(limit.max),
+        default: record(limit.default),
+        defaultRequest: record(limit.defaultRequest),
+      })),
+    })),
+  };
+}
+
+function normalizeServiceDetail(value: ServiceDetail): ServiceDetail {
+  return {
+    ...value,
+    ports: list(value.ports),
+    ipFamilies: list(value.ipFamilies),
+    endpoints: list(value.endpoints).map((endpoint) => ({ ...endpoint, addresses: list(endpoint.addresses) })),
+  };
+}
+
+function normalizeIngressDetail(value: IngressDetail): IngressDetail {
+  return {
+    ...value,
+    paths: list(value.paths),
+    tlsHosts: list(value.tlsHosts),
+    tls: list(value.tls).map((tls) => ({ ...tls, hosts: list(tls.hosts) })),
+  };
+}
+
+function normalizeConfigMapDetail(value: ConfigMapDetail): ConfigMapDetail {
+  return { ...value, keys: list(value.keys), data: record(value.data) };
+}
+
+function normalizeSecretReveal(value: SecretReveal): SecretReveal {
+  return { ...value, keys: list(value.keys), data: record(value.data) };
+}
+
+function normalizeStorageClassDetail(value: StorageClassDetail): StorageClassDetail {
+  return { ...value, mountOptions: list(value.mountOptions), parameters: record(value.parameters) };
+}
+
+function normalizePersistentVolumeDetail(value: PersistentVolumeDetail): PersistentVolumeDetail {
+  return { ...value, accessModes: list(value.accessModes), mountOptions: list(value.mountOptions) };
+}
+
+function normalizePersistentVolumeClaimDetail(value: PersistentVolumeClaimDetail): PersistentVolumeClaimDetail {
+  return { ...value, accessModes: list(value.accessModes), conditions: list(value.conditions) };
+}
+
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const method = (init.method || "GET").toUpperCase();
   const headers = new Headers(init.headers);
@@ -136,14 +230,14 @@ export const api = {
   overview: () => request<Overview>("/api/v1/overview"),
   auditEvents: (params?: ListParams) => request<ListResponse<AuditRecord>>(`/api/v1/audit-events${query(params)}`),
   nodes: (params?: ListParams) => request<ListResponse<NodeSummary>>(`/api/v1/nodes${query(params)}`),
-  node: (name: string) => request<NodeDetail>(`/api/v1/nodes/${encodeURIComponent(name)}`),
+  node: async (name: string) => normalizeNodeDetail(await request<NodeDetail>(`/api/v1/nodes/${encodeURIComponent(name)}`)),
   cordonNode: (name: string) => request<NodeSummary>(`/api/v1/nodes/${encodeURIComponent(name)}/cordon`, { method: "POST" }),
   uncordonNode: (name: string) => request<NodeSummary>(`/api/v1/nodes/${encodeURIComponent(name)}/uncordon`, { method: "POST" }),
   namespaces: (params?: ListParams) => request<ListResponse<NamespaceItem>>(`/api/v1/namespaces${query(params)}`),
-  namespace: (name: string) => request<NamespaceDetail>(`/api/v1/namespaces/${encodeURIComponent(name)}`),
+  namespace: async (name: string) => normalizeNamespaceDetail(await request<NamespaceDetail>(`/api/v1/namespaces/${encodeURIComponent(name)}`)),
   workloads: (params?: ListParams) => request<ListResponse<WorkloadSummary>>(`/api/v1/workloads${query(params)}`),
-  workload: (kind: string, namespace: string, name: string) =>
-    request<WorkloadDetail>(`/api/v1/workloads/${kind}/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}`),
+  workload: async (kind: string, namespace: string, name: string) =>
+    normalizeWorkloadDetail(await request<WorkloadDetail>(`/api/v1/workloads/${kind}/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}`)),
   createDeployment: (input: DeploymentCreateInput) =>
     request<WorkloadSummary>("/api/v1/workloads/deployments", { method: "POST", body: JSON.stringify(input) }),
   previewDeployment: (input: DeploymentCreateInput) =>
@@ -170,28 +264,28 @@ export const api = {
       method: "DELETE",
     }),
   pods: (params?: ListParams) => request<ListResponse<PodSummary>>(`/api/v1/pods${query(params)}`),
-  pod: (namespace: string, name: string) => request<PodDetail>(`/api/v1/pods/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}`),
+  pod: async (namespace: string, name: string) => normalizePodDetail(await request<PodDetail>(`/api/v1/pods/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}`)),
   events: (params?: ListParams) => request<ListResponse<EventItem>>(`/api/v1/events${query(params)}`),
   services: (params?: ListParams) => request<ListResponse<ServiceSummary>>(`/api/v1/services${query(params)}`),
-  service: (namespace: string, name: string) => request<ServiceDetail>(`/api/v1/services/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}`),
+  service: async (namespace: string, name: string) => normalizeServiceDetail(await request<ServiceDetail>(`/api/v1/services/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}`)),
   ingresses: (params?: ListParams) => request<ListResponse<IngressSummary>>(`/api/v1/ingresses${query(params)}`),
-  ingress: (namespace: string, name: string) => request<IngressDetail>(`/api/v1/ingresses/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}`),
+  ingress: async (namespace: string, name: string) => normalizeIngressDetail(await request<IngressDetail>(`/api/v1/ingresses/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}`)),
   ingressClasses: (params?: ListParams) => request<ListResponse<IngressClassSummary>>(`/api/v1/ingressclasses${query(params)}`),
   configmaps: (params?: ListParams) => request<ListResponse<ConfigMapSummary>>(`/api/v1/configmaps${query(params)}`),
-  configmap: (namespace: string, name: string) => request<ConfigMapDetail>(`/api/v1/configmaps/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}`),
+  configmap: async (namespace: string, name: string) => normalizeConfigMapDetail(await request<ConfigMapDetail>(`/api/v1/configmaps/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}`)),
   serverCertificate: () => request<ServerCertificate>("/api/v1/certificate"),
   reloadServerCertificate: () => request<ServerCertificate>("/api/v1/certificate/reload", { method: "POST" }),
   secrets: (params?: ListParams) => request<ListResponse<SecretSummary>>(`/api/v1/secrets${query(params)}`),
-  revealSecret: (namespace: string, name: string) =>
-    request<SecretReveal>(`/api/v1/secrets/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}/reveal`, { method: "POST" }),
+  revealSecret: async (namespace: string, name: string) =>
+    normalizeSecretReveal(await request<SecretReveal>(`/api/v1/secrets/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}/reveal`, { method: "POST" })),
   storageclasses: (params?: ListParams) => request<ListResponse<StorageClass>>(`/api/v1/storageclasses${query(params)}`),
-  storageclass: (name: string) => request<StorageClassDetail>(`/api/v1/storageclasses/${encodeURIComponent(name)}`),
+  storageclass: async (name: string) => normalizeStorageClassDetail(await request<StorageClassDetail>(`/api/v1/storageclasses/${encodeURIComponent(name)}`)),
   persistentvolumes: (params?: ListParams) => request<ListResponse<PersistentVolume>>(`/api/v1/persistentvolumes${query(params)}`),
-  persistentvolume: (name: string) => request<PersistentVolumeDetail>(`/api/v1/persistentvolumes/${encodeURIComponent(name)}`),
+  persistentvolume: async (name: string) => normalizePersistentVolumeDetail(await request<PersistentVolumeDetail>(`/api/v1/persistentvolumes/${encodeURIComponent(name)}`)),
   persistentvolumeclaims: (params?: ListParams) =>
     request<ListResponse<PersistentVolumeClaim>>(`/api/v1/persistentvolumeclaims${query(params)}`),
-  persistentvolumeclaim: (namespace: string, name: string) =>
-    request<PersistentVolumeClaimDetail>(`/api/v1/persistentvolumeclaims/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}`),
+  persistentvolumeclaim: async (namespace: string, name: string) =>
+    normalizePersistentVolumeClaimDetail(await request<PersistentVolumeClaimDetail>(`/api/v1/persistentvolumeclaims/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}`)),
   yaml: (type: string, name: string, namespace?: string) =>
     request<YAMLResource>(`/api/v1/yaml?${new URLSearchParams({ type, name, ...(namespace ? { namespace } : {}) }).toString()}`),
   applyYAML: (yaml: string, resourceVersion?: string, dryRun = false) =>

@@ -880,7 +880,7 @@
 | WBS-4.1 事件与日志流 | SSE 与日志都采用请求 context 生命周期；客户端断开即释放；不缓存敏感内容 | `internal/modules/events`、workloads logs、`web/src/features/workloads/log-viewer.tsx` | SSE 帧、cancel、断开和首批日志测试 | 临时 ConfigMap 事件、CoreDNS 日志、断线重连 | v2.44 历史候选 30 分钟 soak 实验室已验收；v2.45 未复跑，生产同等并发待复验 |
 | WBS-4.7 日志与事件安全回归 | 日志和事件只作为文本渲染；ANSI/OSC/DCS/C0-C1 控制序列跨 chunk 净化；日志不进入浏览器持久存储 | `web/src/features/workloads/{log-sanitizer.ts,log-viewer.tsx}`、`web/src/features/workloads/*.test.*`、`web/e2e/dosh.spec.ts` | `npm test`、`npm run typecheck`、受限容器 Chromium/Firefox Playwright、源码静态扫描 | HTML/`javascript:` OSC 不创建 DOM、不执行脚本；Vitest 46/46、mock 各 34/34 | v2.40 实验室已验收 |
 | WBS-4.8 审计历史查询 | 管理员可见当前实例最近 1000 条审计记录；有界环形缓冲、进程内快照；只做排查入口，不替代 stdout/SIEM/WORM | `internal/domain/types.go`、`internal/platform/audit/history.go`、`internal/modules/audithistory/**`、`internal/bootstrap/{app,router,routes_test}.go`、`api/openapi.yaml`、`web/src/features/audit/*`、`web/src/router.tsx` | app/http/audit race 测试；OpenAPI/TS typecheck；Vitest/MSW；mock Chromium/Firefox；真实 OIDC 权限/过滤/分页/排序/400；真实本地认证 | 未认证 401、viewer/operator 403、admin 200；登录、scale、Secret reveal、denied/failure 可查询；重启后清空且有容量上界 | v2.45 当前候选实验室已验收；企业 SIEM、持久化/WORM 与生产发布仍未验收 |
-| WBS-4.2 配置与 Secret | 列表只返回元数据；reveal 需敏感读权限、二次确认、`no-store` 和审计 | `internal/modules/configuration`、`platform/kube/configuration.go`、配置页 | 脱敏/reveal/授权/审计测试 | 真实 Secret reveal 与 YAML 脱敏 | 实验室已验收；企业 IdP 待复验 |
+| WBS-4.2 配置与 Secret | 列表只返回元数据；点击“查看明文”可直接 reveal，仍需敏感读权限、`no-store` 和审计 | `internal/modules/configuration`、`platform/kube/configuration.go`、配置页 | 脱敏/reveal/授权/审计测试 | 真实 Secret reveal 与 YAML 脱敏 | 实验室已验收；企业 IdP 待复验 |
 | WBS-5.1 安全写操作 | 前端确认 + 后端授权 + CSRF + audit；写请求不自动重试 | `internal/modules/workloads/app/service.go`、`platform/kube/workloads.go`、`scripts/e2e-workload-lifecycle.sh` | scale/restart/delete 成功、400、403、409、审计测试；当前 digest 独立夹具对账 | `make e2e-workload-lifecycle`：预览→创建→扩容→镜像更新→重启→删除，kubectl/审计/清理全部通过 | 当前候选实验室已验收；证据见 21.2.36 |
 | WBS-5.8 工作负载镜像更新 | 仅 Deployment/StatefulSet/DaemonSet；容器级镜像 DTO；GET→resourceVersion 校验→typed Update；旧版本且目标镜像不同返回 409，目标已达成时幂等成功；Job/CronJob 501；独立 `updateImage` capability 和 `update-image` 审计 | `internal/domain/{types}.go`、`workloads/app/{service,image}.go`、`workloads/http/handler.go`、`platform/kube/workloads.go`、`api/openapi.yaml`、`web/src/features/workloads/workload-detail-page.tsx` | app/http/kube 定向测试、fake client 冲突/幂等/缺失容器、OpenAPI/TS typecheck、Vitest 51/51、隔离 mock Chromium/Firefox 各 37/37、隔离集群 kubectl 对账 | 隔离集群更新三种工作负载、kubectl 对账、其他容器不变、409 不覆盖、Job/CronJob 501、审计检索 | 已完成当前候选真实隔离集群验收；证据见 21.2.35 |
 | WBS-5.9 CronJob 暂停/恢复 | 仅 CronJob；专用 `suspend`/`resume` 用例；独立 `suspendCronJob` capability；GET→resourceVersion 校验→typed Update；目标状态未生效的旧版本返回 409，目标状态已生效时幂等成功；非 CronJob 501；审计动作分别为 `suspend`/`resume` | `internal/domain/types.go`、`workloads/app/{service,suspend}.go`、`workloads/http/handler.go`、`platform/kube/workloads.go`、`api/openapi.yaml`、`web/src/features/workloads/workload-detail-page.tsx` | app/http/kube 定向测试、fake client 冲突/幂等、OpenAPI/TS typecheck、Vitest 51/51、隔离容器 mock Chromium/Firefox 各 37/37、隔离集群 75 秒暂停窗口与恢复调度对账 | 隔离集群暂停→确认不再创建新 Job→恢复、kubectl 对账、已有 Job 不变、409 不覆盖、非 CronJob 501、审计检索 | 已完成当前候选真实隔离集群验收；证据见 21.2.35 |
@@ -1521,7 +1521,7 @@ requestId 的审计验收，证据见 21.2.27。生产环境节点未执行测�
 | CFG-U-001 | U | P0 | 系统应列出 ConfigMap 的键数量、数据大小和更新时间，并支持查看非敏感内容。 | 与 K8s 对比。 |
 | SCR-U-001 | U | P0 | 系统应在 Secret 列表中仅返回名称、类型、键名、大小和更新时间，不返回值。 | 接口响应测试。 |
 | SCR-U-002 | U | P0 | 系统应默认隐藏 Secret 详情中的值，使用显式“查看明文”动作。 | UI 与接口测试。 |
-| SCR-E-001 | E | P0 | 当用户查看 Secret 明文时，系统应要求二次确认、执行权限检查并写入审计日志。 | 安全测试。 |
+| SCR-E-001 | E | P0 | 当用户点击查看 Secret 明文时，系统应直接执行权限检查并写入审计日志。 | 安全测试。 |
 | STO-U-001 | U | P0 | 系统应列出 StorageClass、PV、PVC；无资源时显示空状态。 | 当前集群验收。 |
 | STO-U-002 | U | P0 | 当用户打开 StorageClass 详情时，系统应展示 provisioner、回收策略、卷绑定模式、默认标记、扩容、参数、挂载选项、标签、注解和创建时间。 | 隔离 API 与浏览器详情验收。 |
 | STO-U-003 | U | P0 | 当用户打开 PV 详情时，系统应展示容量、访问模式、回收策略、状态、StorageClass、卷模式、CSI Driver、mount options 和绑定的 claim。 | 隔离 API 与浏览器详情验收。 |
@@ -2036,7 +2036,7 @@ client secret 只以 `secretKeyRef` 出现；端口仍为 32626，命名空间�
 - 日志流正常结束必须收到 `end`；响应头后的读取失败必须收到结构化 `error` 和 `requestId`，不得输出
   无类型哨兵文本。
 - Secret 列表响应不含任何值。
-- reveal 请求需要权限、二次确认和审计；响应包含 `Cache-Control: no-store`。
+- reveal 请求需要权限和审计；响应包含 `Cache-Control: no-store`。
 - 日志和事件中的 HTML 不会被执行。
 
 **关联需求**：LOG-U-001 至 LOG-N-002、EVT-U-001 至 EVT-N-001、CFG-U-001、SCR-U-001 至 SCR-E-001、YML-U-001、YML-U-002、API-N-003、SEC-U-003、SEC-N-002。
@@ -2705,7 +2705,7 @@ kubectl delete clusterrolebinding dosh-e2e-viewers dosh-e2e-admins dosh-oidc-e2e
 2. 首版在只读功能通过后启用扩容、重启、删除和受控 YAML apply；每次写操作都有 CSRF、后端授权和审计。
 3. Metrics Server 作为独立运维依赖安装在 `dosh-metrics`，不由 `dosh` Helm Release 管理；页面必须支持真实 usage 和 Metrics 缺失时的 requests 降级，不得伪造 0%。
 4. 当前实验环境使用自签 TLS；生产部署必须替换为受信证书。
-5. 删除要求输入资源名确认；Secret 明文要求输入 Secret 名确认；扩容和重启使用确认弹窗。
+5. 删除要求输入资源名确认；Secret 明文点击后直接读取；扩容和重启使用确认弹窗。
 6. 列表筛选状态以 URL 为唯一可分享来源，页面刷新和浏览器历史必须恢复 `q`、`namespace`、`kind`。
 7. 审计以 stdout 为必选基线；Webhook 是可选旁路，启用时必须通过 Secret 注入凭据并限制出口网段。
 8. chi 仅做 transport；若新增路由导致 Handler 出现业务分支或跨模块 import，应停止实现并先调整端口设计。
@@ -4456,7 +4456,7 @@ Metrics、Kubernetes 重试、真实 Loki、长连接、工作负载写入生命
 | 候选 | `0.1.4-rc-secretdecode-20261104T120606Z@sha256:c7eff34a80ca1be0de50d12cd27b97d52ca54029329ed7b19e4bcc70c283ab06`，image ID `051c50c635fe655f1943ef7a551a99ed56671bb890383044e042adf6793fedbf` |
 | 实现落点 | `web/src/lib/secret-value.ts`、`web/src/lib/secret-value.test.ts`、`web/src/features/configuration/configuration-page.tsx`、`web/src/app.integration.test.tsx`、`web/e2e/dosh.spec.ts` |
 | 解码语义 | 有效 Base64 且解码结果为无禁止控制字符的 UTF-8 文本时展示并复制明文；合法 Base64 但非 UTF-8 或含禁止控制字符时标记“Base64（二进制）”并保留原值；非法 Base64 标记“无法解码”并安全回退原始响应；支持 URL-safe 字母表、空白和缺失 padding |
-| 安全边界 | 仅在前端已确认 reveal 成功且用户完成名称二次确认后处理响应；不写浏览器持久存储、不记录请求/响应敏感数据；二进制和非法值不会误显示为可读明文；复制按钮复制当前实际展示语义对应的值 |
+| 安全边界 | 前端点击后直接请求 reveal，仅在请求成功后处理响应；不写浏览器持久存储、不记录请求/响应敏感数据；二进制和非法值不会误显示为可读明文；复制按钮复制当前实际展示语义对应的值 |
 | 单元/集成 | 新增空白、URL-safe、缺 padding、空值、UTF-8 多行、二进制控制字节、非法 Base64 解析测试；Vitest 集成断言文本值不再显示 Base64、二进制仍显示 Base64；Playwright mock 覆盖 Secret 解码主路径 |
 | 本地门禁 | `make verify`、Vitest `62/62`、全量 `go test -race -count=1 ./...`、TypeScript、生产前端构建、mock Chromium/Firefox/WebKit 各 `38/38`、`make playwright-check`、`make evidence-check` 和 `make release-gate-schema-check` 通过；Playwright 使用 `workers=1`、`retries=0`、每浏览器独立容器和宿主 `flock` |
 | Playwright 资源 | 默认 `memory=4g`、`cpus=2`、私有 `/dev/shm=1g`、`pids=2048`、20 分钟硬超时；硬上限 `6g/4 CPU/1g shm/2048 PIDs`；CI 矩阵 `max-parallel: 1`，每个浏览器单独容器；禁止 `--workers`、正数 `--retries` 和 `--ipc=host` 覆盖 |
@@ -4568,7 +4568,7 @@ App `0.1.2`、NodePort `32626` 和 2/2 Ready。
 | 空依赖降级 | ingress/storageclass/PV/PVC 返回空列表，不导致白屏 | 通过 |
 | 日志流 | 真实 CoreDNS Pod 日志请求 200，返回文本 | 通过 |
 | Events SSE | 连接收到 `: connected`，创建临时 ConfigMap 后收到真实 `event` 帧 | 通过 |
-| Secret reveal | 二次确认后 200；`Cache-Control: no-store`；审计记录 success | 通过 |
+| Secret reveal | 点击后直接请求返回 200；`Cache-Control: no-store`；审计记录 success | 通过 |
 | SPA fallback | 登录后请求 `/pods` 返回 HTML；未知 `/api/v1/*` 返回 404 Problem | 通过 |
 | YAML Dry Run | ConfigMap 与 Deployment dry-run 均 200，且不产生 Kubernetes 资源 | 通过 |
 | YAML Apply | ConfigMap 数据实际写入；临时 Deployment 实际创建并 Ready | 通过 |

@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import CodeMirror from "@uiw/react-codemirror";
 import { yaml as yamlLanguage } from "@codemirror/lang-yaml";
+import { EditorView } from "@codemirror/view";
 import { CheckCircle2, FileCode2, Loader2, Pencil, RotateCcw, Save } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/api/client";
@@ -53,7 +54,7 @@ export function YamlPanel({ type, name, namespace, height = "58vh" }: {
         ) : null}
       </div>
       <div className="overflow-hidden rounded-md border">
-        <CodeMirror value={value} onChange={setValue} extensions={[yamlLanguage()]} editable={editing} height={height} theme={theme} basicSetup={{ lineNumbers: true, foldGutter: true, highlightActiveLine: editing }} />
+        <CodeMirror value={value} onChange={setValue} extensions={[yamlLanguage(), EditorView.lineWrapping]} editable={editing} height={height} theme={theme} basicSetup={{ lineNumbers: true, foldGutter: true, highlightActiveLine: editing }} />
       </div>
       {editing ? (
         <div className="flex justify-end gap-2">

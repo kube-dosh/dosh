@@ -2,6 +2,7 @@ package kube
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strconv"
 	"strings"
@@ -93,6 +94,26 @@ func TestGetWorkloadConvertsSummaryConditionsAndPods(t *testing.T) {
 	}
 	if len(detail.Containers) != 1 || detail.Containers[0].Name != "api" || detail.Containers[0].Image != "registry.test/api:1" {
 		t.Fatalf("containers = %#v", detail.Containers)
+	}
+}
+
+func TestGetWorkloadSerializesEmptyCollectionsAsArrays(t *testing.T) {
+	client, _ := newFakeKubeClient(testDeployment())
+	detail, err := client.GetWorkload(context.Background(), "deployment", "prod", "api")
+	if err != nil {
+		t.Fatalf("GetWorkload() error = %v", err)
+	}
+	if detail.Conditions == nil || detail.Pods == nil || detail.Containers == nil {
+		t.Fatalf("detail collections must be non-nil: %#v", detail)
+	}
+	payload, err := json.Marshal(detail)
+	if err != nil {
+		t.Fatalf("marshal workload detail: %v", err)
+	}
+	for _, field := range []string{`"conditions":[]`, `"pods":[]`} {
+		if !strings.Contains(string(payload), field) {
+			t.Fatalf("workload detail JSON does not contain %s: %s", field, payload)
+		}
 	}
 }
 

@@ -119,7 +119,7 @@ func (c *Client) GetWorkload(ctx context.Context, kind, namespace, name string) 
 	defer cancel()
 	var summary domain.WorkloadSummary
 	var selector *metav1.LabelSelector
-	var conditions []domain.Condition
+	conditions := make([]domain.Condition, 0)
 	var containers []corev1.Container
 	switch strings.ToLower(kind) {
 	case "deployment":

@@ -143,7 +143,8 @@ func (s *Service) Get(ctx context.Context) (domain.Overview, error) {
 			warningEvents++
 		}
 	}
-	recent := events
+	recent := make([]domain.Event, 0, len(events))
+	recent = append(recent, events...)
 	if len(recent) > 8 {
 		recent = recent[:8]
 	}

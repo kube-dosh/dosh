@@ -235,7 +235,7 @@ export function DeploymentCreateDialog({ open, onOpenChange, initialNamespace }:
               <div className="mb-2 flex items-center gap-2 text-sm font-medium"><FileCode2 className="h-4 w-4" />YAML 预览</div>
               <div className="max-h-72 overflow-auto rounded-md border bg-slate-950 p-3 text-xs text-slate-100">
                 {previewMutation.isPending ? <span className="flex items-center gap-2 text-slate-300"><Loader2 className="h-4 w-4 animate-spin" />正在生成预览</span> : null}
-                {preview ? <pre className="whitespace-pre-wrap font-mono">{preview}</pre> : null}
+                {preview ? <pre className="soft-wrap max-w-full whitespace-pre-wrap font-mono">{preview}</pre> : null}
                 {!previewMutation.isPending && !preview ? <span className="text-slate-300">预览暂不可用，请返回修改后重试。</span> : null}
               </div>
             </div>

@@ -277,7 +277,10 @@ func ingressSummary(item networkingv1.Ingress) domain.IngressSummary {
 	if item.Spec.IngressClassName != nil {
 		class = *item.Spec.IngressClassName
 	}
-	summary := domain.IngressSummary{Name: item.Name, Namespace: item.Namespace, Class: class, CreatedAt: item.CreationTimestamp.Time}
+	summary := domain.IngressSummary{
+		Name: item.Name, Namespace: item.Namespace, Class: class, CreatedAt: item.CreationTimestamp.Time,
+		Paths: make([]domain.IngressPath, 0), TLSHosts: make([]string, 0),
+	}
 	for _, tls := range item.Spec.TLS {
 		summary.TLSHosts = append(summary.TLSHosts, tls.Hosts...)
 	}
@@ -309,7 +312,7 @@ func ingressDetail(item networkingv1.Ingress, servicePorts map[string]map[string
 		detail.DefaultBackend = &backend
 	}
 	for _, tls := range item.Spec.TLS {
-		detail.TLS = append(detail.TLS, domain.IngressTLS{Hosts: append([]string(nil), tls.Hosts...), SecretName: tls.SecretName})
+		detail.TLS = append(detail.TLS, domain.IngressTLS{Hosts: append([]string{}, tls.Hosts...), SecretName: tls.SecretName})
 	}
 	return detail
 }

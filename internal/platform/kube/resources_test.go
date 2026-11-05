@@ -64,6 +64,9 @@ func TestListPodsSearchAndGetPodConversion(t *testing.T) {
 	if detail.Containers[0].State != "Running" || !detail.Containers[0].Ready {
 		t.Fatalf("container state = %#v", detail.Containers[0])
 	}
+	if detail.Conditions == nil || detail.Containers == nil {
+		t.Fatalf("pod detail collections must be non-nil: %#v", detail)
+	}
 }
 
 func TestGetNamespaceIncludesQuotasAndLimitRanges(t *testing.T) {
@@ -128,6 +131,12 @@ func TestListNodesIncludesRequestsPodsAndRoles(t *testing.T) {
 	}
 	if len(detail.Conditions) != 1 {
 		t.Fatalf("node detail = %#v", detail)
+	}
+	if detail.Pods == nil || len(detail.Pods) != 1 || detail.Pods[0].Name != "api-0" {
+		t.Fatalf("node detail pods = %#v", detail.Pods)
+	}
+	if detail.Taints == nil {
+		t.Fatalf("node detail taints must be non-nil: %#v", detail)
 	}
 	pods, err := client.ListPodsForNode(context.Background(), "worker-1")
 	if err != nil || len(pods) != 1 {

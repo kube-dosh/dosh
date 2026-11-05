@@ -84,5 +84,6 @@
   .scrollbar-thin::-webkit-scrollbar { width: 6px; height: 6px; }
   .scrollbar-thin::-webkit-scrollbar-thumb { @apply rounded-full bg-border; }
   .scrollbar-thin::-webkit-scrollbar-track { background: transparent; }
+  .soft-wrap { overflow-wrap: anywhere; word-break: normal; }
 }
 

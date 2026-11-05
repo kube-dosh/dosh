@@ -79,12 +79,18 @@ func (c *Client) GetNode(ctx context.Context, name string) (domain.NodeDetail, e
 	detail := domain.NodeDetail{
 		NodeSummary: summary,
 		Conditions:  nodeConditionList(node.Status.Conditions),
+		Taints:      make([]domain.Taint, 0, len(node.Spec.Taints)),
 		Labels:      node.Labels,
 		Annotations: node.Annotations,
+		Pods:        make([]domain.PodSummary, 0, len(pods.Items)),
 	}
 	for _, taint := range node.Spec.Taints {
 		detail.Taints = append(detail.Taints, domain.Taint{Key: taint.Key, Value: taint.Value, Effect: string(taint.Effect)})
 	}
+	for _, pod := range pods.Items {
+		detail.Pods = append(detail.Pods, podSummary(pod))
+	}
+	sortPods(detail.Pods)
 	return detail, nil
 }
 

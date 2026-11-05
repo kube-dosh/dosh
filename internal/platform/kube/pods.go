@@ -53,6 +53,8 @@ func (c *Client) GetPod(ctx context.Context, namespace, name string) (domain.Pod
 		PodSummary:     summary,
 		QOSClass:       string(pod.Status.QOSClass),
 		ServiceAccount: pod.Spec.ServiceAccountName,
+		Containers:     make([]domain.Container, 0, len(pod.Spec.Containers)),
+		Conditions:     make([]domain.Condition, 0, len(pod.Status.Conditions)),
 	}
 	for _, condition := range pod.Status.Conditions {
 		detail.Conditions = append(detail.Conditions, domain.Condition{

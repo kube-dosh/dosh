@@ -261,13 +261,28 @@ describe("dosh application", () => {
 
     expect(await screen.findByRole("cell", { name: "app-secret" })).toBeInTheDocument();
     fireEvent.click(await screen.findByRole("button", { name: "查看明文" }));
-    fireEvent.change(await screen.findByLabelText("Secret 名称"), { target: { value: "app-secret" } });
-    fireEvent.click(screen.getByRole("button", { name: "确认查看" }));
 
     expect(await screen.findByLabelText("token 值")).toHaveTextContent("token=abc");
     expect(screen.getByLabelText("token 值")).not.toHaveTextContent(encodedToken);
     expect(await screen.findByLabelText("blob 值")).toHaveTextContent(encodedBinary);
     expect(screen.getByText("Base64（二进制）")).toBeInTheDocument();
+  });
+
+  it("soft-wraps long Secret values inside the reveal dialog", async () => {
+    const longValue = "x".repeat(4096);
+    const secret = { name: "long-secret", namespace: "default", type: "Opaque", keys: [{ key: "payload", size: longValue.length }], createdAt: "2026-11-02T00:00:00Z" };
+    server.use(
+      http.get("/api/v1/configmaps", () => HttpResponse.json({ items: [], meta: { total: 0 } })),
+      http.get("/api/v1/secrets", () => HttpResponse.json({ items: [secret], meta: { total: 1 } })),
+      http.post("/api/v1/secrets/default/long-secret/reveal", () => HttpResponse.json({ ...secret, data: { payload: Buffer.from(longValue).toString("base64") } })),
+    );
+    renderRoute("/configuration?tab=secrets");
+
+    fireEvent.click(await screen.findByRole("button", { name: "查看明文" }));
+
+    const value = await screen.findByLabelText("payload 值");
+    expect(value).toHaveClass("soft-wrap");
+    expect(value).toHaveTextContent(longValue);
   });
 
   it("shows server certificate metadata and reloads it", async () => {
@@ -600,6 +615,24 @@ describe("dosh application", () => {
     fireEvent.click(podsTab);
     await waitFor(() => expect(router.state.location.search).toMatchObject({ tab: "pods" }));
     expect(screen.getByRole("tab", { name: /实例/ })).toHaveAttribute("aria-selected", "true");
+  });
+
+  it("renders workload detail when collection fields are null", async () => {
+    server.use(http.get("/api/v1/workloads/deployment/default/web-api", () => HttpResponse.json({
+      ...workload,
+      name: "web-api",
+      images: null,
+      conditions: null,
+      selector: null,
+      pods: null,
+      containers: null,
+    })));
+
+    renderRoute("/workloads/deployment/default/web-api");
+
+    expect(await screen.findByRole("heading", { name: "web-api" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "实例 (0)" })).toBeInTheDocument();
+    expect(screen.getByText("暂无 Condition 数据")).toBeInTheDocument();
   });
 
   it("restores node detail tabs and scopes events to the node", async () => {
