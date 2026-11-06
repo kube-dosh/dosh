@@ -11,6 +11,7 @@ import { MetadataCard } from "@/components/resources/metadata-card";
 import { YamlPanel } from "@/components/resources/yaml-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ResourceEvents } from "@/features/events/resource-events";
 import { formatDate } from "@/lib/utils";
@@ -38,22 +39,20 @@ function QuotaCard({ quota }: { quota: ResourceQuota }) {
       </CardHeader>
       <CardContent className="px-0 pb-0">
         {resources.length ? (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead className="border-y bg-muted/30 text-left text-xs text-muted-foreground">
-                <tr><th className="px-5 py-2 font-medium">资源</th><th className="px-5 py-2 font-medium">已使用</th><th className="px-5 py-2 font-medium">硬限制</th></tr>
-              </thead>
-              <tbody>
-                {resources.map((resource) => (
-                  <tr key={resource} className="border-b last:border-0">
-                    <td className="px-5 py-3 font-mono text-xs">{resource}</td>
-                    <td className="px-5 py-3 font-mono text-xs">{quota.used?.[resource] || "0"}</td>
-                    <td className="px-5 py-3 font-mono text-xs font-medium">{quota.hard?.[resource] || "—"}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <Table>
+            <TableHeader>
+              <TableRow><TableHead>资源</TableHead><TableHead>已使用</TableHead><TableHead>硬限制</TableHead></TableRow>
+            </TableHeader>
+            <TableBody>
+              {resources.map((resource) => (
+                <TableRow key={resource}>
+                  <TableCell className="font-mono text-xs">{resource}</TableCell>
+                  <TableCell className="font-mono text-xs">{quota.used?.[resource] || "0"}</TableCell>
+                  <TableCell className="font-mono text-xs font-medium">{quota.hard?.[resource] || "—"}</TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
         ) : <p className="px-5 py-8 text-center text-sm text-muted-foreground">该 ResourceQuota 没有状态数据</p>}
       </CardContent>
     </Card>

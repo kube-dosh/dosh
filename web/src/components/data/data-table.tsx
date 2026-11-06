@@ -28,6 +28,7 @@ interface DataTableProps<T> {
 
 export function DataTable<T>({ columns, data, loading = false, empty, pageSize = 20, onRowClick, className }: DataTableProps<T>) {
   const [sorting, setSorting] = useState<SortingState>([]);
+  const minimumWidth = Math.max(640, columns.length * 120);
   const table = useReactTable({
     data,
     columns,
@@ -51,7 +52,7 @@ export function DataTable<T>({ columns, data, loading = false, empty, pageSize =
 
   return (
     <div className={cn("overflow-hidden rounded-lg border bg-card", className)}>
-      <Table>
+      <Table style={{ minWidth: `${minimumWidth}px` }}>
         <TableHeader>
           {table.getHeaderGroups().map((headerGroup) => (
             <TableRow key={headerGroup.id}>
@@ -59,7 +60,11 @@ export function DataTable<T>({ columns, data, loading = false, empty, pageSize =
                 const sortable = header.column.getCanSort();
                 const sorted = header.column.getIsSorted();
                 return (
-                  <TableHead key={header.id} style={{ width: header.column.getSize() === 150 ? undefined : header.getSize() }}>
+                  <TableHead
+                    key={header.id}
+                    style={{ width: header.column.getSize() === 150 ? undefined : header.getSize() }}
+                    className={cn(header.index === 0 && "sticky left-0 z-20 min-w-44 bg-muted shadow-[1px_0_0_hsl(var(--border))] md:static md:z-auto md:min-w-0 md:bg-transparent md:shadow-none")}
+                  >
                     {header.isPlaceholder ? null : (
                       <button
                         type="button"
@@ -85,7 +90,11 @@ export function DataTable<T>({ columns, data, loading = false, empty, pageSize =
               tabIndex={onRowClick ? 0 : undefined}
               onKeyDown={onRowClick ? (event) => { if (event.key === "Enter") onRowClick(row.original); } : undefined}
             >
-              {row.getVisibleCells().map((cell) => <TableCell key={cell.id}>{flexRender(cell.column.columnDef.cell, cell.getContext())}</TableCell>)}
+              {row.getVisibleCells().map((cell, index) => (
+                <TableCell key={cell.id} className={cn(index === 0 && "sticky left-0 z-10 min-w-44 bg-card shadow-[1px_0_0_hsl(var(--border))] md:static md:z-auto md:min-w-0 md:bg-transparent md:shadow-none")}>
+                  {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                </TableCell>
+              ))}
             </TableRow>
           )) : <TableEmpty colSpan={columns.length}>{empty ?? "暂无数据"}</TableEmpty>}
         </TableBody>

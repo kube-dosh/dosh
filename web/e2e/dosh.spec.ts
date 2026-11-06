@@ -933,6 +933,13 @@ test("移动端可通过导航抽屉访问节点", async ({ page }) => {
   await expect(page).toHaveURL(/\/nodes$/);
   await expect(page.getByRole("heading", { name: "节点管理" })).toBeVisible();
   await expect(page.getByRole("link", { name: "worker-0001" })).toBeVisible();
+
+  const tableRegion = page.getByRole("region", { name: "可滚动表格" });
+  await expect(tableRegion).toBeVisible();
+  await expect(page.getByText("左右滑动查看完整列")).toBeVisible();
+  expect(await tableRegion.evaluate((element) => element.scrollWidth > element.clientWidth)).toBe(true);
+  expect(await page.getByRole("columnheader", { name: /节点名称/ }).evaluate((element) => getComputedStyle(element).whiteSpace)).toBe("nowrap");
+  expect(await page.getByRole("row").nth(1).evaluate((element) => element.getBoundingClientRect().height)).toBeLessThan(64);
 });
 
 test("命名空间筛选写入 URL 并在刷新后恢复", async ({ page }) => {

@@ -3,13 +3,19 @@ import { cn } from "@/lib/utils";
 
 const Table = React.forwardRef<HTMLTableElement, React.HTMLAttributes<HTMLTableElement>>(
   ({ className, ...props }, ref) => (
-    <div
-      role="region"
-      aria-label="可滚动表格"
-      tabIndex={0}
-      className="relative w-full max-w-full overflow-auto rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
-    >
-      <table ref={ref} className={cn("w-full caption-bottom text-sm", className)} {...props} />
+    <div className="w-full max-w-full">
+      <div className="flex items-center justify-between border-b bg-muted/20 px-3 py-2 text-[11px] text-muted-foreground md:hidden">
+        <span>左右滑动查看完整列</span>
+        <span aria-hidden="true">← →</span>
+      </div>
+      <div
+        role="region"
+        aria-label="可滚动表格"
+        tabIndex={0}
+        className="scrollbar-thin relative w-full max-w-full overflow-auto overscroll-x-contain rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+      >
+        <table ref={ref} className={cn("w-full min-w-[640px] caption-bottom text-sm", className)} {...props} />
+      </div>
     </div>
   ),
 );
@@ -34,13 +40,13 @@ TableRow.displayName = "TableRow";
 
 const TableHead = React.forwardRef<HTMLTableCellElement, React.ThHTMLAttributes<HTMLTableCellElement>>(
   ({ className, ...props }, ref) => (
-    <th ref={ref} className={cn("soft-wrap h-10 px-4 text-left align-middle text-xs font-medium uppercase tracking-wide text-muted-foreground", className)} {...props} />
+    <th ref={ref} className={cn("soft-wrap h-10 whitespace-nowrap px-4 text-left align-middle text-xs font-medium uppercase tracking-wide text-muted-foreground", className)} {...props} />
   ),
 );
 TableHead.displayName = "TableHead";
 
 const TableCell = React.forwardRef<HTMLTableCellElement, React.TdHTMLAttributes<HTMLTableCellElement>>(
-  ({ className, ...props }, ref) => <td ref={ref} className={cn("soft-wrap h-11 min-w-0 px-4 align-middle", className)} {...props} />,
+  ({ className, ...props }, ref) => <td ref={ref} className={cn("soft-wrap h-11 min-w-0 whitespace-nowrap px-4 align-middle", className)} {...props} />,
 );
 TableCell.displayName = "TableCell";
 
