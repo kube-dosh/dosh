@@ -85,7 +85,12 @@ const nodeSummary: NodeSummary = {
 const nodeDetail: NodeDetail = {
   ...nodeSummary,
   conditions: [{ type: "Ready", status: "True", reason: "KubeletReady" }],
-  taints: [],
+  taints: [{
+    key: "node-role.kubernetes.io/control-plane",
+    value: "",
+    effect: "NoSchedule",
+    timeAdded: "2026-11-02T00:00:00Z",
+  }],
   resourceVersion: "1",
   labels: { "kubernetes.io/hostname": nodeSummary.name },
   annotations: { "node.alpha.kubernetes.io/ttl": "0" },
@@ -1356,6 +1361,39 @@ test.describe("Android Chrome 视口", () => {
     expect(layout.mainRight).toBeLessThanOrEqual(layout.viewportWidth + 1);
     expect(layout.textSizeAdjust).toBe("100%");
     expect(layout.bodyOverflowX).toBe("clip");
+  });
+
+  test("平板横屏使用移动抽屉，顶部栏和污点摘要不溢出", async ({ page }) => {
+    test.setTimeout(120_000);
+    await installApiMocks(page);
+    await page.setViewportSize({ width: 782, height: 361 });
+
+    for (const path of ["/nodes/worker-0001", "/nodes/worker-0001?tab=labels", "/nodes/worker-0001?tab=taints"]) {
+      await page.goto(path);
+      await page.locator("main h1").waitFor({ state: "visible" });
+      await expectNoPageOverflow(page, `Android landscape ${path}`);
+    }
+
+    await page.goto("/nodes/worker-0001");
+    await page.locator("main h1").waitFor({ state: "visible" });
+    const headerOverflow = await page.locator("header").evaluate((header) => {
+      const bounds = header.getBoundingClientRect();
+      return Array.from(header.querySelectorAll<HTMLElement>("*"))
+        .map((element) => ({ element, rect: element.getBoundingClientRect() }))
+        .filter(({ rect }) => rect.width > 0 && rect.right > bounds.right + 1)
+        .map(({ element, rect }) => ({ tag: element.tagName, right: rect.right, className: String(element.className).slice(0, 80) }));
+    });
+    expect(headerOverflow).toEqual([]);
+
+    const summary = page.getByTestId("node-taints-summary");
+    const summaryOverflow = await summary.evaluate((element) => ({ clientWidth: element.clientWidth, scrollWidth: element.scrollWidth }));
+    expect(summaryOverflow.scrollWidth).toBeLessThanOrEqual(summaryOverflow.clientWidth + 1);
+
+    await expect(page.getByRole("button", { name: "打开导航" })).toBeVisible();
+    const aside = await page.locator("aside").boundingBox();
+    expect(aside).not.toBeNull();
+    expect(aside!.x + aside!.width).toBeLessThanOrEqual(1);
+    await page.screenshot({ path: "test-results/mobile-android/tablet-landscape.png", fullPage: false });
   });
 });
 

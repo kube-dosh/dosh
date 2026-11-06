@@ -86,7 +86,7 @@ export function NodeDetailPage() {
           </div>
           <div className="mt-4 grid gap-4 xl:grid-cols-2">
             <Card><CardHeader><CardTitle>Conditions</CardTitle></CardHeader><CardContent className="p-0"><SimpleConditions conditions={node.conditions} /></CardContent></Card>
-            <Card><CardHeader className="flex-row items-start justify-between gap-3"><CardTitle>Taints</CardTitle><Button variant="ghost" size="sm" onClick={() => changeTab("taints")}>{canManageNode ? "管理污点" : "查看全部"}</Button></CardHeader><CardContent className="p-0"><SimpleTaints taints={node.taints} /></CardContent></Card>
+            <Card data-testid="node-taints-summary"><CardHeader className="flex-row items-start justify-between gap-3"><CardTitle>Taints</CardTitle><Button variant="ghost" size="sm" onClick={() => changeTab("taints")}>{canManageNode ? "管理污点" : "查看全部"}</Button></CardHeader><CardContent className="p-0"><SimpleTaints taints={node.taints} /></CardContent></Card>
           </div>
           <Card className="mt-4"><CardHeader className="flex-row items-start justify-between gap-3"><CardTitle>标签与注解</CardTitle><Button variant="ghost" size="sm" onClick={() => changeTab("labels")}>{canManageNode ? "管理标签" : "查看全部"}</Button></CardHeader><CardContent className="grid gap-5 lg:grid-cols-2"><MetadataList title="Labels" data={node.labels} /><MetadataList title="Annotations" data={node.annotations} /></CardContent></Card>
         </TabsContent>
@@ -129,6 +129,6 @@ function SimpleConditions({ conditions }: { conditions: Condition[] }) {
 
 function SimpleTaints({ taints }: { taints: Taint[] }) {
   if (!taints.length) return <p className="px-5 py-8 text-sm text-muted-foreground">没有配置 Taint。</p>;
-  return <div className="space-y-2 p-5">{taints.map((taint) => <div key={`${taint.key}-${taint.effect}`} className="flex items-center justify-between rounded-md border px-3 py-2 text-sm"><span className="font-mono">{taint.key}{taint.value ? `=${taint.value}` : ""}</span><Badge variant="warning">{taint.effect}</Badge></div>)}</div>;
+  return <div className="space-y-2 p-5">{taints.map((taint) => <div key={`${taint.key}-${taint.effect}`} className="flex min-w-0 flex-col items-start gap-2 rounded-md border px-3 py-2 text-sm sm:flex-row sm:items-center sm:justify-between"><span className="min-w-0 break-all font-mono">{taint.key}{taint.value ? `=${taint.value}` : ""}</span><Badge variant="warning" className="shrink-0">{taint.effect}</Badge></div>)}</div>;
 }
 

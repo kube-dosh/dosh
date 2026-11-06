@@ -93,7 +93,7 @@ export function AppShell() {
   return (
     <div className="min-h-screen w-full min-w-0 max-w-full overflow-x-clip bg-background">
       <header className="sticky top-0 z-40 flex h-14 w-full min-w-0 max-w-full items-center overflow-x-clip border-b bg-card/95 px-4 backdrop-blur md:px-5">
-        <Button variant="ghost" size="icon" className="mr-2 shrink-0 md:hidden" onClick={() => setMobileOpen(true)} aria-label="打开导航" aria-expanded={mobileOpen} aria-controls="app-navigation"><Menu className="h-5 w-5" /></Button>
+        <Button variant="ghost" size="icon" className="mr-2 shrink-0 lg:hidden" onClick={() => setMobileOpen(true)} aria-label="打开导航" aria-expanded={mobileOpen} aria-controls="app-navigation"><Menu className="h-5 w-5" /></Button>
         <Link to="/" className="flex shrink-0 items-center gap-2.5">
           <div className="grid h-8 w-8 place-items-center rounded-lg bg-primary text-sm font-bold text-primary-foreground shadow-sm">D</div>
           <div className="hidden sm:block">
@@ -108,10 +108,10 @@ export function AppShell() {
           <span className="text-muted-foreground">/ {cluster.label}</span>
         </div>
         <div className="ml-auto flex min-w-0 shrink-0 items-center gap-1 sm:gap-1.5">
-          <button type="button" onClick={() => setSearchOpen(true)} className="hidden h-9 w-64 items-center gap-2 rounded-md border bg-muted/35 px-3 text-sm text-muted-foreground transition-colors hover:bg-muted md:flex">
+          <button type="button" onClick={() => setSearchOpen(true)} className="hidden h-9 w-64 items-center gap-2 rounded-md border bg-muted/35 px-3 text-sm text-muted-foreground transition-colors hover:bg-muted lg:flex">
             <Search className="h-3.5 w-3.5" /><span>搜索资源</span><kbd className="ml-auto rounded border bg-card px-1.5 py-0.5 text-[10px]">⌘ K</kbd>
           </button>
-          <Button variant="ghost" size="icon" className="md:hidden" onClick={() => setSearchOpen(true)} aria-label="搜索"><Search className="h-4 w-4" /></Button>
+          <Button variant="ghost" size="icon" className="lg:hidden" onClick={() => setSearchOpen(true)} aria-label="搜索"><Search className="h-4 w-4" /></Button>
           <Button variant="ghost" size="icon" asChild aria-label="事件" className="hidden sm:inline-flex"><Link to="/events"><Bell className="h-4 w-4" /></Link></Button>
           <Button variant="ghost" size="icon" onClick={toggleTheme} aria-label={theme === "dark" ? "切换为浅色主题" : "切换为深色主题"} aria-pressed={theme === "dark"} className="hidden sm:inline-flex">
             {theme === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
@@ -121,8 +121,8 @@ export function AppShell() {
             <DropdownMenuTrigger asChild>
               <Button variant="ghost" className="h-9 gap-2 px-1.5 sm:px-2">
                 <span className="grid h-6 w-6 place-items-center rounded-full bg-primary/10 text-xs font-semibold text-primary">{(session.data?.user.username || "A").slice(0, 1).toUpperCase()}</span>
-                <span className="hidden max-w-28 truncate text-sm sm:block">{session.data?.user.username || "管理员"}</span>
-                <ChevronDown className="hidden h-3.5 w-3.5 text-muted-foreground sm:block" />
+                <span className="hidden max-w-28 truncate text-sm lg:block">{session.data?.user.username || "管理员"}</span>
+                <ChevronDown className="hidden h-3.5 w-3.5 text-muted-foreground lg:block" />
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-56 max-w-[calc(100vw-1rem)]">
@@ -143,12 +143,12 @@ export function AppShell() {
       </header>
 
       <div className="flex min-h-[calc(100vh-3.5rem)] w-full min-w-0 max-w-full">
-        <aside id="app-navigation" aria-label="主导航" className={cn("fixed inset-y-0 left-0 z-50 w-60 border-r bg-card transition-transform md:sticky md:top-14 md:z-30 md:h-[calc(100vh-3.5rem)] md:translate-x-0", mobileOpen ? "translate-x-0" : "-translate-x-full")}>
-          <div className="flex h-14 items-center justify-between border-b px-4 md:hidden">
+        <aside id="app-navigation" aria-label="主导航" className={cn("fixed inset-y-0 left-0 z-50 flex w-60 flex-col border-r bg-card transition-transform lg:sticky lg:top-14 lg:z-30 lg:h-[calc(100vh-3.5rem)] lg:translate-x-0", mobileOpen ? "translate-x-0" : "-translate-x-full")}>
+          <div className="flex h-14 shrink-0 items-center justify-between border-b px-4 lg:hidden">
             <span className="font-semibold">导航</span>
             <Button variant="ghost" size="icon" onClick={() => setMobileOpen(false)} aria-label="关闭导航"><X className="h-4 w-4" /></Button>
           </div>
-          <nav className="space-y-1 p-3">
+          <nav className="min-h-0 flex-1 space-y-1 overflow-y-auto p-3">
             <p className="px-3 pb-2 pt-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">集群管理</p>
             {nav.filter((item) => !item.adminOnly || session.data?.user.admin).map((item) => {
               const active = item.match(pathname);
@@ -164,7 +164,7 @@ export function AppShell() {
               <Link to="/pods" onClick={() => setMobileOpen(false)} className={cn("flex h-9 items-center gap-3 rounded-md px-3 text-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring", pathname.startsWith("/pods") && "bg-primary/10 font-medium text-primary")}><CircleDot className="h-4 w-4" />Pod 实例</Link>
             </div>
           </nav>
-          <div className="absolute bottom-0 left-0 right-0 border-t p-3">
+          <div className="shrink-0 border-t p-3">
             <div className="rounded-md bg-muted/55 p-3 text-xs" role="status" aria-live="polite" aria-label="集群连接状态">
               <div className="flex items-center gap-2 font-medium">
                 <span className={cn("h-2 w-2 rounded-full", cluster.dotClass)} aria-hidden="true" />
@@ -175,7 +175,7 @@ export function AppShell() {
             </div>
           </div>
         </aside>
-        {mobileOpen ? <button type="button" aria-label="关闭导航菜单" className="fixed inset-0 z-40 bg-slate-950/30 md:hidden" onClick={() => setMobileOpen(false)} /> : null}
+        {mobileOpen ? <button type="button" aria-label="关闭导航菜单" className="fixed inset-0 z-40 bg-slate-950/30 lg:hidden" onClick={() => setMobileOpen(false)} /> : null}
         <main className="w-0 min-w-0 max-w-full flex-1 overflow-x-clip p-4 md:p-6"><div className="mx-auto min-w-0 max-w-[1600px] animate-fade-in"><Outlet /></div></main>
       </div>
 
