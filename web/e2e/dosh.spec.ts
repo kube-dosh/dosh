@@ -249,10 +249,11 @@ function list<T>(items: T[]): ListResponse<T> {
 
 type NodeSchedulingRequest = { method: string; path: string; csrf: string | null };
 
-async function installApiMocks(page: Page, options: { authenticated?: boolean; authMode?: "local" | "token"; overview?: Overview; overviewStatus?: number; nodeSchedulingRequests?: NodeSchedulingRequest[]; expireSessionOnNodes?: boolean; noIngressController?: boolean } = {}) {
+async function installApiMocks(page: Page, options: { authenticated?: boolean; authMode?: "local" | "token"; overview?: Overview; overviewStatus?: number; nodeSchedulingRequests?: NodeSchedulingRequest[]; expireSessionOnNodes?: boolean; noIngressController?: boolean; podName?: string } = {}) {
   const authenticated = options.authenticated ?? true;
   const authMode = options.authMode ?? "local";
   const sessionResponse: SessionResponse = { ...session, authMode };
+  const listedPod = options.podName ? { ...podSummary, name: options.podName } : podSummary;
   let signedIn = authenticated;
   let nodeSchedulingDisabled = false;
   await page.route("**/api/v1/**", async (route) => {
@@ -354,7 +355,7 @@ async function installApiMocks(page: Page, options: { authenticated?: boolean; a
     if (path === "/api/v1/workloads/cronjob/default/backup/suspend" && method === "POST") {
       return json(route, { status: "updated" });
     }
-    if (path === "/api/v1/pods") return json(route, list([podSummary]));
+    if (path === "/api/v1/pods") return json(route, list([listedPod]));
     if (path === "/api/v1/pods/default/web-abcdef-12345") return json(route, podDetail);
     if (path === "/api/v1/pods/default/web-abcdef-12345/logs") {
       return route.fulfill({
@@ -940,6 +941,40 @@ test("移动端可通过导航抽屉访问节点", async ({ page }) => {
   expect(await tableRegion.evaluate((element) => element.scrollWidth > element.clientWidth)).toBe(true);
   expect(await page.getByRole("columnheader", { name: /节点名称/ }).evaluate((element) => getComputedStyle(element).whiteSpace)).toBe("nowrap");
   expect(await page.getByRole("row").nth(1).evaluate((element) => element.getBoundingClientRect().height)).toBeLessThan(64);
+});
+
+test("移动端超长固定列不会遮挡其他列", async ({ page }) => {
+  const longName = `web-${"a".repeat(96)}`;
+  await installApiMocks(page, { podName: longName });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/pods");
+
+  const region = page.getByRole("region", { name: "可滚动表格" });
+  const firstRow = page.getByRole("row").nth(1);
+  const firstCell = firstRow.getByRole("cell").first();
+  const lastCell = firstRow.getByRole("cell").last();
+
+  const firstCellWidth = await firstCell.evaluate((element) => element.getBoundingClientRect().width);
+  expect(firstCellWidth).toBeLessThanOrEqual(150);
+  const truncation = await firstCell.evaluate((element) => {
+    const content = element.firstElementChild as HTMLElement;
+    const style = getComputedStyle(content);
+    return { overflow: style.overflow, textOverflow: style.textOverflow, scrollWidth: content.scrollWidth, clientWidth: content.clientWidth };
+  });
+  expect(truncation.overflow).toBe("hidden");
+  expect(truncation.textOverflow).toBe("ellipsis");
+  expect(truncation.scrollWidth).toBeGreaterThan(truncation.clientWidth);
+
+  await region.evaluate((element) => { element.scrollLeft = element.scrollWidth; });
+  const uncoveredWidth = await lastCell.evaluate((element, stickyWidth) => {
+    const scrollRegion = element.closest("[role=region]")!;
+    const cellRect = element.getBoundingClientRect();
+    const regionRect = scrollRegion.getBoundingClientRect();
+    return Math.min(cellRect.right, regionRect.right) - Math.max(cellRect.left, regionRect.left + stickyWidth);
+  }, firstCellWidth);
+
+  expect(uncoveredWidth).toBeGreaterThan(20);
+  expect(await firstRow.evaluate((element) => element.getBoundingClientRect().height)).toBeLessThan(64);
 });
 
 test("命名空间筛选写入 URL 并在刷新后恢复", async ({ page }) => {

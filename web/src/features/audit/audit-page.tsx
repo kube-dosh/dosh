@@ -81,6 +81,7 @@ export function AuditPage() {
         data={query.data?.items ?? []}
         loading={query.isLoading}
         onRowClick={setSelected}
+        stickyFirstColumn={false}
         empty={<div className="flex flex-col items-center gap-2"><ScrollText className="h-6 w-6" /><span>没有匹配的审计记录</span></div>}
       />
       <Dialog open={selected !== null} onOpenChange={(open) => { if (!open) setSelected(null); }}>

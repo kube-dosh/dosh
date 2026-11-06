@@ -39,8 +39,9 @@ describe("DataTable", () => {
     render(<DataTable columns={columns} data={[row]} />);
 
     expect(screen.getByRole("table")).toHaveStyle({ minWidth: "840px" });
-    expect(screen.getByRole("columnheader", { name: "名称" })).toHaveClass("sticky", "left-0", "min-w-44");
-    expect(screen.getByRole("cell", { name: row.name })).toHaveClass("sticky", "left-0", "bg-card");
+    expect(screen.getByRole("columnheader", { name: "名称" })).toHaveClass("sticky", "left-0", "w-36", "max-w-36");
+    expect(screen.getByRole("cell", { name: row.name })).toHaveClass("sticky", "left-0", "w-36", "max-w-36", "bg-card");
+    expect(screen.getByText(row.name)).toHaveClass("truncate");
     expect(screen.getByText("左右滑动查看完整列")).toBeInTheDocument();
   });
 
@@ -53,5 +54,17 @@ describe("DataTable", () => {
     render(<DataTable columns={columns} data={[row]} />);
 
     expect(screen.getByRole("table")).toHaveStyle({ minWidth: "640px" });
+  });
+
+  it("can opt out of pinning when the first column is not an identity field", () => {
+    const columns = [
+      column.accessor("age", { header: "时间" }),
+      column.accessor("status", { header: "状态" }),
+    ];
+
+    render(<DataTable columns={columns} data={[row]} stickyFirstColumn={false} />);
+
+    expect(screen.getByRole("columnheader", { name: "时间" })).not.toHaveClass("sticky");
+    expect(screen.getByRole("cell", { name: row.age })).not.toHaveClass("sticky");
   });
 });

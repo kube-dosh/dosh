@@ -114,6 +114,7 @@ export function ServiceDetailPage() {
               endpointColumn.accessor("nodeName", { header: "节点", cell: (info) => <span className="font-mono text-xs">{info.getValue() || "—"}</span> }),
             ]}
             data={service.endpoints}
+            stickyFirstColumn={false}
             empty="当前 Service 没有 EndpointSlice 地址"
             pageSize={20}
           />

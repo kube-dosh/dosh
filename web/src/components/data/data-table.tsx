@@ -23,12 +23,15 @@ interface DataTableProps<T> {
   empty?: ReactNode;
   pageSize?: number;
   onRowClick?: (row: T) => void;
+  stickyFirstColumn?: boolean;
   className?: string;
 }
 
-export function DataTable<T>({ columns, data, loading = false, empty, pageSize = 20, onRowClick, className }: DataTableProps<T>) {
+export function DataTable<T>({ columns, data, loading = false, empty, pageSize = 20, onRowClick, stickyFirstColumn = true, className }: DataTableProps<T>) {
   const [sorting, setSorting] = useState<SortingState>([]);
   const minimumWidth = Math.max(640, columns.length * 120);
+  const stickyColumnClass = "sticky left-0 z-20 w-36 min-w-36 max-w-36 overflow-hidden bg-muted shadow-[1px_0_0_hsl(var(--border))] md:static md:z-auto md:w-auto md:min-w-0 md:max-w-none md:overflow-visible md:bg-transparent md:shadow-none";
+  const stickyCellClass = "sticky left-0 z-10 w-36 min-w-36 max-w-36 overflow-hidden bg-card shadow-[1px_0_0_hsl(var(--border))] md:static md:z-auto md:w-auto md:min-w-0 md:max-w-none md:overflow-visible md:bg-transparent md:shadow-none";
   const table = useReactTable({
     data,
     columns,
@@ -63,16 +66,16 @@ export function DataTable<T>({ columns, data, loading = false, empty, pageSize =
                   <TableHead
                     key={header.id}
                     style={{ width: header.column.getSize() === 150 ? undefined : header.getSize() }}
-                    className={cn(header.index === 0 && "sticky left-0 z-20 min-w-44 bg-muted shadow-[1px_0_0_hsl(var(--border))] md:static md:z-auto md:min-w-0 md:bg-transparent md:shadow-none")}
+                    className={cn(header.index === 0 && stickyFirstColumn && stickyColumnClass)}
                   >
                     {header.isPlaceholder ? null : (
                       <button
                         type="button"
-                        className={cn("inline-flex items-center gap-1", sortable ? "cursor-pointer hover:text-foreground" : "cursor-default")}
+                        className={cn("flex min-w-0 max-w-full items-center gap-1", sortable ? "cursor-pointer hover:text-foreground" : "cursor-default")}
                         onClick={sortable ? header.column.getToggleSortingHandler() : undefined}
                       >
-                        {flexRender(header.column.columnDef.header, header.getContext())}
-                        {sortable ? sorted === "asc" ? <ArrowUp className="h-3 w-3" /> : sorted === "desc" ? <ArrowDown className="h-3 w-3" /> : <ArrowUpDown className="h-3 w-3 opacity-40" /> : null}
+                        <span className="truncate">{flexRender(header.column.columnDef.header, header.getContext())}</span>
+                        {sortable ? sorted === "asc" ? <ArrowUp className="h-3 w-3 shrink-0" /> : sorted === "desc" ? <ArrowDown className="h-3 w-3 shrink-0" /> : <ArrowUpDown className="h-3 w-3 shrink-0 opacity-40" /> : null}
                       </button>
                     )}
                   </TableHead>
@@ -91,8 +94,10 @@ export function DataTable<T>({ columns, data, loading = false, empty, pageSize =
               onKeyDown={onRowClick ? (event) => { if (event.key === "Enter") onRowClick(row.original); } : undefined}
             >
               {row.getVisibleCells().map((cell, index) => (
-                <TableCell key={cell.id} className={cn(index === 0 && "sticky left-0 z-10 min-w-44 bg-card shadow-[1px_0_0_hsl(var(--border))] md:static md:z-auto md:min-w-0 md:bg-transparent md:shadow-none")}>
-                  {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                <TableCell key={cell.id} className={cn(index === 0 && stickyFirstColumn && stickyCellClass)}>
+                  {index === 0 && stickyFirstColumn
+                    ? <div className="w-full truncate">{flexRender(cell.column.columnDef.cell, cell.getContext())}</div>
+                    : flexRender(cell.column.columnDef.cell, cell.getContext())}
                 </TableCell>
               ))}
             </TableRow>

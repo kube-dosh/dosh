@@ -33,6 +33,7 @@ export function ResourceEvents({ namespace, objectKind, objectName }: {
       ]}
       data={query.data?.items ?? []}
       loading={query.isLoading}
+      stickyFirstColumn={false}
       empty={<div className="flex flex-col items-center gap-2"><Activity className="h-6 w-6" /><span>该资源暂无事件</span></div>}
       pageSize={20}
     />

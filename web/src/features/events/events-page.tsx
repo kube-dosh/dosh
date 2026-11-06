@@ -56,6 +56,7 @@ export function EventsPage() {
         ]}
         data={items}
         loading={query.isLoading}
+        stickyFirstColumn={false}
         empty={<div className="flex flex-col items-center gap-2"><Activity className="h-6 w-6" /><span>没有匹配的事件</span></div>}
         pageSize={30}
       />
