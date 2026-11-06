@@ -36,30 +36,26 @@ Browser
 ## 当前候选 v0.1.5
 
 - 源码版本：App/OpenAPI/npm `0.1.5`，Chart `0.1.7`；默认认证模式为 `token`。
-- 候选镜像：`192.168.122.10:5000/dosh/dosh:0.1.5-rc-token-20261105T012750Z`，registry digest
-  `sha256:c114113009ddad67313f37c288fe4cc6f7d13848de01d22dd68499146744ea2b`。
+- 当前 Preview 镜像：`192.168.122.10:5000/dosh/dosh:0.1.5-rc-workload-services-final-20261106T151734Z`，
+  registry digest `sha256:60fa40aa3720446acf120bafce9e44dc754f2e757121c1c59545a2134d9dacb3`。
 - Token 登录链路：浏览器提交 Bearer Token → `TokenReview` 校验 → 加密 HttpOnly 会话 →
   业务请求使用 `Impersonate-User`/`Impersonate-Group` → `SubjectAccessReview` 判权。Token 不写入
   Cookie、浏览器存储、审计或日志；用户 Token 与 ServiceAccount Token 均受支持。
 - 传输模式：HTTP 与 HTTPS 使用同一二进制，由 `DOSH_TLS_ENABLED` 切换；HTTPS 可使用自签证书，
   OIDC 自定义 CA 和 TLS 受信 CA 均为可选增强，不是启动前提。
-- 本轮验收：Go 全量/race、Vitest `63/63`、Chromium/Firefox 各 `39/39`（单 worker、零重试、
-  `4g/2 CPU` 独立容器）、容量 SLO（p95 pods `20.45ms`、workloads `180.71ms`、overview
-  `199.91ms`）、govulncheck、生产 npm audit 0、Trivy 0 HIGH/CRITICAL。
-  NodePort `32628` 完成 HTTP→HTTPS 升级/回滚、有效/无效 Token、Cookie `Secure`、
-  viewer/operator/admin 权限矩阵、审计历史 SAR、CSRF 拒绝、logout、ServiceAccount
-  impersonation RBAC 和 Kubernetes Lease 分布式登录限速；生产未改动。
-- 源码绑定：`deploy/release/bindings/source-binding-v247-token.txt`（218 个源文件，binary
-  SHA-256 `b01911f428ac8732fc80b6ef02ce7edb610c4178454a48791d9fd9d73ebc0511`）。
-- 证据归档：`/var/lib/dosh/evidence/c114113009dd/20261105T014514Z-v247-final-token-r1`，
-  23 文件，manifest SHA-256
-  `734cbdbc10b15e4d48f56665eed24e5e170ec68622ce8a5390b0a92114570005`。
+- 本轮验收：Go 全量/race、Vitest `75/75`、Chromium `53/53`、Firefox `51/51`（2 条 Android
+  Chrome 专用视口用例按项目跳过）、单 worker/零重试/`4g/2 CPU` 独立容器、生产构建、bundle
+  `359.13 KiB`、架构与 OpenAPI 契约检查。
+- Preview：Release `dosh-preview` revision 16、1/1 Ready、NodePort `32630`，HTTP(S) 前有 NGINX
+  和 Cloudflare；真实临时命名空间完成 Service ClusterIP→NodePort 自动分配、`resourceVersion`
+  删除、命名空间 Foreground 级联删除及 `default` 400 保护。
 - 生产 `dosh` 保持 App `0.1.2` / Chart `0.1.4` / revision 12 / 2/2 Ready / NodePort `32626`。
 - 当前外部商用门禁剩余 5 项：生产 SIEM、Edge/Safari 实机、GitHub Actions/分支保护、离机 WORM、
   生产变更授权。它们未关闭前不得升级生产或宣称完整商用放行。
 - v2.46 及更早候选的浏览器、OIDC、性能和归档证据只作历史追溯，不继承给 v0.1.5。
-- 下一候选（尚未构建镜像、未生成新绑定）：服务端证书状态、热加载和受审计手动重载。v2.47 镜像
-  不包含该能力，不能用于该功能的发布验收。
+- v2.47 Token 候选的源码绑定与归档仅作历史追溯：
+  `deploy/release/bindings/source-binding-v247-token.txt` 与
+  `/var/lib/dosh/evidence/c114113009dd/20261105T014514Z-v247-final-token-r1`，不绑定当前镜像。
 
 ## 历史实验室证据（不继承）
 

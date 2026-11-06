@@ -6657,7 +6657,7 @@ v2.47 的详细条款落在 5.1、6.1、6.3：
 - 未完成：新镜像构建/digest、source/documentation binding、commercial gates 候选更新、隔离
   HTTPS 热加载证据和全部外部商用门禁。
 
-## 29. v2.49 工作负载访问方式与命名空间生命周期（实施中）
+## 29. v2.49 工作负载访问方式与命名空间生命周期
 
 本节覆盖工作负载实例节点跳转、工作负载关联 Service 的增删改，以及命名空间级联删除。它不继承
 v2.48 或更早候选的镜像 digest、浏览器、性能、集群验收和发布证据。
@@ -6757,6 +6757,13 @@ v2.48 或更早候选的镜像 digest、浏览器、性能、集群验收和发�
 
 - 已实现后端 Service CRUD、命名空间 Foreground 删除、RBAC/CSRF/审计、四个 capability、OpenAPI 与
   TypeScript 契约、工作负载节点跳转、访问方式页签和命名空间删除确认。
-- 已通过定向 Go 测试、全量 `go test ./...`、`go vet ./...`、Vitest `75/75`、前端类型检查和 OpenAPI
-  一致性检查；待完成全量 race、构建、bundle、架构门禁、隔离浏览器、镜像发布和 Preview 集群验收。
+- 已通过全量 `go test ./...`、`go vet ./...`、`go test -race ./...`、Vitest `75/75`、Chromium
+  `53/53`、Firefox `51/51`（2 条 Android Chrome 专用视口用例按项目跳过）、生产构建、bundle
+  `359.13 KiB`、架构门禁、OpenAPI 与 TypeScript 一致性检查。
 - local 模式 Helm RBAC 已补充 `namespaces delete` 并通过 `make helm-check`。
+- 最终候选镜像 `0.1.5-rc-workload-services-final-20261106T151734Z@sha256:60fa40aa3720446acf120bafce9e44dc754f2e757121c1c59545a2134d9dacb3`
+  已部署到 `dosh-preview` revision 16、1/1 Ready、NodePort `32630`。真实临时命名空间验收 Service
+  ClusterIP→NodePort 自动分配（31064）、`resourceVersion` 删除、命名空间 Foreground 级联删除和
+  `default` 400 保护；审计记录 `create-service`、`update-service`、`delete-service`、
+  `delete-namespace` success/failure 均带 requestId。
+- 生产 `dosh` 保持 App `0.1.2` / Chart `0.1.4` / revision 12 / 2/2 Ready / NodePort `32626`。
