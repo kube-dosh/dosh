@@ -29,7 +29,7 @@ interface DataTableProps<T> {
 
 export function DataTable<T>({ columns, data, loading = false, empty, pageSize = 20, onRowClick, stickyFirstColumn = true, className }: DataTableProps<T>) {
   const [sorting, setSorting] = useState<SortingState>([]);
-  const minimumWidth = Math.max(640, columns.length * 120);
+  const minimumWidth = Math.max(640, columns.reduce((width, column) => width + (typeof column.size === "number" ? Math.max(120, column.size) : 120), 0));
   const stickyColumnClass = "sticky left-0 z-20 w-36 min-w-36 max-w-36 overflow-hidden bg-muted shadow-[1px_0_0_hsl(var(--border))] md:static md:z-auto md:w-auto md:min-w-0 md:max-w-none md:overflow-visible md:bg-transparent md:shadow-none";
   const stickyCellClass = "sticky left-0 z-10 w-36 min-w-36 max-w-36 overflow-hidden bg-card shadow-[1px_0_0_hsl(var(--border))] md:static md:z-auto md:w-auto md:min-w-0 md:max-w-none md:overflow-visible md:bg-transparent md:shadow-none";
   const table = useReactTable({
@@ -94,7 +94,11 @@ export function DataTable<T>({ columns, data, loading = false, empty, pageSize =
               onKeyDown={onRowClick ? (event) => { if (event.key === "Enter") onRowClick(row.original); } : undefined}
             >
               {row.getVisibleCells().map((cell, index) => (
-                <TableCell key={cell.id} className={cn(index === 0 && stickyFirstColumn && stickyCellClass)}>
+                <TableCell
+                  key={cell.id}
+                  style={{ width: cell.column.getSize() === 150 ? undefined : cell.column.getSize() }}
+                  className={cn(index === 0 && stickyFirstColumn && stickyCellClass)}
+                >
                   {index === 0 && stickyFirstColumn
                     ? <div className="w-full truncate">{flexRender(cell.column.columnDef.cell, cell.getContext())}</div>
                     : flexRender(cell.column.columnDef.cell, cell.getContext())}

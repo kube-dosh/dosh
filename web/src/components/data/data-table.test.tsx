@@ -56,6 +56,20 @@ describe("DataTable", () => {
     expect(screen.getByRole("table")).toHaveStyle({ minWidth: "640px" });
   });
 
+  it("reserves the configured width of wide columns", () => {
+    const columns = [
+      column.accessor("name", { header: "名称" }),
+      column.accessor("status", { header: "状态" }),
+      column.accessor("image", { header: "消息", size: 420 }),
+    ];
+
+    render(<DataTable columns={columns} data={[row]} />);
+
+    expect(screen.getByRole("table")).toHaveStyle({ minWidth: "660px" });
+    expect(screen.getByRole("columnheader", { name: "消息" })).toHaveStyle({ width: "420px" });
+    expect(screen.getByRole("cell", { name: row.image })).toHaveStyle({ width: "420px" });
+  });
+
   it("can opt out of pinning when the first column is not an identity field", () => {
     const columns = [
       column.accessor("age", { header: "时间" }),

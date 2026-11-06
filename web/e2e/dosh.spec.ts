@@ -862,6 +862,34 @@ test("事件消息中的 HTML 不会创建可执行 DOM 节点", async ({ page }
   expect(await page.evaluate(() => (window as Window & { __doshEventXss?: boolean }).__doshEventXss)).toBeUndefined();
 });
 
+test("集群事件长消息限制为两行并可查看全文", async ({ page }) => {
+  const message = `Long event message ${"with detailed context ".repeat(40)}`;
+  await installApiMocks(page);
+  await page.route("**/api/v1/events**", (route) => json(route, list([{
+    uid: "event-long-message",
+    namespace: "default",
+    type: "Warning",
+    reason: "LongMessage",
+    message,
+    objectKind: "Pod",
+    objectName: "web-abcdef-12345",
+    count: 1,
+    firstSeen: "2026-11-02T00:00:00Z",
+    lastSeen: "2026-11-02T00:00:00Z",
+  }])));
+
+  await page.goto("/events");
+  const trigger = page.getByRole("button", { name: message });
+  await expect(trigger).toBeVisible();
+  expect(await trigger.locator("span").evaluate((element) => getComputedStyle(element).webkitLineClamp)).toBe("2");
+  expect(await trigger.locator("xpath=ancestor::tr").evaluate((element) => element.getBoundingClientRect().height)).toBeLessThan(72);
+
+  await trigger.click();
+  const dialog = page.getByRole("dialog", { name: "事件消息" });
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByText(message, { exact: true })).toBeVisible();
+});
+
 test("Pod 日志可切换时间戳参数", async ({ page }) => {
   await installApiMocks(page);
   await page.goto("/pods/default/web-abcdef-12345?tab=logs");

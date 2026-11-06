@@ -6,6 +6,7 @@ import type { EventItem } from "@/api/types";
 import { DataTable } from "@/components/data/data-table";
 import { ErrorState } from "@/components/feedback/states";
 import { StatusBadge } from "@/components/feedback/status-badge";
+import { EventMessage } from "@/features/events/event-message";
 import { formatDate } from "@/lib/utils";
 
 const column = createColumnHelper<EventItem>();
@@ -26,7 +27,7 @@ export function ResourceEvents({ namespace, objectKind, objectName }: {
       columns={[
         column.accessor("type", { header: "类型", cell: (info) => <StatusBadge status={info.getValue()} /> }),
         column.accessor("reason", { header: "原因", cell: (info) => <span className="font-medium">{info.getValue()}</span> }),
-        column.accessor("message", { header: "消息", cell: (info) => <span className="block max-w-2xl whitespace-normal text-muted-foreground">{info.getValue()}</span> }),
+        column.accessor("message", { header: "消息", size: 420, cell: (info) => <EventMessage message={info.getValue()} /> }),
         column.accessor("count", { header: "次数", cell: (info) => <span className="tabular-nums">{info.getValue()}</span> }),
         column.accessor("firstSeen", { header: "首次发生", cell: (info) => <span className="whitespace-nowrap text-muted-foreground">{formatDate(info.getValue())}</span> }),
         column.accessor("lastSeen", { header: "最近发生", cell: (info) => <span className="whitespace-nowrap text-muted-foreground">{formatDate(info.getValue())}</span> }),
