@@ -10,6 +10,7 @@ import type {
   PodSummary,
   PersistentVolumeClaimDetail,
   PersistentVolumeDetail,
+  ServerCertificate,
   ServiceDetail,
   SessionResponse,
   StorageClassDetail,
@@ -239,6 +240,26 @@ const overview: Overview = {
   }],
 };
 
+const serverCertificate: ServerCertificate = {
+  mode: "https",
+  enabled: true,
+  configured: true,
+  status: "valid",
+  subject: "CN=dosh.xuthus.cc",
+  issuer: "CN=Cloudflare Inc ECC CA-3, O=Cloudflare, Inc., C=US",
+  serialNumber: "05a1b2c3d4e5f60718293a4b5c6d7e8f",
+  dnsNames: ["dosh.xuthus.cc"],
+  ipAddresses: ["10.244.2.211"],
+  notBefore: "2026-10-01T00:00:00Z",
+  notAfter: "2027-01-01T00:00:00Z",
+  daysRemaining: 56,
+  fingerprintSha256: "8F:40:69:8B:64:50:A5:69:B0:31:1D:E3:A6:70:68:6A:86:90:63:0C:99:59:45:66:8F:62:52:C6:45:AE:DA:50",
+  keyAlgorithm: "ECDSA P-256",
+  autoReload: true,
+  reloadIntervalSeconds: 30,
+  lastReloadedAt: "2026-11-06T06:30:00Z",
+};
+
 function json(route: Route, value: unknown, status = 200) {
   return route.fulfill({ status, contentType: "application/json", body: JSON.stringify(value) });
 }
@@ -438,6 +459,8 @@ async function installApiMocks(page: Page, options: { authenticated?: boolean; a
       keys: [{ key: "token", size: 10 }, { key: "blob", size: 3 }], createdAt: "2026-11-02T00:00:00Z",
       data: { token: "dG9rZW49YWJjCg==", blob: "AP8K" },
     });
+    if (path === "/api/v1/certificate") return json(route, serverCertificate);
+    if (path === "/api/v1/certificate/reload" && method === "POST") return json(route, serverCertificate);
     return json(route, { code: "not_found", message: `unmocked API route: ${method} ${path}` }, 404);
   });
 }
@@ -452,6 +475,41 @@ async function waitForVisualStability(page: Page) {
     await Promise.all(finiteAnimations.map((animation) => animation.finished.catch(() => undefined)));
     await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
   });
+}
+
+async function expectNoPageOverflow(page: Page, context: string) {
+  const overflow = await page.evaluate(() => {
+    const viewportWidth = window.innerWidth;
+    return {
+      documentWidth: document.documentElement.scrollWidth,
+      bodyWidth: document.body.scrollWidth,
+      viewportWidth,
+      offenders: Array.from(document.querySelectorAll<HTMLElement>("body *"))
+        .map((element) => {
+          const rect = element.getBoundingClientRect();
+          return { tag: element.tagName, className: String(element.className), text: element.textContent?.trim().slice(0, 80), left: rect.left, right: rect.right, width: rect.width };
+        })
+        .filter((item) => item.width > 0 && item.right > viewportWidth + 1)
+        .sort((left, right) => right.right - left.right)
+        .slice(0, 12),
+    };
+  });
+  expect(
+    Math.max(overflow.documentWidth, overflow.bodyWidth),
+    `${context} overflows horizontally: ${JSON.stringify(overflow)}`,
+  ).toBeLessThanOrEqual(overflow.viewportWidth + 1);
+}
+
+async function expectElementInsideViewport(page: Page, locator: ReturnType<Page["locator"]>, context: string) {
+  await waitForVisualStability(page);
+  const box = await locator.boundingBox();
+  expect(box, `${context} must have a layout box`).not.toBeNull();
+  const viewport = page.viewportSize();
+  expect(viewport, `${context} requires a configured viewport`).not.toBeNull();
+  expect(box!.x, `${context} must not start left of the viewport`).toBeGreaterThanOrEqual(-1);
+  expect(box!.y, `${context} must not start above the viewport`).toBeGreaterThanOrEqual(-1);
+  expect(box!.x + box!.width, `${context} must not extend right of the viewport`).toBeLessThanOrEqual(viewport!.width + 1);
+  expect(box!.y + box!.height, `${context} must not extend below the viewport`).toBeLessThanOrEqual(viewport!.height + 1);
 }
 
 async function expectNoSeriousAccessibilityViolations(page: Page, context: string) {
@@ -1011,7 +1069,7 @@ test("移动端超长固定列不会遮挡其他列", async ({ page }) => {
 });
 
 test("移动端逐页布局无页面级横向溢出", async ({ page }) => {
-  test.setTimeout(120_000);
+  test.setTimeout(180_000);
   await installApiMocks(page);
   await page.setViewportSize({ width: 390, height: 844 });
   const routes = [
@@ -1020,24 +1078,34 @@ test("移动端逐页布局无页面级横向溢出", async ({ page }) => {
     { path: "/nodes/worker-0001", name: "node-detail" },
     { path: "/workloads", name: "workloads" },
     { path: "/workloads/deployment/default/web", name: "workload-detail" },
+    { path: "/workloads/deployment/default/web?tab=logs", name: "workload-logs" },
+    { path: "/workloads/deployment/default/web?tab=yaml", name: "workload-yaml" },
     { path: "/pods", name: "pods" },
     { path: "/pods/default/web-abcdef-12345", name: "pod-detail" },
+    { path: "/pods/default/web-abcdef-12345?tab=logs", name: "pod-logs" },
+    { path: "/pods/default/web-abcdef-12345?tab=yaml", name: "pod-yaml" },
     { path: "/network", name: "network" },
     { path: "/network?tab=ingresses", name: "network-ingresses" },
     { path: "/network/services/default/web", name: "service-detail" },
     { path: "/network/ingresses/default/web", name: "ingress-detail" },
     { path: "/configuration", name: "configuration" },
     { path: "/configuration?tab=secrets", name: "configuration-secrets" },
+    { path: "/configuration?tab=certificate", name: "configuration-certificate" },
     { path: "/storage", name: "storage" },
     { path: "/storage?tab=volumes", name: "storage-volumes" },
     { path: "/storage?tab=claims", name: "storage-claims" },
     { path: "/storage/classes/data-standard", name: "storage-class-detail" },
+    { path: "/storage/classes/data-standard?tab=events", name: "storage-class-events" },
     { path: "/storage/volumes/pv-data", name: "pv-detail" },
+    { path: "/storage/volumes/pv-data?tab=yaml", name: "pv-yaml" },
     { path: "/storage/claims/production/data-claim", name: "pvc-detail" },
+    { path: "/storage/claims/production/data-claim?tab=events", name: "pvc-events" },
     { path: "/namespaces", name: "namespaces" },
     { path: "/namespaces/default", name: "namespace-detail" },
     { path: "/namespaces/default?tab=quotas", name: "namespace-quotas" },
     { path: "/namespaces/default?tab=limits", name: "namespace-limits" },
+    { path: "/namespaces/default?tab=events", name: "namespace-events" },
+    { path: "/namespaces/default?tab=yaml", name: "namespace-yaml" },
     { path: "/events", name: "events" },
     { path: "/audit", name: "audit" },
   ];
@@ -1046,25 +1114,160 @@ test("移动端逐页布局无页面级横向溢出", async ({ page }) => {
     await page.goto(route.path);
     await page.locator("main h1").waitFor({ state: "visible" });
     await page.waitForTimeout(250);
-    const overflow = await page.evaluate(() => ({
-      documentWidth: document.documentElement.scrollWidth,
-      bodyWidth: document.body.scrollWidth,
-      viewportWidth: window.innerWidth,
-      offenders: Array.from(document.querySelectorAll<HTMLElement>("body *"))
-        .map((element) => {
-          const rect = element.getBoundingClientRect();
-          return { tag: element.tagName, className: element.className, text: element.textContent?.trim().slice(0, 80), left: rect.left, right: rect.right, width: rect.width };
-        })
-        .filter((item) => item.width > 0 && item.right > window.innerWidth + 1)
-        .sort((left, right) => right.right - left.right)
-        .slice(0, 12),
-    }));
-    expect(
-      Math.max(overflow.documentWidth, overflow.bodyWidth),
-      `${route.name} overflows horizontally: ${JSON.stringify(overflow)}`,
-    ).toBeLessThanOrEqual(overflow.viewportWidth + 1);
+    await expectNoPageOverflow(page, route.name);
     await page.screenshot({ path: `test-results/mobile-audit/${route.name}.png`, fullPage: true });
   }
+});
+
+test("移动端登录、抽屉导航和全局搜索可用", async ({ page }) => {
+  test.setTimeout(90_000);
+  await installApiMocks(page, { authenticated: false });
+  await page.setViewportSize({ width: 390, height: 844 });
+
+  await page.goto("/login");
+  await expect(page.getByRole("heading", { name: "登录控制台" })).toBeVisible();
+  await expectNoPageOverflow(page, "login");
+  await page.screenshot({ path: "test-results/mobile-interactions/login.png", fullPage: true });
+
+  await page.getByLabel("用户名").fill("admin");
+  await page.getByLabel("密码").fill("e2e-password");
+  await page.getByRole("button", { name: "登录", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "集群总览" })).toBeVisible();
+
+  const menuButton = page.getByRole("button", { name: "打开导航" });
+  await expect(menuButton).toHaveAttribute("aria-expanded", "false");
+  await menuButton.click();
+  await expect(menuButton).toHaveAttribute("aria-expanded", "true");
+  const drawer = page.locator("aside");
+  await expect(drawer.getByRole("link", { name: "节点管理" })).toBeVisible();
+  await expectElementInsideViewport(page, drawer, "mobile navigation drawer");
+  await page.screenshot({ path: "test-results/mobile-interactions/navigation.png", fullPage: true });
+
+  await drawer.getByRole("link", { name: "节点管理" }).click();
+  await expect(page).toHaveURL(/\/nodes$/);
+  await expect(page.getByRole("heading", { name: "节点管理" })).toBeVisible();
+  await expect(menuButton).toHaveAttribute("aria-expanded", "false");
+  await page.waitForTimeout(300);
+  const closedDrawer = await drawer.boundingBox();
+  expect(closedDrawer).not.toBeNull();
+  expect(closedDrawer!.x + closedDrawer!.width).toBeLessThanOrEqual(1);
+
+  await page.getByRole("button", { name: "搜索" }).click();
+  const searchDialog = page.getByRole("dialog", { name: "搜索集群资源" });
+  await expect(searchDialog).toBeVisible();
+  await searchDialog.getByPlaceholder("输入资源名称…").fill("web");
+  await expect(searchDialog.getByRole("button", { name: /web-abcdef-12345/ })).toBeVisible();
+  await expectElementInsideViewport(page, searchDialog, "global search dialog");
+  await expectNoPageOverflow(page, "global search dialog");
+  await page.screenshot({ path: "test-results/mobile-interactions/global-search.png", fullPage: true });
+  await page.keyboard.press("Escape");
+});
+
+test("320px 窄屏关键页面无横向溢出", async ({ page }) => {
+  test.setTimeout(120_000);
+  await installApiMocks(page);
+  await page.setViewportSize({ width: 320, height: 720 });
+  for (const route of [
+    { path: "/", name: "overview" },
+    { path: "/nodes", name: "nodes" },
+    { path: "/workloads/deployment/default/web", name: "workload-detail" },
+    { path: "/pods/default/web-abcdef-12345?tab=logs", name: "pod-logs" },
+    { path: "/configuration?tab=certificate", name: "certificate" },
+    { path: "/events", name: "events" },
+    { path: "/audit", name: "audit" },
+  ]) {
+    await page.goto(route.path);
+    await page.locator("main h1").waitFor({ state: "visible" });
+    await expectNoPageOverflow(page, `320px ${route.name}`);
+    await page.screenshot({ path: `test-results/mobile-320/${route.name}.png`, fullPage: true });
+  }
+});
+
+test("320px 登录页无横向溢出", async ({ page }) => {
+  test.setTimeout(30_000);
+  await installApiMocks(page, { authenticated: false });
+  await page.setViewportSize({ width: 320, height: 720 });
+  await page.goto("/login");
+  await expect(page.getByRole("heading", { name: "登录控制台" })).toBeVisible();
+  await expectNoPageOverflow(page, "320px login");
+  await page.screenshot({ path: "test-results/mobile-320/login.png", fullPage: true });
+});
+
+test("移动端关键弹窗与确认框保持在视口内", async ({ page }) => {
+  test.setTimeout(120_000);
+  await installApiMocks(page);
+  await page.setViewportSize({ width: 390, height: 844 });
+
+  await page.goto("/pods/default/web-abcdef-12345");
+  await page.getByRole("button", { name: "YAML", exact: true }).click();
+  let dialog = page.getByRole("dialog");
+  await expect(dialog).toBeVisible();
+  await expectElementInsideViewport(page, dialog, "YAML dialog");
+  await expectNoPageOverflow(page, "YAML dialog");
+  await page.screenshot({ path: "test-results/mobile-interactions/yaml-dialog.png", fullPage: true });
+  await page.keyboard.press("Escape");
+
+  await page.goto("/configuration");
+  await page.getByRole("button", { name: "app-config", exact: true }).click();
+  dialog = page.getByRole("dialog", { name: "app-config" });
+  await expect(dialog).toBeVisible();
+  await expectElementInsideViewport(page, dialog, "ConfigMap dialog");
+  await page.screenshot({ path: "test-results/mobile-interactions/configmap-dialog.png", fullPage: true });
+  await page.keyboard.press("Escape");
+
+  await page.goto("/configuration?tab=secrets");
+  await page.getByRole("button", { name: "查看明文" }).click();
+  dialog = page.getByRole("dialog", { name: "app-secret" });
+  await expect(dialog).toBeVisible();
+  await expectElementInsideViewport(page, dialog, "Secret reveal dialog");
+  await page.screenshot({ path: "test-results/mobile-interactions/secret-dialog.png", fullPage: true });
+  await page.keyboard.press("Escape");
+
+  await page.goto("/audit");
+  await page.getByRole("cell", { name: "alice@example.test" }).click();
+  dialog = page.getByRole("dialog", { name: "审计记录 #42" });
+  await expect(dialog).toBeVisible();
+  await expectElementInsideViewport(page, dialog, "audit detail dialog");
+  await page.screenshot({ path: "test-results/mobile-interactions/audit-dialog.png", fullPage: true });
+  await page.keyboard.press("Escape");
+
+  await page.goto("/workloads");
+  await page.getByRole("button", { name: "创建 Deployment" }).click();
+  dialog = page.getByRole("dialog", { name: "创建 Deployment" });
+  await expect(dialog).toBeVisible();
+  await expectElementInsideViewport(page, dialog, "deployment create dialog");
+  await page.screenshot({ path: "test-results/mobile-interactions/deployment-create-dialog.png", fullPage: true });
+  await page.keyboard.press("Escape");
+
+  await page.goto("/workloads/deployment/default/web");
+  await page.getByRole("button", { name: "扩缩容", exact: true }).click();
+  dialog = page.getByRole("dialog", { name: "调整副本数" });
+  await expect(dialog).toBeVisible();
+  await expectElementInsideViewport(page, dialog, "workload scale dialog");
+  await page.screenshot({ path: "test-results/mobile-interactions/workload-scale-dialog.png", fullPage: true });
+  await page.keyboard.press("Escape");
+
+  await page.getByRole("button", { name: "更新镜像", exact: true }).click();
+  dialog = page.getByRole("dialog", { name: "更新容器镜像" });
+  await expect(dialog).toBeVisible();
+  await expectElementInsideViewport(page, dialog, "workload image dialog");
+  await page.screenshot({ path: "test-results/mobile-interactions/workload-image-dialog.png", fullPage: true });
+  await page.keyboard.press("Escape");
+
+  await page.getByRole("button", { name: "删除", exact: true }).click();
+  const deleteAlert = page.getByRole("alertdialog", { name: "删除 web？" });
+  await expect(deleteAlert).toBeVisible();
+  await expectElementInsideViewport(page, deleteAlert, "workload delete dialog");
+  await page.screenshot({ path: "test-results/mobile-interactions/workload-delete-dialog.png", fullPage: true });
+  await deleteAlert.getByRole("button", { name: "取消" }).click();
+
+  await page.goto("/nodes/worker-0001");
+  await page.getByRole("button", { name: "停止调度" }).click();
+  const alert = page.getByRole("alertdialog", { name: "停止节点调度？" });
+  await expect(alert).toBeVisible();
+  await expectElementInsideViewport(page, alert, "node scheduling dialog");
+  await page.screenshot({ path: "test-results/mobile-interactions/node-scheduling-dialog.png", fullPage: true });
+  await page.getByRole("button", { name: "取消" }).click();
 });
 
 test("命名空间筛选写入 URL 并在刷新后恢复", async ({ page }) => {

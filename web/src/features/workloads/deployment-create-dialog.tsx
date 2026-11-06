@@ -260,9 +260,9 @@ export function DeploymentCreateDialog({ open, onOpenChange, initialNamespace }:
 function StepIndicator({ step }: { step: number }) {
   const steps = ["基本信息", "运行配置", "确认创建"];
   return (
-    <ol aria-label="创建步骤" className="grid grid-cols-3 gap-2">
+    <ol aria-label="创建步骤" className="grid gap-2 sm:grid-cols-3">
       {steps.map((label, index) => (
-        <li key={label} className={cn("flex items-center gap-2 rounded-md border px-3 py-2 text-xs", index === step ? "border-primary/40 bg-primary/5 text-primary" : "text-muted-foreground")}>
+        <li key={label} className={cn("flex min-w-0 items-center gap-2 whitespace-nowrap rounded-md border px-3 py-2 text-xs", index === step ? "border-primary/40 bg-primary/5 text-primary" : "text-muted-foreground")}>
           <span className={cn("grid h-5 w-5 place-items-center rounded-full border text-[11px]", index < step ? "border-primary bg-primary text-primary-foreground" : "")}>{index < step ? <Check className="h-3 w-3" /> : index + 1}</span>
           {label}
         </li>

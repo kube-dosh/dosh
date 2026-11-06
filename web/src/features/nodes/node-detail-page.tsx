@@ -12,6 +12,7 @@ import { ResourceBar } from "@/components/data/resource-bar";
 import { StatusBadge } from "@/components/feedback/status-badge";
 import { ErrorState, LoadingState } from "@/components/feedback/states";
 import { PageHeader } from "@/components/layout/page-header";
+import { MetadataList } from "@/components/resources/metadata-card";
 import { YamlDialog, YamlPanel } from "@/components/resources/yaml-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -85,7 +86,7 @@ export function NodeDetailPage() {
             <Card><CardHeader><CardTitle>Conditions</CardTitle></CardHeader><CardContent className="p-0"><SimpleConditions conditions={node.conditions} /></CardContent></Card>
             <Card><CardHeader><CardTitle>Taints</CardTitle></CardHeader><CardContent className="p-0"><SimpleTaints taints={node.taints} /></CardContent></Card>
           </div>
-          <Card className="mt-4"><CardHeader><CardTitle>标签与注解</CardTitle></CardHeader><CardContent className="grid gap-5 lg:grid-cols-2"><MetadataTable title="Labels" data={node.labels} /><MetadataTable title="Annotations" data={node.annotations} /></CardContent></Card>
+          <Card className="mt-4"><CardHeader><CardTitle>标签与注解</CardTitle></CardHeader><CardContent className="grid gap-5 lg:grid-cols-2"><MetadataList title="Labels" data={node.labels} /><MetadataList title="Annotations" data={node.annotations} /></CardContent></Card>
         </TabsContent>
         <TabsContent value="pods">
           <Card><CardHeader><CardTitle>节点上的 Pod</CardTitle><CardDescription>{node.pods.length} 个实例</CardDescription></CardHeader><CardContent className="px-0 pb-0"><DataTable columns={[podColumn.accessor("name", { header: "名称", cell: (info) => <Link to="/pods/$namespace/$name" params={{ namespace: info.row.original.namespace, name: info.getValue() }} className="font-medium text-primary hover:underline">{info.getValue()}</Link> }), podColumn.accessor("namespace", { header: "命名空间" }), podColumn.accessor("status", { header: "状态", cell: (info) => <StatusBadge status={info.getValue()} /> }), podColumn.accessor("ready", { header: "就绪" }), podColumn.accessor("restarts", { header: "重启" }), podColumn.accessor("createdAt", { header: "年龄", cell: (info) => formatAge(info.getValue()) })]} data={node.pods} pageSize={10} /></CardContent></Card>
@@ -125,10 +126,5 @@ function SimpleConditions({ conditions }: { conditions: Condition[] }) {
 function SimpleTaints({ taints }: { taints: Taint[] }) {
   if (!taints.length) return <p className="px-5 py-8 text-sm text-muted-foreground">没有配置 Taint。</p>;
   return <div className="space-y-2 p-5">{taints.map((taint) => <div key={`${taint.key}-${taint.effect}`} className="flex items-center justify-between rounded-md border px-3 py-2 text-sm"><span className="font-mono">{taint.key}{taint.value ? `=${taint.value}` : ""}</span><Badge variant="warning">{taint.effect}</Badge></div>)}</div>;
-}
-
-function MetadataTable({ title, data }: { title: string; data: Record<string, string> }) {
-  const entries = Object.entries(data || {});
-  return <div><h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">{title}</h4><div className="max-h-64 overflow-auto rounded-md border scrollbar-thin">{entries.length ? entries.map(([key, value]) => <div key={key} className="grid grid-cols-[minmax(120px,0.4fr)_1fr] gap-3 border-b px-3 py-2 text-xs last:border-0"><span className="break-all font-mono text-muted-foreground">{key}</span><span className="break-all font-mono">{value}</span></div>) : <p className="p-3 text-sm text-muted-foreground">无</p>}</div></div>;
 }
 

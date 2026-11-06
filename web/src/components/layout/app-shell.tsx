@@ -93,7 +93,7 @@ export function AppShell() {
   return (
     <div className="min-h-screen bg-background">
       <header className="sticky top-0 z-40 flex h-14 items-center border-b bg-card/95 px-4 backdrop-blur md:px-5">
-        <Button variant="ghost" size="icon" className="mr-2 md:hidden" onClick={() => setMobileOpen(true)} aria-label="打开导航"><Menu className="h-5 w-5" /></Button>
+        <Button variant="ghost" size="icon" className="mr-2 md:hidden" onClick={() => setMobileOpen(true)} aria-label="打开导航" aria-expanded={mobileOpen} aria-controls="app-navigation"><Menu className="h-5 w-5" /></Button>
         <Link to="/" className="flex items-center gap-2.5">
           <div className="grid h-8 w-8 place-items-center rounded-lg bg-primary text-sm font-bold text-primary-foreground shadow-sm">D</div>
           <div className="hidden sm:block">
@@ -139,10 +139,10 @@ export function AppShell() {
       </header>
 
       <div className="flex min-h-[calc(100vh-3.5rem)]">
-        <aside className={cn("fixed inset-y-0 left-0 z-50 w-60 border-r bg-card transition-transform md:sticky md:top-14 md:z-30 md:h-[calc(100vh-3.5rem)] md:translate-x-0", mobileOpen ? "translate-x-0" : "-translate-x-full")}>
+        <aside id="app-navigation" aria-label="主导航" className={cn("fixed inset-y-0 left-0 z-50 w-60 border-r bg-card transition-transform md:sticky md:top-14 md:z-30 md:h-[calc(100vh-3.5rem)] md:translate-x-0", mobileOpen ? "translate-x-0" : "-translate-x-full")}>
           <div className="flex h-14 items-center justify-between border-b px-4 md:hidden">
             <span className="font-semibold">导航</span>
-            <Button variant="ghost" size="icon" onClick={() => setMobileOpen(false)}><X className="h-4 w-4" /></Button>
+            <Button variant="ghost" size="icon" onClick={() => setMobileOpen(false)} aria-label="关闭导航"><X className="h-4 w-4" /></Button>
           </div>
           <nav className="space-y-1 p-3">
             <p className="px-3 pb-2 pt-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">集群管理</p>
@@ -171,7 +171,7 @@ export function AppShell() {
             </div>
           </div>
         </aside>
-        {mobileOpen ? <button type="button" aria-label="关闭导航" className="fixed inset-0 z-40 bg-slate-950/30 md:hidden" onClick={() => setMobileOpen(false)} /> : null}
+        {mobileOpen ? <button type="button" aria-label="关闭导航菜单" className="fixed inset-0 z-40 bg-slate-950/30 md:hidden" onClick={() => setMobileOpen(false)} /> : null}
         <main className="min-w-0 flex-1 p-4 md:p-6"><div className="mx-auto max-w-[1600px] animate-fade-in"><Outlet /></div></main>
       </div>
 
