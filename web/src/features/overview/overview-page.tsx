@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { Activity, Boxes, CircleDot, Cpu, MemoryStick, Server, TriangleAlert } from "lucide-react";
+import { Boxes, CircleDot, Cpu, MemoryStick, Server, TriangleAlert } from "lucide-react";
 import { api } from "@/api/client";
 import { MetricCard } from "@/components/data/metric-card";
 import { ResourceBar } from "@/components/data/resource-bar";
@@ -81,16 +81,7 @@ export function OverviewPage() {
           </TableBody></Table>
         </CardContent>
       </Card>
-      <div className="mt-4 grid gap-4 sm:grid-cols-3">
-        <QuickLink to="/workloads" icon={Boxes} title="工作负载" text="查看 Deployment、StatefulSet 和任务" />
-        <QuickLink to="/events" icon={Activity} title="集群事件" text="跟踪 Warning 与调度异常" />
-        <QuickLink to="/nodes" icon={Server} title="节点运维" text="查看资源分配和节点状态" />
-      </div>
     </>
   );
-}
-
-function QuickLink({ to, icon: Icon, title, text }: { to: string; icon: typeof Server; title: string; text: string }) {
-  return <Link to={to} className="group flex items-start gap-3 rounded-lg border bg-card p-4 shadow-panel transition-colors hover:border-primary/30 hover:bg-primary/[0.02]"><div className="rounded-md bg-primary/10 p-2 text-primary"><Icon className="h-4 w-4" /></div><div><p className="text-sm font-medium group-hover:text-primary">{title}</p><p className="mt-1 text-xs text-muted-foreground">{text}</p></div></Link>;
 }
 
