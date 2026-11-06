@@ -1005,6 +1005,63 @@ test("移动端超长固定列不会遮挡其他列", async ({ page }) => {
   expect(await firstRow.evaluate((element) => element.getBoundingClientRect().height)).toBeLessThan(64);
 });
 
+test("移动端逐页布局无页面级横向溢出", async ({ page }) => {
+  test.setTimeout(120_000);
+  await installApiMocks(page);
+  await page.setViewportSize({ width: 390, height: 844 });
+  const routes = [
+    { path: "/", name: "overview" },
+    { path: "/nodes", name: "nodes" },
+    { path: "/nodes/worker-0001", name: "node-detail" },
+    { path: "/workloads", name: "workloads" },
+    { path: "/workloads/deployment/default/web", name: "workload-detail" },
+    { path: "/pods", name: "pods" },
+    { path: "/pods/default/web-abcdef-12345", name: "pod-detail" },
+    { path: "/network", name: "network" },
+    { path: "/network?tab=ingresses", name: "network-ingresses" },
+    { path: "/network/services/default/web", name: "service-detail" },
+    { path: "/network/ingresses/default/web", name: "ingress-detail" },
+    { path: "/configuration", name: "configuration" },
+    { path: "/configuration?tab=secrets", name: "configuration-secrets" },
+    { path: "/storage", name: "storage" },
+    { path: "/storage?tab=volumes", name: "storage-volumes" },
+    { path: "/storage?tab=claims", name: "storage-claims" },
+    { path: "/storage/classes/data-standard", name: "storage-class-detail" },
+    { path: "/storage/volumes/pv-data", name: "pv-detail" },
+    { path: "/storage/claims/production/data-claim", name: "pvc-detail" },
+    { path: "/namespaces", name: "namespaces" },
+    { path: "/namespaces/default", name: "namespace-detail" },
+    { path: "/namespaces/default?tab=quotas", name: "namespace-quotas" },
+    { path: "/namespaces/default?tab=limits", name: "namespace-limits" },
+    { path: "/events", name: "events" },
+    { path: "/audit", name: "audit" },
+  ];
+
+  for (const route of routes) {
+    await page.goto(route.path);
+    await page.locator("main h1").waitFor({ state: "visible" });
+    await page.waitForTimeout(250);
+    const overflow = await page.evaluate(() => ({
+      documentWidth: document.documentElement.scrollWidth,
+      bodyWidth: document.body.scrollWidth,
+      viewportWidth: window.innerWidth,
+      offenders: Array.from(document.querySelectorAll<HTMLElement>("body *"))
+        .map((element) => {
+          const rect = element.getBoundingClientRect();
+          return { tag: element.tagName, className: element.className, text: element.textContent?.trim().slice(0, 80), left: rect.left, right: rect.right, width: rect.width };
+        })
+        .filter((item) => item.width > 0 && item.right > window.innerWidth + 1)
+        .sort((left, right) => right.right - left.right)
+        .slice(0, 12),
+    }));
+    expect(
+      Math.max(overflow.documentWidth, overflow.bodyWidth),
+      `${route.name} overflows horizontally: ${JSON.stringify(overflow)}`,
+    ).toBeLessThanOrEqual(overflow.viewportWidth + 1);
+    await page.screenshot({ path: `test-results/mobile-audit/${route.name}.png`, fullPage: true });
+  }
+});
+
 test("命名空间筛选写入 URL 并在刷新后恢复", async ({ page }) => {
   await installApiMocks(page);
   await page.goto("/namespaces?q=production");
