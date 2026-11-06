@@ -91,8 +91,8 @@ export function AppShell() {
   };
 
   return (
-    <div className="min-h-screen bg-background">
-      <header className="sticky top-0 z-40 flex h-14 min-w-0 items-center border-b bg-card/95 px-4 backdrop-blur md:px-5">
+    <div className="min-h-screen w-full min-w-0 max-w-full overflow-x-clip bg-background">
+      <header className="sticky top-0 z-40 flex h-14 w-full min-w-0 max-w-full items-center overflow-x-clip border-b bg-card/95 px-4 backdrop-blur md:px-5">
         <Button variant="ghost" size="icon" className="mr-2 shrink-0 md:hidden" onClick={() => setMobileOpen(true)} aria-label="打开导航" aria-expanded={mobileOpen} aria-controls="app-navigation"><Menu className="h-5 w-5" /></Button>
         <Link to="/" className="flex shrink-0 items-center gap-2.5">
           <div className="grid h-8 w-8 place-items-center rounded-lg bg-primary text-sm font-bold text-primary-foreground shadow-sm">D</div>
@@ -142,7 +142,7 @@ export function AppShell() {
         </div>
       </header>
 
-      <div className="flex min-h-[calc(100vh-3.5rem)]">
+      <div className="flex min-h-[calc(100vh-3.5rem)] w-full min-w-0 max-w-full">
         <aside id="app-navigation" aria-label="主导航" className={cn("fixed inset-y-0 left-0 z-50 w-60 border-r bg-card transition-transform md:sticky md:top-14 md:z-30 md:h-[calc(100vh-3.5rem)] md:translate-x-0", mobileOpen ? "translate-x-0" : "-translate-x-full")}>
           <div className="flex h-14 items-center justify-between border-b px-4 md:hidden">
             <span className="font-semibold">导航</span>
@@ -176,7 +176,7 @@ export function AppShell() {
           </div>
         </aside>
         {mobileOpen ? <button type="button" aria-label="关闭导航菜单" className="fixed inset-0 z-40 bg-slate-950/30 md:hidden" onClick={() => setMobileOpen(false)} /> : null}
-        <main className="min-w-0 flex-1 p-4 md:p-6"><div className="mx-auto max-w-[1600px] animate-fade-in"><Outlet /></div></main>
+        <main className="w-0 min-w-0 max-w-full flex-1 overflow-x-clip p-4 md:p-6"><div className="mx-auto min-w-0 max-w-[1600px] animate-fade-in"><Outlet /></div></main>
       </div>
 
       <GlobalSearch open={searchOpen} onOpenChange={setSearchOpen} />

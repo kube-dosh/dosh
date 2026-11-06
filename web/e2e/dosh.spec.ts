@@ -1,4 +1,4 @@
-import { expect, test, type Page, type Route } from "@playwright/test";
+import { devices, expect, test, type Page, type Route } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
 import type {
   ListResponse,
@@ -1310,6 +1310,53 @@ test("320px 大字体缩放时页面不产生横向溢出", async ({ page }) => 
     await expectNoPageOverflow(page, `320px large font ${route.name}`);
     await page.screenshot({ path: `test-results/mobile-320-large-font/${route.name}.png`, fullPage: true });
   }
+});
+
+test.describe("Android Chrome 视口", () => {
+  const { defaultBrowserType: _defaultBrowserType, ...pixel7 } = devices["Pixel 7"];
+  test.use({
+    ...pixel7,
+    viewport: { width: 360, height: 800 },
+  });
+
+  test("整页宽度不超过手机视口，滚动只发生在资源表格内部", async ({ page }) => {
+    test.setTimeout(120_000);
+    await installApiMocks(page);
+
+    for (const route of [
+      { path: "/", name: "overview" },
+      { path: "/nodes", name: "nodes" },
+      { path: "/nodes/worker-0001?tab=labels", name: "node-labels" },
+      { path: "/workloads/deployment/default/web", name: "workload-detail" },
+      { path: "/configuration?tab=secrets", name: "secrets" },
+      { path: "/events", name: "events" },
+      { path: "/audit", name: "audit" },
+    ]) {
+      await page.goto(route.path);
+      await page.locator("main h1").waitFor({ state: "visible" });
+      await expectNoPageOverflow(page, `Android 360px ${route.name}`);
+      await page.screenshot({ path: `test-results/mobile-android/${route.name}.png`, fullPage: true });
+    }
+
+    await page.goto("/nodes");
+    await page.locator("main h1").waitFor({ state: "visible" });
+    const layout = await page.evaluate(() => {
+      const header = document.querySelector("header")!.getBoundingClientRect();
+      const main = document.querySelector("main")!.getBoundingClientRect();
+      const bodyStyle = getComputedStyle(document.body);
+      return {
+        viewportWidth: window.visualViewport?.width ?? window.innerWidth,
+        headerRight: header.right,
+        mainRight: main.right,
+        textSizeAdjust: bodyStyle.getPropertyValue("text-size-adjust") || bodyStyle.getPropertyValue("-webkit-text-size-adjust"),
+        bodyOverflowX: bodyStyle.overflowX,
+      };
+    });
+    expect(layout.headerRight).toBeLessThanOrEqual(layout.viewportWidth + 1);
+    expect(layout.mainRight).toBeLessThanOrEqual(layout.viewportWidth + 1);
+    expect(layout.textSizeAdjust).toBe("100%");
+    expect(layout.bodyOverflowX).toBe("clip");
+  });
 });
 
 test("移动端关键弹窗与确认框保持在视口内", async ({ page }) => {
