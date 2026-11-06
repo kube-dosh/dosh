@@ -62,11 +62,16 @@ export function DataTable<T>({ columns, data, loading = false, empty, pageSize =
               {headerGroup.headers.map((header) => {
                 const sortable = header.column.getCanSort();
                 const sorted = header.column.getIsSorted();
+                const meta = header.column.columnDef.meta;
                 return (
                   <TableHead
                     key={header.id}
-                    style={{ width: header.column.getSize() === 150 ? undefined : header.getSize() }}
-                    className={cn(header.index === 0 && stickyFirstColumn && stickyColumnClass)}
+                    style={{
+                      width: meta?.width ?? (header.column.getSize() === 150 ? undefined : header.getSize()),
+                      minWidth: meta?.minWidth,
+                      maxWidth: meta?.maxWidth,
+                    }}
+                    className={cn(header.index === 0 && stickyFirstColumn && stickyColumnClass, meta?.headerClassName)}
                   >
                     {header.isPlaceholder ? null : (
                       <button
@@ -96,8 +101,12 @@ export function DataTable<T>({ columns, data, loading = false, empty, pageSize =
               {row.getVisibleCells().map((cell, index) => (
                 <TableCell
                   key={cell.id}
-                  style={{ width: cell.column.getSize() === 150 ? undefined : cell.column.getSize() }}
-                  className={cn(index === 0 && stickyFirstColumn && stickyCellClass)}
+                  style={{
+                    width: cell.column.columnDef.meta?.width ?? (cell.column.getSize() === 150 ? undefined : cell.column.getSize()),
+                    minWidth: cell.column.columnDef.meta?.minWidth,
+                    maxWidth: cell.column.columnDef.meta?.maxWidth,
+                  }}
+                  className={cn(index === 0 && stickyFirstColumn && stickyCellClass, cell.column.columnDef.meta?.cellClassName)}
                 >
                   {index === 0 && stickyFirstColumn
                     ? <div className="w-full truncate">{flexRender(cell.column.columnDef.cell, cell.getContext())}</div>

@@ -12,7 +12,7 @@ import { NamespaceSelect } from "@/components/layout/namespace-select";
 import { PageHeader } from "@/components/layout/page-header";
 import { SearchInput } from "@/components/layout/search-input";
 import { Button } from "@/components/ui/button";
-import { EventMessage } from "@/features/events/event-message";
+import { eventMessageColumn } from "@/features/events/event-columns";
 import { mergeEventRows, useEventStream } from "@/features/events/use-event-stream";
 import { formatDate } from "@/lib/utils";
 
@@ -51,7 +51,7 @@ export function EventsPage() {
           column.accessor("namespace", { header: "命名空间" }),
           column.accessor("objectKind", { header: "对象", cell: (info) => <span className="font-mono text-xs">{info.getValue()}/{info.row.original.objectName}</span> }),
           column.accessor("reason", { header: "原因", cell: (info) => <span className="font-medium">{info.getValue()}</span> }),
-          column.accessor("message", { header: "消息", size: 420, cell: (info) => <EventMessage message={info.getValue()} /> }),
+          eventMessageColumn,
           column.accessor("count", { header: "次数", cell: (info) => <span className="tabular-nums">{info.getValue()}</span> }),
           column.accessor("lastSeen", { header: "最近发生", cell: (info) => <span className="whitespace-nowrap text-muted-foreground">{formatDate(info.getValue())}</span> }),
         ]}

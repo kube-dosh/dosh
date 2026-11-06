@@ -70,6 +70,25 @@ describe("DataTable", () => {
     expect(screen.getByRole("cell", { name: row.image })).toHaveStyle({ width: "420px" });
   });
 
+  it("applies per-column responsive width and wrapping metadata", () => {
+    const columns = [
+      column.accessor("name", { header: "名称" }),
+      column.accessor("image", {
+        header: "消息",
+        size: 420,
+        meta: { width: "48%", minWidth: 420, maxWidth: 760, headerClassName: "message-header", cellClassName: "message-cell" },
+      }),
+    ];
+
+    render(<DataTable columns={columns} data={[row]} />);
+
+    const header = screen.getByRole("columnheader", { name: "消息" });
+    const cell = screen.getByRole("cell", { name: row.image });
+    expect(header).toHaveClass("message-header");
+    expect(cell).toHaveClass("message-cell");
+    expect(cell).toHaveStyle({ width: "48%", minWidth: "420px", maxWidth: "760px" });
+  });
+
   it("can opt out of pinning when the first column is not an identity field", () => {
     const columns = [
       column.accessor("age", { header: "时间" }),

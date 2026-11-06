@@ -12,7 +12,7 @@ export function EventMessage({ message }: { message: string }) {
         title="查看完整事件消息"
         aria-haspopup="dialog"
       >
-        <span className="line-clamp-2 whitespace-normal break-words text-muted-foreground underline decoration-transparent underline-offset-4 transition-colors group-hover:text-foreground group-hover:decoration-border">{message}</span>
+        <span className="soft-wrap line-clamp-2 whitespace-normal text-muted-foreground underline decoration-transparent underline-offset-4 transition-colors group-hover:text-foreground group-hover:decoration-border">{message}</span>
       </button>
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="max-w-2xl">

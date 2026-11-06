@@ -878,12 +878,17 @@ test("集群事件长消息限制为两行并可查看全文", async ({ page }) 
     lastSeen: "2026-11-02T00:00:00Z",
   }])));
 
-  await page.goto("/events");
-  const trigger = page.getByRole("button", { name: message });
-  await expect(trigger).toBeVisible();
-  expect(await trigger.locator("span").evaluate((element) => getComputedStyle(element).webkitLineClamp)).toBe("2");
-  expect(await trigger.locator("xpath=ancestor::tr").evaluate((element) => element.getBoundingClientRect().height)).toBeLessThan(72);
+  for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 }]) {
+    await page.setViewportSize(viewport);
+    await page.goto("/events");
+    const trigger = page.getByRole("button", { name: message });
+    await expect(trigger).toBeVisible();
+    expect(await trigger.locator("span").evaluate((element) => getComputedStyle(element).webkitLineClamp)).toBe("2");
+    expect(await trigger.locator("xpath=ancestor::td").evaluate((element) => element.getBoundingClientRect().width)).toBeGreaterThanOrEqual(420);
+    expect(await trigger.locator("xpath=ancestor::tr").evaluate((element) => element.getBoundingClientRect().height)).toBeLessThan(72);
+  }
 
+  const trigger = page.getByRole("button", { name: message });
   await trigger.click();
   const dialog = page.getByRole("dialog", { name: "事件消息" });
   await expect(dialog).toBeVisible();

@@ -10,6 +10,7 @@ describe("EventMessage", () => {
     const trigger = screen.getByRole("button", { name: /Warning: container failed to pull image/ });
     expect(trigger).toHaveAttribute("aria-haspopup", "dialog");
     expect(trigger.querySelector("span")).toHaveClass("line-clamp-2");
+    expect(trigger.querySelector("span")).toHaveClass("soft-wrap");
 
     fireEvent.click(trigger);
 
