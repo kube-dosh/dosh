@@ -189,6 +189,51 @@ kubectl -n <namespace> get cronjob <name> -o jsonpath='{.spec.suspend}{"\n"}'
 kubectl -n <namespace> get jobs --sort-by=.metadata.creationTimestamp
 ```
 
+### 2.1.4 工作负载关联 Service
+
+工作负载详情的“访问方式”页签按 Pod Selector 展示同命名空间 Service。创建、编辑和删除分别要求
+Kubernetes `create services`、`update services`、`delete services`，服务端同时执行 CSRF、只读模式
+和资源级授权检查。
+
+```http
+POST /api/v1/services
+PUT  /api/v1/services/{namespace}/{name}
+DELETE /api/v1/services/{namespace}/{name}?resourceVersion=<当前版本>
+```
+
+创建请求包含 `name`、`namespace`、`type`、`selector` 和 1–10 个 `ports`。支持 `ClusterIP`、
+`NodePort`、`LoadBalancer` 与 `TCP`、`UDP`、`SCTP`；`targetPort` 可填数字或命名端口。NodePort 和
+LoadBalancer 不要求手工指定节点端口，由 Kubernetes 自动分配；更新时按 `protocol/port` 保留已有
+NodePort。多端口必须为每个端口命名，同一 `protocol/port` 不可重复。更新和删除携带
+`resourceVersion`，旧版本返回 409，避免覆盖并发修改。
+
+```bash
+kubectl -n <namespace> get service <name> -o wide
+kubectl -n <namespace> get endpointslice -l kubernetes.io/service-name=<name>
+```
+
+成功、校验失败、无权限和冲突分别写入 `action=create-service|update-service|delete-service` 审计。
+
+### 2.1.5 命名空间删除
+
+命名空间列表和详情可发起删除，页面要求输入命名空间名称确认。服务端要求 Kubernetes
+`delete namespaces`，使用 `propagationPolicy=Foreground`，在命名空间及其全部受控资源删除完成后
+才完成级联清理；请求携带页面加载时的 `resourceVersion`，冲突返回 409。`default`、`kube-*` 和空名称
+在授权前即被拒绝，前端也不会展示这些命名空间的删除入口。
+
+```http
+DELETE /api/v1/namespaces/{name}?resourceVersion=<当前版本>
+```
+
+```bash
+kubectl get namespace <name> -o jsonpath='{.status.phase}{"\n"}'
+kubectl get all,configmap,secret,pvc -n <name>
+```
+
+删除请求返回 202 并记录 `action=delete-namespace` 审计。验收必须先使用临时命名空间，禁止删除
+`default`、`kube-*`、`dosh` 或 `dosh-preview`。local 模式 ClusterRole 除只读权限外仅增加
+`namespaces delete` 以及既有的受控写权限；Token/OIDC 模式仍由用户自身 RBAC 决定。
+
 ## 3. 发布
 
 ```bash

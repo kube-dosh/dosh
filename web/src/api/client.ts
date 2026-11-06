@@ -29,8 +29,10 @@ import type {
   Problem,
   SecretReveal,
   SecretSummary,
+  ServiceCreateInput,
   ServiceDetail,
   ServiceSummary,
+  ServiceUpdateInput,
   SessionResponse,
   ServerCertificate,
   StorageClass,
@@ -241,6 +243,10 @@ export const api = {
     normalizeNodeDetail(await request<NodeDetail>(`/api/v1/nodes/${encodeURIComponent(name)}/taints`, { method: "PUT", body: JSON.stringify(input) })),
   namespaces: (params?: ListParams) => request<ListResponse<NamespaceItem>>(`/api/v1/namespaces${query(params)}`),
   namespace: async (name: string) => normalizeNamespaceDetail(await request<NamespaceDetail>(`/api/v1/namespaces/${encodeURIComponent(name)}`)),
+  deleteNamespace: (name: string, resourceVersion?: string) =>
+    request<{ status: string }>(`/api/v1/namespaces/${encodeURIComponent(name)}${resourceVersion ? `?resourceVersion=${encodeURIComponent(resourceVersion)}` : ""}`, {
+      method: "DELETE",
+    }),
   workloads: (params?: ListParams) => request<ListResponse<WorkloadSummary>>(`/api/v1/workloads${query(params)}`),
   workload: async (kind: string, namespace: string, name: string) =>
     normalizeWorkloadDetail(await request<WorkloadDetail>(`/api/v1/workloads/${kind}/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}`)),
@@ -274,6 +280,18 @@ export const api = {
   events: (params?: ListParams) => request<ListResponse<EventItem>>(`/api/v1/events${query(params)}`),
   services: (params?: ListParams) => request<ListResponse<ServiceSummary>>(`/api/v1/services${query(params)}`),
   service: async (namespace: string, name: string) => normalizeServiceDetail(await request<ServiceDetail>(`/api/v1/services/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}`)),
+  createService: async (input: ServiceCreateInput) => normalizeServiceDetail(await request<ServiceDetail>("/api/v1/services", {
+    method: "POST",
+    body: JSON.stringify(input),
+  })),
+  updateService: async (namespace: string, name: string, input: ServiceUpdateInput) => normalizeServiceDetail(await request<ServiceDetail>(`/api/v1/services/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}`, {
+    method: "PUT",
+    body: JSON.stringify(input),
+  })),
+  deleteService: (namespace: string, name: string, resourceVersion?: string) =>
+    request<{ status: string }>(`/api/v1/services/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}${resourceVersion ? `?resourceVersion=${encodeURIComponent(resourceVersion)}` : ""}`, {
+      method: "DELETE",
+    }),
   ingresses: (params?: ListParams) => request<ListResponse<IngressSummary>>(`/api/v1/ingresses${query(params)}`),
   ingress: async (namespace: string, name: string) => normalizeIngressDetail(await request<IngressDetail>(`/api/v1/ingresses/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}`)),
   ingressClasses: (params?: ListParams) => request<ListResponse<IngressClassSummary>>(`/api/v1/ingressclasses${query(params)}`),

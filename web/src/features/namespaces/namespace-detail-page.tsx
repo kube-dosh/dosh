@@ -1,6 +1,7 @@
-import { useQuery } from "@tanstack/react-query";
+import { useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useParams, useSearch } from "@tanstack/react-router";
-import { FileCode2, FolderTree, Gauge, ShieldCheck } from "lucide-react";
+import { FileCode2, FolderTree, Gauge, ShieldCheck, Trash2 } from "lucide-react";
 import { api } from "@/api/client";
 import type { LimitRange, LimitRangeItem, ResourceQuota } from "@/api/types";
 import { DetailItem } from "@/components/data/detail-item";
@@ -11,9 +12,12 @@ import { MetadataCard } from "@/components/resources/metadata-card";
 import { YamlPanel } from "@/components/resources/yaml-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ResourceEvents } from "@/features/events/resource-events";
+import { useCapabilities } from "@/features/auth/use-session";
+import { NamespaceDeleteDialog } from "@/features/namespaces/namespace-delete-dialog";
 import { formatDate } from "@/lib/utils";
 
 const namespaceTabs = ["overview", "quotas", "limits", "events", "yaml"] as const;
@@ -99,8 +103,13 @@ export function NamespaceDetailPage() {
   const params = useParams({ strict: false }) as { name: string };
   const search = useSearch({ from: "/app/namespaces/$name" });
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
+  const [deleteOpen, setDeleteOpen] = useState(false);
   const tab = isNamespaceTab(search.tab) ? search.tab : "overview";
   const query = useQuery({ queryKey: ["namespace", params.name], queryFn: () => api.namespace(params.name), refetchInterval: 20_000 });
+  const capabilities = useCapabilities().data;
+  const protectedNamespace = params.name === "default" || params.name.startsWith("kube-");
+  const canDelete = Boolean(capabilities?.deleteNamespace) && !protectedNamespace;
   if (query.isLoading) return <LoadingState label="正在加载命名空间详情" className="min-h-[60vh]" />;
   if (query.isError) return <ErrorState error={query.error} onRetry={() => void query.refetch()} />;
   const namespace = query.data!;
@@ -110,6 +119,7 @@ export function NamespaceDetailPage() {
         breadcrumb={<><Link to="/namespaces" search={{ q: search.q }} className="text-primary underline underline-offset-2">命名空间</Link> / {namespace.name}</>}
         title={<span className="flex items-center gap-3"><FolderTree className="h-5 w-5 text-muted-foreground" />{namespace.name}</span>}
         description={<span className="flex flex-wrap items-center gap-2"><StatusBadge status={namespace.status} /><span>{namespace.resourceQuotas.length} 个 ResourceQuota</span><span>·</span><span>{namespace.limitRanges.length} 个 LimitRange</span></span>}
+        actions={canDelete ? <Button variant="destructive" size="sm" onClick={() => setDeleteOpen(true)}><Trash2 className="h-4 w-4" />删除命名空间</Button> : undefined}
       />
       <Tabs value={tab} onValueChange={(value) => {
         if (!isNamespaceTab(value)) return;
@@ -155,6 +165,16 @@ export function NamespaceDetailPage() {
         <TabsContent value="events"><ResourceEvents namespace={namespace.name} objectKind="Namespace" objectName={namespace.name} /></TabsContent>
         <TabsContent value="yaml"><YamlPanel type="namespace" name={namespace.name} height="64vh" /></TabsContent>
       </Tabs>
+      <NamespaceDeleteDialog
+        open={deleteOpen}
+        onOpenChange={setDeleteOpen}
+        name={namespace.name}
+        resourceVersion={namespace.resourceVersion}
+        onDeleted={async () => {
+          await queryClient.invalidateQueries({ queryKey: ["namespaces"] });
+          await navigate({ to: "/namespaces", search: {} });
+        }}
+      />
     </>
   );
 }

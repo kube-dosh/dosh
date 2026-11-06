@@ -298,6 +298,30 @@ paths:
               schema: { $ref: "#/components/schemas/NamespaceDetail" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      tags: [cluster]
+      summary: Delete a namespace and all resources it contains
+      description: |
+        Deletes the namespace with foreground cascading deletion. The default and
+        kube-* system namespaces are protected. Supplying resourceVersion enables
+        an optimistic-concurrency precondition.
+      parameters:
+        - { $ref: "#/components/parameters/Name" }
+        - name: resourceVersion
+          in: query
+          schema: { type: string }
+      responses:
+        "202":
+          description: Namespace deletion accepted
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OperationStatus" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
   /api/v1/workloads:
     get:
       tags: [workloads]
@@ -694,6 +718,29 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/ServiceList" }
         "401": { $ref: "#/components/responses/Unauthorized" }
+    post:
+      tags: [network]
+      summary: Create a Service
+      description: |
+        Creates a ClusterIP, NodePort or LoadBalancer Service. Kubernetes allocates
+        NodePorts automatically. Selector labels associate the resulting EndpointSlice
+        addresses with a workload's pods.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ServiceCreate" }
+      responses:
+        "201":
+          description: Created Service detail
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ServiceDetail" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
   /api/v1/services/{namespace}/{name}:
     get:
       tags: [network]
@@ -709,6 +756,50 @@ paths:
               schema: { $ref: "#/components/schemas/ServiceDetail" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "404": { $ref: "#/components/responses/NotFound" }
+    put:
+      tags: [network]
+      summary: Update Service type, selector and ports
+      parameters:
+        - { $ref: "#/components/parameters/NamespacePath" }
+        - { $ref: "#/components/parameters/Name" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ServiceUpdate" }
+      responses:
+        "200":
+          description: Updated Service detail
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ServiceDetail" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
+    delete:
+      tags: [network]
+      summary: Delete a Service
+      parameters:
+        - { $ref: "#/components/parameters/NamespacePath" }
+        - { $ref: "#/components/parameters/Name" }
+        - name: resourceVersion
+          in: query
+          schema: { type: string }
+      responses:
+        "202":
+          description: Service deletion accepted
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OperationStatus" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
   /api/v1/ingresses:
     get:
       tags: [network]
@@ -1185,7 +1276,7 @@ components:
         admin: { type: boolean }
     Capabilities:
       type: object
-      required: [read, scale, restart, updateImage, suspendCronJob, delete, create, revealSecrets, editYAML, nodeCordon, reloadCertificate]
+      required: [read, scale, restart, updateImage, suspendCronJob, delete, create, createService, updateService, deleteService, deleteNamespace, revealSecrets, editYAML, nodeCordon, reloadCertificate]
       properties:
         read: { type: boolean }
         scale: { type: boolean }
@@ -1194,6 +1285,10 @@ components:
         suspendCronJob: { type: boolean }
         delete: { type: boolean }
         create: { type: boolean }
+        createService: { type: boolean }
+        updateService: { type: boolean }
+        deleteService: { type: boolean }
+        deleteNamespace: { type: boolean }
         revealSecrets: { type: boolean }
         editYAML: { type: boolean }
         nodeCordon: { type: boolean }
@@ -1413,6 +1508,7 @@ components:
       properties:
         name: { type: string }
         status: { type: string }
+        resourceVersion: { type: string }
         labels:
           type: object
           additionalProperties: { type: string }
@@ -1612,6 +1708,7 @@ components:
       properties:
         name: { type: string }
         namespace: { type: string }
+        resourceVersion: { type: string }
         type: { type: string }
         clusterIP: { type: string }
         externalIP: { type: string }
@@ -1623,6 +1720,45 @@ components:
           additionalProperties: { type: string }
         endpointCount: { type: integer, minimum: 0 }
         createdAt: { type: string, format: date-time }
+    ServicePortInput:
+      type: object
+      required: [port]
+      properties:
+        name: { type: string }
+        protocol: { type: string, enum: [TCP, UDP, SCTP], default: TCP }
+        port: { type: integer, minimum: 1, maximum: 65535 }
+        targetPort:
+          type: string
+          description: Pod target port number or named container port.
+    ServiceCreate:
+      type: object
+      required: [name, namespace, type, selector, ports]
+      properties:
+        name: { type: string }
+        namespace: { type: string }
+        type: { type: string, enum: [ClusterIP, NodePort, LoadBalancer] }
+        selector:
+          type: object
+          additionalProperties: { type: string }
+        ports:
+          type: array
+          minItems: 1
+          maxItems: 10
+          items: { $ref: "#/components/schemas/ServicePortInput" }
+    ServiceUpdate:
+      type: object
+      required: [type, selector, ports]
+      properties:
+        type: { type: string, enum: [ClusterIP, NodePort, LoadBalancer] }
+        selector:
+          type: object
+          additionalProperties: { type: string }
+        ports:
+          type: array
+          minItems: 1
+          maxItems: 10
+          items: { $ref: "#/components/schemas/ServicePortInput" }
+        resourceVersion: { type: string }
     ServiceEndpoint:
       type: object
       required: [addresses, ready]

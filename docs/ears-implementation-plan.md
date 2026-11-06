@@ -6656,3 +6656,107 @@ v2.47 的详细条款落在 5.1、6.1、6.3：
   待执行 `make arch`、`make api-check`、`make verify`、race、容器化浏览器和隔离集群热加载验收。
 - 未完成：新镜像构建/digest、source/documentation binding、commercial gates 候选更新、隔离
   HTTPS 热加载证据和全部外部商用门禁。
+
+## 29. v2.49 工作负载访问方式与命名空间生命周期（实施中）
+
+本节覆盖工作负载实例节点跳转、工作负载关联 Service 的增删改，以及命名空间级联删除。它不继承
+v2.48 或更早候选的镜像 digest、浏览器、性能、集群验收和发布证据。
+
+### 29.1 需求与验收口径
+
+- **WL-SVC-001**：当用户查看工作负载实例列表时，每个已调度 Pod 的节点名称应可进入对应节点详情；
+  Pending Pod 无节点时应显示占位符而不是空链接。
+- **WL-SVC-002**：当用户打开工作负载详情的“访问方式”页签时，系统应列出同命名空间中 Selector
+  与该工作负载 Pod Selector 匹配的 Service，并展示类型、ClusterIP、端口、NodePort、Endpoint 数量
+  和 Selector。
+- **WL-SVC-003**：当用户具备 `create services` 且工作负载具有非空 Selector 时，系统应允许创建
+  ClusterIP、NodePort 或 LoadBalancer Service；名称、Selector 和 1–10 个端口必须通过 DNS-1123、
+  协议、端口范围、重复项及多端口命名校验。
+- **WL-SVC-004**：当 Service 类型为 NodePort 或 LoadBalancer 时，系统应让 Kubernetes 自动分配
+  NodePort；更新时对相同 `protocol/port` 保留已有 NodePort，不要求用户协调集群端口区间。
+- **WL-SVC-005**：当用户编辑或删除 Service 时，请求应携带 `resourceVersion`；版本冲突返回 409，
+  页面提示刷新后重试，不覆盖其他操作者的修改。
+- **WL-SVC-006**：当创建、更新或删除 Service 成功、失败、被拒绝或发生冲突时，系统应写入
+  `create-service`、`update-service` 或 `delete-service` 审计，并包含 actor、namespace、name、
+  result 和 requestId。
+- **NS-DEL-001**：当用户具备 `delete namespaces` 时，命名空间列表和详情应提供删除入口；操作必须
+  要求输入命名空间名称确认。
+- **NS-DEL-002**：当删除命名空间时，系统应使用 Kubernetes Foreground 级联删除，并以 202 表示请求
+  已受理；不得只删除 Namespace 对象而遗留孤立资源。
+- **NS-DEL-003**：当目标为 `default`、`kube-*` 或空名称时，系统应在授权和 Kubernetes 调用前拒绝，
+  前端不得提供对应删除入口。
+- **NS-DEL-004**：当删除成功、失败或被拒绝时，系统应写入 `delete-namespace` 审计，且不得删除
+  非目标命名空间。
+- **NS-DEL-005**：当 local 认证模式使用 Helm 内置 RBAC 时，ClusterRole 应包含
+  `namespaces delete`；Token/OIDC 模式继续以用户自身 Kubernetes RBAC 为准。
+
+### 29.2 实施落点
+
+| 文件 | 职责 |
+|---|---|
+| `internal/domain/types.go` | Service 写模型、Service/Namespace `resourceVersion`、四个 capability |
+| `internal/modules/network/app/` | Service CRUD 用例、输入规范化、RBAC 和审计 |
+| `internal/modules/network/http/handler.go` | POST/PUT/DELETE Service 路由 |
+| `internal/platform/kube/network.go` | Service 创建/读取/更新/删除、NodePort 保留和 409 映射 |
+| `internal/modules/nodes/app/service.go` | 命名空间保护、RBAC 和删除审计 |
+| `internal/modules/nodes/http/handler.go` | DELETE Namespace 路由 |
+| `internal/platform/kube/nodes.go` | Foreground 级联删除和 resourceVersion 前置条件 |
+| `deploy/helm/dosh/templates/rbac.yaml` | local 模式 `namespaces delete` |
+| `web/src/features/workloads/` | 节点跳转、访问方式页签、Service 表单和删除确认 |
+| `web/src/features/namespaces/` | 列表/详情删除入口和名称确认对话框 |
+| `api/openapi.yaml`、`web/src/api/schema.d.ts` | 四个写端点、DTO 和 capability 契约 |
+
+依赖方向保持 `http -> app -> domain`，Kubernetes 写操作只存在于 `platform/kube` 适配器。Service
+写用例不接受任意 YAML，只暴露名称、类型、Selector 和端口；命名空间删除不允许跨命名空间批量输入。
+
+### 29.3 逐步骤实施与验收
+
+1. **后端领域与应用层**
+   ```bash
+   go test ./internal/modules/network/... ./internal/modules/nodes/... -count=1
+   ```
+   验收：合法创建/更新/删除成功；无权限不调用仓库；非法名称、类型、Selector、端口、多端口未命名、
+   重复端口在写仓库前返回 400；`default`/`kube-*` 在授权前拒绝；审计覆盖 success/failure/denied。
+
+2. **Kubernetes 适配器**
+   ```bash
+   go test ./internal/platform/kube/... -count=1
+   ```
+   验收：ClusterIP/NodePort/LoadBalancer 写模型正确；NodePort 由 API Server 分配；更新保留相同
+   `protocol/port` 的 NodePort；资源版本冲突映射为 `ErrConflict`；命名空间删除设置 Foreground 和
+   Preconditions。
+
+3. **HTTP、契约与权限**
+   ```bash
+   go test ./internal/modules/network/http ./internal/modules/nodes/http ./internal/bootstrap -count=1
+   cd web && npm run api:check && npm run typecheck
+   ```
+   验收：四个路由与 OpenAPI 一致；未认证 401、无权限 403、缺 CSRF 403、冲突 409、非法输入 400；
+   capability 与 Kubernetes RBAC 对账。
+
+4. **前端行为**
+   ```bash
+   cd web && npm test -- --run
+   bash ../scripts/run-playwright-container.sh --project=chromium
+   ```
+   验收：实例节点名称可跳转；访问方式页签按 Selector 过滤；创建、编辑、删除闭环；命名空间删除必须
+   输入名称；错误和 409 可见；移动端无横向溢出。Playwright 必须使用隔离串行 runner，单 worker、
+   零重试，禁止覆盖并发参数。
+
+5. **隔离集群与部署**
+   ```bash
+   make helm-check
+   make arch
+   git diff --check
+   ```
+   验收：Helm 渲染包含 local 模式 `namespaces delete`；只在 `dosh-preview` 发布；用临时命名空间完成
+   Service 真实创建/编辑/删除和命名空间 Foreground 级联删除，禁止删除 `default`、`kube-*`、
+   `dosh`、`dosh-preview`。
+
+### 29.4 当前状态
+
+- 已实现后端 Service CRUD、命名空间 Foreground 删除、RBAC/CSRF/审计、四个 capability、OpenAPI 与
+  TypeScript 契约、工作负载节点跳转、访问方式页签和命名空间删除确认。
+- 已通过定向 Go 测试、全量 `go test ./...`、`go vet ./...`、Vitest `75/75`、前端类型检查和 OpenAPI
+  一致性检查；待完成全量 race、构建、bundle、架构门禁、隔离浏览器、镜像发布和 Preview 集群验收。
+- local 模式 Helm RBAC 已补充 `namespaces delete` 并通过 `make helm-check`。

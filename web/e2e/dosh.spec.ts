@@ -37,6 +37,10 @@ const session: SessionResponse = {
     suspendCronJob: true,
     delete: true,
     create: true,
+    createService: true,
+    updateService: true,
+    deleteService: true,
+    deleteNamespace: true,
     revealSecrets: true,
     editYAML: true,
     nodeCordon: true,
@@ -161,6 +165,7 @@ const serviceDetail: ServiceDetail = {
   ports: [{ name: "http", protocol: "TCP", port: 80, targetPort: "8080" }],
   selector: { app: "web" },
   endpointCount: 1,
+  resourceVersion: "42",
   createdAt: "2026-11-02T00:00:00Z",
   labels: { app: "web" },
   annotations: { team: "platform" },
@@ -287,6 +292,7 @@ async function installApiMocks(page: Page, options: { authenticated?: boolean; a
   let nodeLabels = { ...nodeDetail.labels };
   let nodeTaints = [...nodeDetail.taints];
   let nodeResourceVersion = 1;
+  let services: ServiceDetail[] = [{ ...serviceDetail }];
   const currentNodeDetail = () => ({
     ...nodeDetail,
     unschedulable: nodeSchedulingDisabled,
@@ -398,6 +404,19 @@ async function installApiMocks(page: Page, options: { authenticated?: boolean; a
         createdAt: "2026-11-02T00:00:00Z",
       }],
     });
+    if (path === "/api/v1/namespaces/production" && method === "GET") return json(route, {
+      name: "production",
+      status: "Active",
+      resourceVersion: "17",
+      labels: { "kubernetes.io/metadata.name": "production" },
+      annotations: {},
+      createdAt: "2026-11-02T00:00:00Z",
+      resourceQuotas: [],
+      limitRanges: [],
+    });
+    if (path === "/api/v1/namespaces/production" && method === "DELETE") {
+      return json(route, { status: "deleting" }, 202);
+    }
     if (path === "/api/v1/workloads/deployment/default/web") return json(route, workloadDetail);
     if (path === "/api/v1/workloads/deployment/default/web/scale" && method === "POST") {
       return json(route, { status: "ok" });
@@ -424,7 +443,41 @@ async function installApiMocks(page: Page, options: { authenticated?: boolean; a
         ),
       });
     }
-    if (path === "/api/v1/services/default/web") return json(route, serviceDetail);
+    if (path === "/api/v1/services/default/web" && method === "GET") return json(route, services.find((item) => item.name === "web") ?? serviceDetail);
+    if (path === "/api/v1/services" && method === "POST") {
+      const body = request.postDataJSON() as { name: string; namespace: string; type: string; selector: Record<string, string>; ports: Array<{ name?: string; protocol?: string; port: number; targetPort?: number }> };
+      const created: ServiceDetail = {
+        ...serviceDetail,
+        name: body.name,
+        namespace: body.namespace,
+        resourceVersion: "50",
+        type: body.type,
+        clusterIP: "10.96.0.50",
+        selector: body.selector,
+        ports: body.ports.map((port) => ({ name: port.name, protocol: port.protocol ?? "TCP", port: port.port, targetPort: String(port.targetPort ?? port.port) })),
+        endpointCount: 0,
+        endpoints: [],
+      };
+      services.push(created);
+      return json(route, created, 201);
+    }
+    if (path === "/api/v1/services/default/web" && method === "PUT") {
+      const body = request.postDataJSON() as { type: string; selector: Record<string, string>; ports: Array<{ name?: string; protocol?: string; port: number; targetPort?: number }>; resourceVersion?: string };
+      const current = services.find((item) => item.name === "web") ?? serviceDetail;
+      const updated: ServiceDetail = {
+        ...current,
+        resourceVersion: "43",
+        type: body.type,
+        selector: body.selector,
+        ports: body.ports.map((port) => ({ name: port.name, protocol: port.protocol ?? "TCP", port: port.port, targetPort: String(port.targetPort ?? port.port) })),
+      };
+      services = services.map((item) => item.name === "web" ? updated : item);
+      return json(route, updated);
+    }
+    if (path === "/api/v1/services/default/web" && method === "DELETE") {
+      services = services.filter((item) => item.name !== "web");
+      return json(route, { status: "deleting" }, 202);
+    }
     if (path === "/api/v1/ingresses/default/web") return json(route, ingressDetail);
     if (path === "/api/v1/events") return json(route, list([]));
     if (path === "/api/v1/audit-events") {
@@ -466,10 +519,7 @@ async function installApiMocks(page: Page, options: { authenticated?: boolean; a
     if (path === "/api/v1/persistentvolumes/pv-data") return json(route, persistentVolumeDetail);
     if (path === "/api/v1/persistentvolumeclaims") return json(route, list([]));
     if (path === "/api/v1/persistentvolumeclaims/production/data-claim") return json(route, persistentVolumeClaimDetail);
-    if (path === "/api/v1/services") return json(route, list([{
-      name: "web", namespace: "default", type: "ClusterIP", clusterIP: "10.96.0.10", externalIP: "",
-      ports: [{ name: "http", protocol: "TCP", port: 80, targetPort: "8080" }], selector: { app: "web" }, endpointCount: 2, createdAt: "2026-11-02T00:00:00Z",
-    }]));
+    if (path === "/api/v1/services" && method === "GET") return json(route, list(services));
     if (path === "/api/v1/ingresses") return json(route, list([{
       name: "web", namespace: "default", class: "nginx", createdAt: "2026-11-02T00:00:00Z",
       paths: [{ host: "web.example.test", path: "/", pathType: "Prefix", service: "web", port: "80", targetStatus: "Ready" }], tlsHosts: ["web.example.test"],
@@ -951,6 +1001,55 @@ test("工作负载镜像更新携带容器和资源版本并发送 CSRF", async 
   await expect(page.getByRole("dialog", { name: "更新容器镜像" })).toBeHidden();
 });
 
+test("工作负载实例中的节点名称可跳转到节点详情", async ({ page }) => {
+  await installApiMocks(page);
+  await page.goto("/workloads/deployment/default/web?tab=pods");
+  await expect(page.getByRole("heading", { name: "web", exact: true })).toBeVisible();
+
+  await page.getByRole("link", { name: "worker-0001", exact: true }).click();
+  await expect(page).toHaveURL(/\/nodes\/worker-0001$/);
+  await expect(page.getByRole("heading", { name: "worker-0001", exact: true })).toBeVisible();
+});
+
+test("工作负载访问方式可创建、编辑和删除关联 Service", async ({ page }) => {
+  await installApiMocks(page);
+  await page.goto("/workloads/deployment/default/web?tab=services");
+  await expect(page.getByRole("heading", { name: "关联 Service" })).toBeVisible();
+
+  await page.getByRole("button", { name: "配置访问方式" }).click();
+  const createDialog = page.getByRole("dialog", { name: "配置访问方式" });
+  await expect(createDialog).toBeVisible();
+  await createDialog.getByLabel("Service 名称").fill("web-public");
+  await createDialog.getByLabel("Service 端口").fill("8080");
+  await createDialog.getByLabel("目标端口").fill("8080");
+  const createRequest = page.waitForRequest((request) => request.method() === "POST" && new URL(request.url()).pathname === "/api/v1/services");
+  await createDialog.getByRole("button", { name: "创建 Service" }).click();
+  const created = await createRequest;
+  expect(created.headers()["x-csrf-token"]).toBe(csrfToken);
+  expect(created.postDataJSON()).toMatchObject({ name: "web-public", namespace: "default", type: "ClusterIP", selector: { app: "web" } });
+  await expect(page.getByRole("link", { name: "web-public", exact: true })).toBeVisible();
+
+  const webCard = page.locator(".rounded-lg.border.bg-card").filter({ has: page.getByRole("link", { name: "web", exact: true }) });
+  await webCard.getByRole("button", { name: "编辑" }).click();
+  const editDialog = page.getByRole("dialog", { name: "编辑 Service" });
+  await expect(editDialog).toBeVisible();
+  const updateRequest = page.waitForRequest((request) => request.method() === "PUT" && new URL(request.url()).pathname === "/api/v1/services/default/web");
+  await editDialog.getByRole("button", { name: "保存修改" }).click();
+  const updated = await updateRequest;
+  expect(updated.headers()["x-csrf-token"]).toBe(csrfToken);
+  expect(updated.postDataJSON()).toMatchObject({ resourceVersion: "42", selector: { app: "web" } });
+
+  await webCard.getByRole("button", { name: "删除" }).click();
+  const deleteDialog = page.getByRole("alertdialog", { name: /删除 Service web/ });
+  await deleteDialog.getByLabel("Service 名称").fill("web");
+  const deleteRequest = page.waitForRequest((request) => request.method() === "DELETE" && new URL(request.url()).pathname === "/api/v1/services/default/web");
+  await deleteDialog.getByRole("button", { name: "确认删除" }).click();
+  const deleted = await deleteRequest;
+  expect(deleted.headers()["x-csrf-token"]).toBe(csrfToken);
+  expect(new URL(deleted.url()).searchParams.get("resourceVersion")).toBe("43");
+  await expect(page.getByRole("link", { name: "web", exact: true })).toHaveCount(0);
+});
+
 test("CronJob 暂停携带资源版本并发送 CSRF", async ({ page }) => {
   await installApiMocks(page);
   await page.goto("/workloads/cronjob/default/backup");
@@ -1318,6 +1417,7 @@ test("320px 大字体缩放时页面不产生横向溢出", async ({ page }) => 
 });
 
 test.describe("Android Chrome 视口", () => {
+  test.skip(({ browserName }) => browserName !== "chromium", "Android Chrome viewport checks run in Chromium only");
   const { defaultBrowserType: _defaultBrowserType, ...pixel7 } = devices["Pixel 7"];
   test.use({
     ...pixel7,
@@ -1521,6 +1621,24 @@ test("命名空间详情展示资源配额与限制范围", async ({ page }) => 
   await expect(page.getByRole("tab", { name: "限制范围 (1)" })).toHaveAttribute("aria-selected", "true");
 });
 
+test("命名空间支持输入名称确认后级联删除", async ({ page }) => {
+  await installApiMocks(page);
+  await page.goto("/namespaces/production");
+  await expect(page.getByRole("heading", { name: "production", exact: true })).toBeVisible();
+
+  await page.getByRole("button", { name: "删除命名空间" }).click();
+  const dialog = page.getByRole("alertdialog", { name: /删除命名空间 production/ });
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByRole("button", { name: "确认级联删除" })).toBeDisabled();
+  await dialog.getByLabel("请输入命名空间名称确认").fill("production");
+  const deleteRequest = page.waitForRequest((request) => request.method() === "DELETE" && new URL(request.url()).pathname === "/api/v1/namespaces/production");
+  await dialog.getByRole("button", { name: "确认级联删除" }).click();
+  const request = await deleteRequest;
+  expect(request.headers()["x-csrf-token"]).toBe(csrfToken);
+  expect(new URL(request.url()).searchParams.get("resourceVersion")).toBe("17");
+  await expect(page).toHaveURL(/\/namespaces$/);
+});
+
 test("存储筛选写入 URL 并在刷新后恢复", async ({ page }) => {
   await installApiMocks(page);
   await page.goto("/storage?q=logs");
@@ -1587,7 +1705,7 @@ test("网络标签写入 URL 并在刷新后保持", async ({ page }) => {
   await page.goto("/network");
 
   await expect(page.getByRole("columnheader", { name: "Endpoint" })).toBeVisible();
-  await expect(page.getByRole("cell", { name: "2", exact: true })).toBeVisible();
+  await expect(page.getByRole("cell", { name: "1", exact: true })).toBeVisible();
   await page.getByRole("tab", { name: /Ingress/ }).click();
   await expect(page).toHaveURL(/tab=ingresses/);
   await expect(page.getByRole("tab", { name: /Ingress/ })).toHaveAttribute("aria-selected", "true");
@@ -1650,8 +1768,6 @@ test("Secret 明文查看解码文本并保留二进制 Base64", async ({ page }
   await page.goto("/configuration?tab=secrets");
 
   await page.getByRole("button", { name: "查看明文" }).click();
-  await page.getByLabel("Secret 名称").fill("app-secret");
-  await page.getByRole("button", { name: "确认查看" }).click();
 
   const token = page.locator('pre[aria-label="token 值"]');
   await expect(token).toContainText("token=abc");

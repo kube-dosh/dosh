@@ -303,7 +303,7 @@ func (c *Client) ListNamespaces(ctx context.Context, query domain.ListQuery) ([]
 			continue
 		}
 		out = append(out, domain.Namespace{
-			Name: item.Name, Status: string(item.Status.Phase), Labels: item.Labels,
+			Name: item.Name, Status: string(item.Status.Phase), ResourceVersion: item.ResourceVersion, Labels: item.Labels,
 			Annotations: item.Annotations, CreatedAt: item.CreationTimestamp.Time,
 		})
 	}
@@ -328,7 +328,7 @@ func (c *Client) GetNamespace(ctx context.Context, name string) (domain.Namespac
 	}
 	detail := domain.NamespaceDetail{
 		Namespace: domain.Namespace{
-			Name: item.Name, Status: string(item.Status.Phase), Labels: item.Labels,
+			Name: item.Name, Status: string(item.Status.Phase), ResourceVersion: item.ResourceVersion, Labels: item.Labels,
 			Annotations: item.Annotations, CreatedAt: item.CreationTimestamp.Time,
 		},
 		ResourceQuotas: make([]domain.ResourceQuota, 0, len(quotas.Items)),
@@ -355,6 +355,24 @@ func (c *Client) GetNamespace(ctx context.Context, name string) (domain.Namespac
 	sort.Slice(detail.ResourceQuotas, func(i, j int) bool { return detail.ResourceQuotas[i].Name < detail.ResourceQuotas[j].Name })
 	sort.Slice(detail.LimitRanges, func(i, j int) bool { return detail.LimitRanges[i].Name < detail.LimitRanges[j].Name })
 	return detail, nil
+}
+
+func (c *Client) DeleteNamespace(ctx context.Context, name, resourceVersion string) error {
+	ctx, cancel := c.withTimeout(ctx)
+	defer cancel()
+	item, err := c.clientset.CoreV1().Namespaces().Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		return mapKubeError(err)
+	}
+	if resourceVersion != "" && item.ResourceVersion != resourceVersion {
+		return fmt.Errorf("%w: expected %s, got %s", domain.ErrConflict, resourceVersion, item.ResourceVersion)
+	}
+	policy := metav1.DeletePropagationForeground
+	options := metav1.DeleteOptions{PropagationPolicy: &policy}
+	if resourceVersion != "" {
+		options.Preconditions = &metav1.Preconditions{ResourceVersion: &resourceVersion}
+	}
+	return mapKubeError(c.clientset.CoreV1().Namespaces().Delete(ctx, name, options))
 }
 
 func resourceListStrings(items corev1.ResourceList) map[string]string {

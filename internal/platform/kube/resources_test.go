@@ -288,6 +288,33 @@ func TestNamespacesSearchAndNotFound(t *testing.T) {
 	}
 }
 
+func TestDeleteNamespaceUsesForegroundCascadeAndChecksResourceVersion(t *testing.T) {
+	namespace := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "preview", ResourceVersion: "5"}}
+	client, clientset := newFakeKubeClient(namespace)
+	var options metav1.DeleteOptions
+	clientset.PrependReactor("delete", "namespaces", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		if deleteAction, ok := action.(k8stesting.DeleteAction); ok {
+			options = deleteAction.GetDeleteOptions()
+		}
+		return false, nil, nil
+	})
+	if err := client.DeleteNamespace(context.Background(), "preview", "5"); err != nil {
+		t.Fatalf("DeleteNamespace() error = %v", err)
+	}
+	if options.PropagationPolicy == nil || *options.PropagationPolicy != metav1.DeletePropagationForeground {
+		t.Fatalf("delete propagation = %#v", options.PropagationPolicy)
+	}
+	if options.Preconditions == nil || options.Preconditions.ResourceVersion == nil || *options.Preconditions.ResourceVersion != "5" {
+		t.Fatalf("delete preconditions = %#v", options.Preconditions)
+	}
+
+	other := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "other", ResourceVersion: "6"}}
+	otherClient, _ := newFakeKubeClient(other)
+	if err := otherClient.DeleteNamespace(context.Background(), "other", "stale"); !errors.Is(err, domain.ErrConflict) {
+		t.Fatalf("stale DeleteNamespace() error = %v", err)
+	}
+}
+
 func TestSecretSummaryDoesNotExposeValuesAndRevealBase64Encodes(t *testing.T) {
 	secret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{Name: "app", Namespace: "prod"},

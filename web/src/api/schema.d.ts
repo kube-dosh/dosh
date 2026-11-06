@@ -655,7 +655,42 @@ export interface paths {
         };
         put?: never;
         post?: never;
-        delete?: never;
+        /**
+         * Delete a namespace and all resources it contains
+         * @description Deletes the namespace with foreground cascading deletion. The default and
+         *     kube-* system namespaces are protected. Supplying resourceVersion enables
+         *     an optimistic-concurrency precondition.
+         */
+        delete: {
+            parameters: {
+                query?: {
+                    resourceVersion?: string;
+                };
+                header?: never;
+                path: {
+                    name: components["parameters"]["Name"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Namespace deletion accepted */
+                202: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["OperationStatus"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+                404: components["responses"]["NotFound"];
+                409: components["responses"]["Conflict"];
+                503: components["responses"]["DependencyUnavailable"];
+            };
+        };
         options?: never;
         head?: never;
         patch?: never;
@@ -1407,7 +1442,41 @@ export interface paths {
             };
         };
         put?: never;
-        post?: never;
+        /**
+         * Create a Service
+         * @description Creates a ClusterIP, NodePort or LoadBalancer Service. Kubernetes allocates
+         *     NodePorts automatically. Selector labels associate the resulting EndpointSlice
+         *     addresses with a workload's pods.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["ServiceCreate"];
+                };
+            };
+            responses: {
+                /** @description Created Service detail */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ServiceDetail"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+                409: components["responses"]["Conflict"];
+                503: components["responses"]["DependencyUnavailable"];
+            };
+        };
         delete?: never;
         options?: never;
         head?: never;
@@ -1447,9 +1516,73 @@ export interface paths {
                 404: components["responses"]["NotFound"];
             };
         };
-        put?: never;
+        /** Update Service type, selector and ports */
+        put: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    namespace: components["parameters"]["NamespacePath"];
+                    name: components["parameters"]["Name"];
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["ServiceUpdate"];
+                };
+            };
+            responses: {
+                /** @description Updated Service detail */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ServiceDetail"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+                404: components["responses"]["NotFound"];
+                409: components["responses"]["Conflict"];
+                503: components["responses"]["DependencyUnavailable"];
+            };
+        };
         post?: never;
-        delete?: never;
+        /** Delete a Service */
+        delete: {
+            parameters: {
+                query?: {
+                    resourceVersion?: string;
+                };
+                header?: never;
+                path: {
+                    namespace: components["parameters"]["NamespacePath"];
+                    name: components["parameters"]["Name"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Service deletion accepted */
+                202: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["OperationStatus"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+                404: components["responses"]["NotFound"];
+                409: components["responses"]["Conflict"];
+                503: components["responses"]["DependencyUnavailable"];
+            };
+        };
         options?: never;
         head?: never;
         patch?: never;
@@ -2242,6 +2375,10 @@ export interface components {
             suspendCronJob: boolean;
             delete: boolean;
             create: boolean;
+            createService: boolean;
+            updateService: boolean;
+            deleteService: boolean;
+            deleteNamespace: boolean;
             revealSecrets: boolean;
             editYAML: boolean;
             nodeCordon: boolean;
@@ -2435,6 +2572,7 @@ export interface components {
         Namespace: {
             name: string;
             status: string;
+            resourceVersion?: string;
             labels?: {
                 [key: string]: string;
             };
@@ -2586,6 +2724,7 @@ export interface components {
         ServiceSummary: {
             name: string;
             namespace: string;
+            resourceVersion?: string;
             type: string;
             clusterIP: string;
             externalIP: string;
@@ -2596,6 +2735,36 @@ export interface components {
             endpointCount: number;
             /** Format: date-time */
             createdAt: string;
+        };
+        ServicePortInput: {
+            name?: string;
+            /**
+             * @default TCP
+             * @enum {string}
+             */
+            protocol: "TCP" | "UDP" | "SCTP";
+            port: number;
+            /** @description Pod target port number or named container port. */
+            targetPort?: string;
+        };
+        ServiceCreate: {
+            name: string;
+            namespace: string;
+            /** @enum {string} */
+            type: "ClusterIP" | "NodePort" | "LoadBalancer";
+            selector: {
+                [key: string]: string;
+            };
+            ports: components["schemas"]["ServicePortInput"][];
+        };
+        ServiceUpdate: {
+            /** @enum {string} */
+            type: "ClusterIP" | "NodePort" | "LoadBalancer";
+            selector: {
+                [key: string]: string;
+            };
+            ports: components["schemas"]["ServicePortInput"][];
+            resourceVersion?: string;
         };
         ServiceEndpoint: {
             addresses: string[];

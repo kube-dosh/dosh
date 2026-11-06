@@ -41,6 +41,10 @@ type Capabilities struct {
 	SuspendCronJob    bool `json:"suspendCronJob"`
 	Delete            bool `json:"delete"`
 	Create            bool `json:"create"`
+	CreateService     bool `json:"createService"`
+	UpdateService     bool `json:"updateService"`
+	DeleteService     bool `json:"deleteService"`
+	DeleteNamespace   bool `json:"deleteNamespace"`
 	RevealSecrets     bool `json:"revealSecrets"`
 	EditYAML          bool `json:"editYAML"`
 	NodeCordon        bool `json:"nodeCordon"`
@@ -230,11 +234,12 @@ type NodeTaintUpdate struct {
 }
 
 type Namespace struct {
-	Name        string            `json:"name"`
-	Status      string            `json:"status"`
-	Labels      map[string]string `json:"labels,omitempty"`
-	Annotations map[string]string `json:"annotations,omitempty"`
-	CreatedAt   time.Time         `json:"createdAt"`
+	Name            string            `json:"name"`
+	Status          string            `json:"status"`
+	ResourceVersion string            `json:"resourceVersion,omitempty"`
+	Labels          map[string]string `json:"labels,omitempty"`
+	Annotations     map[string]string `json:"annotations,omitempty"`
+	CreatedAt       time.Time         `json:"createdAt"`
 }
 
 type NamespaceDetail struct {
@@ -369,16 +374,42 @@ type ServicePort struct {
 	NodePort   int32  `json:"nodePort,omitempty"`
 }
 
+// ServicePortInput is the write-side representation of a Service port. Dosh
+// lets Kubernetes allocate NodePorts so callers do not need to coordinate a
+// cluster-wide port range.
+type ServicePortInput struct {
+	Name       string `json:"name,omitempty"`
+	Protocol   string `json:"protocol,omitempty"`
+	Port       int32  `json:"port"`
+	TargetPort string `json:"targetPort,omitempty"`
+}
+
+type ServiceCreateSpec struct {
+	Name      string             `json:"name"`
+	Namespace string             `json:"namespace"`
+	Type      string             `json:"type"`
+	Selector  map[string]string  `json:"selector"`
+	Ports     []ServicePortInput `json:"ports"`
+}
+
+type ServiceUpdateSpec struct {
+	Type            string             `json:"type"`
+	Selector        map[string]string  `json:"selector"`
+	Ports           []ServicePortInput `json:"ports"`
+	ResourceVersion string             `json:"resourceVersion,omitempty"`
+}
+
 type ServiceSummary struct {
-	Name          string            `json:"name"`
-	Namespace     string            `json:"namespace"`
-	Type          string            `json:"type"`
-	ClusterIP     string            `json:"clusterIP"`
-	ExternalIP    string            `json:"externalIP"`
-	Ports         []ServicePort     `json:"ports"`
-	Selector      map[string]string `json:"selector,omitempty"`
-	EndpointCount int               `json:"endpointCount"`
-	CreatedAt     time.Time         `json:"createdAt"`
+	Name            string            `json:"name"`
+	Namespace       string            `json:"namespace"`
+	ResourceVersion string            `json:"resourceVersion,omitempty"`
+	Type            string            `json:"type"`
+	ClusterIP       string            `json:"clusterIP"`
+	ExternalIP      string            `json:"externalIP"`
+	Ports           []ServicePort     `json:"ports"`
+	Selector        map[string]string `json:"selector,omitempty"`
+	EndpointCount   int               `json:"endpointCount"`
+	CreatedAt       time.Time         `json:"createdAt"`
 }
 
 type ServiceEndpoint struct {

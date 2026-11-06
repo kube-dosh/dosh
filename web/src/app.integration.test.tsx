@@ -13,7 +13,7 @@ const session: SessionResponse = {
   user: { username: "admin", admin: true, groups: ["dosh-admins"] },
   csrfToken: "test-csrf-token",
   expiresAt: "2099-01-01T00:00:00Z",
-  capabilities: { read: true, scale: true, restart: true, updateImage: true, suspendCronJob: true, delete: true, create: true, revealSecrets: true, editYAML: true, nodeCordon: true, reloadCertificate: true },
+  capabilities: { read: true, scale: true, restart: true, updateImage: true, suspendCronJob: true, delete: true, create: true, createService: true, updateService: true, deleteService: true, deleteNamespace: true, revealSecrets: true, editYAML: true, nodeCordon: true, reloadCertificate: true },
   authMode: "local",
 };
 
@@ -105,6 +105,7 @@ const server = setupServer(
   http.get("/api/v1/pods/default/web-abcdef-12345", () => HttpResponse.json(pod)),
   http.get("/api/v1/pods/default/web-abcdef-12345/logs", () => HttpResponse.text(logFrames("hello from dosh log stream"), { headers: { "Content-Type": "application/x-ndjson; charset=utf-8" } })),
   http.get("/api/v1/services/default/web", () => HttpResponse.json(serviceDetail)),
+  http.get("/api/v1/services", () => HttpResponse.json({ items: [], meta: { total: 0 } })),
   http.get("/api/v1/ingresses/default/web", () => HttpResponse.json(ingressDetail)),
   http.get("/api/v1/storageclasses/data-standard", () => HttpResponse.json(storageClassDetail)),
   http.get("/api/v1/persistentvolumes/pv-data", () => HttpResponse.json(persistentVolumeDetail)),
@@ -616,6 +617,118 @@ describe("dosh application", () => {
     fireEvent.click(podsTab);
     await waitFor(() => expect(router.state.location.search).toMatchObject({ tab: "pods" }));
     expect(screen.getByRole("tab", { name: /实例/ })).toHaveAttribute("aria-selected", "true");
+  });
+
+  it("links workload instance nodes to node detail", async () => {
+    server.use(http.get("/api/v1/workloads/deployment/default/web-api", () => HttpResponse.json({
+      ...workload,
+      name: "web-api",
+      images: ["nginx:alpine"],
+      resourceVersion: "317754",
+      conditions: [],
+      selector: { app: "web" },
+      pods: [pod],
+      containers: [{ name: "web", image: "nginx:alpine" }],
+    })));
+    renderRoute("/workloads/deployment/default/web-api?tab=pods");
+
+    const nodeLink = await screen.findByRole("link", { name: "worker-0001" });
+    expect(nodeLink).toHaveAttribute("href", "/nodes/worker-0001");
+  });
+
+  it("creates, edits and deletes a workload Service with resource versions", async () => {
+    const services = [{
+      name: "web-api", namespace: "default", resourceVersion: "21", type: "ClusterIP", clusterIP: "10.96.0.21", externalIP: "",
+      ports: [{ name: "http", protocol: "TCP", port: 80, targetPort: "8080" }], selector: { app: "web" }, endpointCount: 1,
+      createdAt: "2026-11-02T00:00:00Z",
+    }];
+    let createBody: Record<string, unknown> | undefined;
+    let updateBody: Record<string, unknown> | undefined;
+    let deleteCSRF: string | null = null;
+    let deleteResourceVersion: string | null = null;
+    server.use(
+      http.get("/api/v1/workloads/deployment/default/web-api", () => HttpResponse.json({
+        ...workload,
+        name: "web-api",
+        images: ["nginx:alpine"],
+        resourceVersion: "317754",
+        conditions: [],
+        selector: { app: "web" },
+        pods: [],
+        containers: [{ name: "web", image: "nginx:alpine" }],
+      })),
+      http.get("/api/v1/services", () => HttpResponse.json({ items: services, meta: { total: services.length } })),
+      http.post("/api/v1/services", async ({ request }) => {
+        createBody = await request.json() as Record<string, unknown>;
+        const created = {
+          name: String(createBody.name), namespace: "default", resourceVersion: "22", type: "NodePort", clusterIP: "10.96.0.22", externalIP: "",
+          ports: [{ name: "http", protocol: "TCP", port: 80, targetPort: "8080", nodePort: 31080 }], selector: { app: "web" }, endpointCount: 0,
+          createdAt: "2026-11-02T00:00:00Z", labels: {}, annotations: {}, sessionAffinity: "None", ipFamilies: ["IPv4"], endpoints: [],
+        };
+        services.push(created);
+        return HttpResponse.json(created, { status: 201 });
+      }),
+      http.put("/api/v1/services/default/web-api", async ({ request }) => {
+        updateBody = await request.json() as Record<string, unknown>;
+        const updated = { ...services[0], resourceVersion: "23", type: "LoadBalancer", endpointCount: 1 };
+        services[0] = updated;
+        return HttpResponse.json({ ...updated, labels: {}, annotations: {}, sessionAffinity: "None", ipFamilies: ["IPv4"], endpoints: [] });
+      }),
+      http.delete("/api/v1/services/default/web-api", ({ request }) => {
+        deleteCSRF = request.headers.get("x-csrf-token");
+        deleteResourceVersion = new URL(request.url).searchParams.get("resourceVersion");
+        services.splice(0, 1);
+        return HttpResponse.json({ status: "deleting" }, { status: 202 });
+      }),
+    );
+    renderRoute("/workloads/deployment/default/web-api?tab=services");
+
+    expect(await screen.findByRole("heading", { name: "关联 Service" })).toBeInTheDocument();
+    fireEvent.click(await screen.findByRole("button", { name: "配置访问方式" }));
+    let dialog = await screen.findByRole("dialog", { name: "配置访问方式" });
+    fireEvent.change(within(dialog).getByLabelText("Service 名称"), { target: { value: "web-api-public" } });
+    fireEvent.change(within(dialog).getByLabelText("Service 端口"), { target: { value: "8080" } });
+    fireEvent.change(within(dialog).getByLabelText("目标端口"), { target: { value: "8080" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "创建 Service" }));
+    await waitFor(() => expect(createBody).toMatchObject({ name: "web-api-public", namespace: "default", selector: { app: "web" } }));
+    expect(await screen.findByText("web-api-public")).toBeInTheDocument();
+
+    const serviceCard = screen.getByRole("link", { name: "web-api" }).closest(".rounded-lg") as HTMLElement;
+    fireEvent.click(within(serviceCard).getByRole("button", { name: "编辑" }));
+    dialog = await screen.findByRole("dialog", { name: "编辑 Service" });
+    fireEvent.click(within(dialog).getByRole("button", { name: "保存修改" }));
+    await waitFor(() => expect(updateBody).toMatchObject({ resourceVersion: "21", selector: { app: "web" } }));
+
+    fireEvent.click(within(serviceCard).getByRole("button", { name: "删除" }));
+    const alert = await screen.findByRole("alertdialog", { name: /删除 Service web-api/ });
+    fireEvent.change(within(alert).getByLabelText("Service 名称"), { target: { value: "web-api" } });
+    fireEvent.click(within(alert).getByRole("button", { name: "确认删除" }));
+    await waitFor(() => expect(deleteResourceVersion).toBe("23"));
+    expect(deleteCSRF).toBe("test-csrf-token");
+  });
+
+  it("deletes a namespace after typed confirmation", async () => {
+    let deleteRequest: Request | undefined;
+    server.use(
+      http.get("/api/v1/namespaces/production", () => HttpResponse.json({
+        name: "production", status: "Active", resourceVersion: "41", labels: {}, annotations: {}, createdAt: "2026-11-02T00:00:00Z",
+        resourceQuotas: [], limitRanges: [],
+      })),
+      http.delete("/api/v1/namespaces/production", ({ request }) => {
+        deleteRequest = request;
+        return HttpResponse.json({ status: "deleting" }, { status: 202 });
+      }),
+    );
+    const router = renderRoute("/namespaces/production");
+    fireEvent.click(await screen.findByRole("button", { name: "删除命名空间" }));
+    const dialog = await screen.findByRole("alertdialog", { name: /删除命名空间 production/ });
+    expect(within(dialog).getByRole("button", { name: "确认级联删除" })).toBeDisabled();
+    fireEvent.change(within(dialog).getByLabelText("请输入命名空间名称确认"), { target: { value: "production" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "确认级联删除" }));
+    await waitFor(() => expect(deleteRequest).toBeDefined());
+    expect(new URL(deleteRequest!.url).searchParams.get("resourceVersion")).toBe("41");
+    expect(deleteRequest!.headers.get("x-csrf-token")).toBe("test-csrf-token");
+    await waitFor(() => expect(router.state.location.pathname).toBe("/namespaces"));
   });
 
   it("renders workload detail when collection fields are null", async () => {

@@ -12,6 +12,10 @@ export interface Capabilities {
   suspendCronJob: boolean;
   delete: boolean;
   create: boolean;
+  createService: boolean;
+  updateService: boolean;
+  deleteService: boolean;
+  deleteNamespace: boolean;
   revealSecrets: boolean;
   editYAML: boolean;
   nodeCordon: boolean;
@@ -205,6 +209,7 @@ export interface NodeTaintUpdate {
 export interface NamespaceItem {
   name: string;
   status: string;
+  resourceVersion?: string;
   labels?: Record<string, string>;
   annotations?: Record<string, string>;
   createdAt: string;
@@ -345,6 +350,7 @@ export interface ServicePort {
 export interface ServiceSummary {
   name: string;
   namespace: string;
+  resourceVersion?: string;
   type: string;
   clusterIP: string;
   externalIP: string;
@@ -352,6 +358,28 @@ export interface ServiceSummary {
   selector?: Record<string, string>;
   endpointCount: number;
   createdAt: string;
+}
+
+export interface ServicePortInput {
+  name?: string;
+  protocol?: string;
+  port: number;
+  targetPort?: string;
+}
+
+export interface ServiceCreateInput {
+  name: string;
+  namespace: string;
+  type: string;
+  selector: Record<string, string>;
+  ports: ServicePortInput[];
+}
+
+export interface ServiceUpdateInput {
+  type: string;
+  selector: Record<string, string>;
+  ports: ServicePortInput[];
+  resourceVersion?: string;
 }
 
 export interface ServiceEndpoint {

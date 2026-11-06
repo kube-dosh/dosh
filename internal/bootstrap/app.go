@@ -137,7 +137,7 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 	nodesService := nodesapp.New(kubeClient, authorizer, auditLogger)
 	workloadsService := workloadsapp.New(kubeClient, authorizer, auditLogger)
 	eventsService := eventsapp.New(kubeClient)
-	networkService := networkapp.New(kubeClient)
+	networkService := networkapp.New(kubeClient, authorizer, auditLogger)
 	configurationService := configurationapp.New(kubeClient, authorizer, auditLogger)
 	certificatesService := certificatesapp.New(certificateStore, authorizer, auditLogger)
 	storageService := storageapp.New(kubeClient)

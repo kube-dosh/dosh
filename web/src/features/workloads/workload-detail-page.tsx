@@ -26,10 +26,11 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useCapabilities } from "@/features/auth/use-session";
 import { ResourceEvents } from "@/features/events/resource-events";
 import { PodLogs } from "@/features/workloads/pod-logs";
+import { WorkloadServicesPanel } from "@/features/workloads/workload-services-panel";
 import { formatAge, formatDate } from "@/lib/utils";
 
 const podColumn = createColumnHelper<PodSummary>();
-const workloadTabs = ["overview", "pods", "events", "logs", "yaml"] as const;
+const workloadTabs = ["overview", "pods", "services", "events", "logs", "yaml"] as const;
 type WorkloadTab = (typeof workloadTabs)[number];
 
 const kubernetesKinds: Record<string, string> = {
@@ -176,7 +177,7 @@ export function WorkloadDetailPage() {
         }
       />
       <Tabs value={tab} onValueChange={changeTab}>
-        <TabsList><TabsTrigger value="overview">概览</TabsTrigger><TabsTrigger value="pods">实例 ({workload.pods.length})</TabsTrigger><TabsTrigger value="events">事件</TabsTrigger><TabsTrigger value="logs"><ScrollText className="h-3.5 w-3.5" />日志</TabsTrigger><TabsTrigger value="yaml"><FileCode2 className="h-3.5 w-3.5" />YAML</TabsTrigger></TabsList>
+        <TabsList><TabsTrigger value="overview">概览</TabsTrigger><TabsTrigger value="pods">实例 ({workload.pods.length})</TabsTrigger><TabsTrigger value="services">访问方式</TabsTrigger><TabsTrigger value="events">事件</TabsTrigger><TabsTrigger value="logs"><ScrollText className="h-3.5 w-3.5" />日志</TabsTrigger><TabsTrigger value="yaml"><FileCode2 className="h-3.5 w-3.5" />YAML</TabsTrigger></TabsList>
         <TabsContent value="overview">
           <div className="grid gap-4 xl:grid-cols-[1.1fr_0.9fr]">
             <Card>
@@ -215,7 +216,7 @@ export function WorkloadDetailPage() {
               podColumn.accessor("status", { header: "状态", cell: (info) => <StatusBadge status={info.getValue()} /> }),
               podColumn.accessor("ready", { header: "就绪" }),
               podColumn.accessor("restarts", { header: "重启" }),
-              podColumn.accessor("node", { header: "节点", cell: (info) => <span className="font-mono text-xs">{info.getValue()}</span> }),
+              podColumn.accessor("node", { header: "节点", cell: (info) => info.getValue() ? <Link to="/nodes/$name" params={{ name: info.getValue() }} search={{}} className="font-mono text-xs font-medium text-primary hover:underline">{info.getValue()}</Link> : <span className="text-muted-foreground">—</span> }),
               podColumn.accessor("ip", { header: "IP", cell: (info) => <span className="font-mono text-xs">{info.getValue()}</span> }),
               podColumn.accessor("createdAt", { header: "年龄", cell: (info) => formatAge(info.getValue()) }),
             ]}
@@ -224,6 +225,7 @@ export function WorkloadDetailPage() {
             pageSize={10}
           />
         </TabsContent>
+        <TabsContent value="services"><WorkloadServicesPanel namespace={workload.namespace} workloadName={workload.name} workloadSelector={workload.selector} /></TabsContent>
         <TabsContent value="events"><ResourceEvents namespace={workload.namespace} objectKind={kubernetesKinds[kind] ?? workload.kind} objectName={workload.name} /></TabsContent>
         <TabsContent value="logs"><PodLogs pods={workload.pods} emptyMessage="该工作负载当前没有可查看日志的实例。" /></TabsContent>
         <TabsContent value="yaml"><YamlPanel type={kind} name={workload.name} namespace={workload.namespace} height="64vh" /></TabsContent>

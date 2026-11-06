@@ -9,29 +9,33 @@ import (
 )
 
 type nodesRepository struct {
-	nodes              []domain.NodeSummary
-	nodesErr           error
-	detail             domain.NodeDetail
-	detailErr          error
-	pods               []domain.PodSummary
-	podsErr            error
-	namespaces         []domain.Namespace
-	nsErr              error
-	namespace          domain.NamespaceDetail
-	getNSErr           error
-	scheduling         domain.NodeSummary
-	schedulingErr      error
-	setSchedulingCalls int
-	lastUnschedulable  bool
-	lastSchedulingName string
-	labelDetail        domain.NodeDetail
-	labelErr           error
-	setLabelCalls      int
-	lastLabelUpdate    domain.NodeLabelUpdate
-	taintDetail        domain.NodeDetail
-	taintErr           error
-	setTaintCalls      int
-	lastTaintUpdate    domain.NodeTaintUpdate
+	nodes                       []domain.NodeSummary
+	nodesErr                    error
+	detail                      domain.NodeDetail
+	detailErr                   error
+	pods                        []domain.PodSummary
+	podsErr                     error
+	namespaces                  []domain.Namespace
+	nsErr                       error
+	namespace                   domain.NamespaceDetail
+	getNSErr                    error
+	scheduling                  domain.NodeSummary
+	schedulingErr               error
+	setSchedulingCalls          int
+	lastUnschedulable           bool
+	lastSchedulingName          string
+	labelDetail                 domain.NodeDetail
+	labelErr                    error
+	setLabelCalls               int
+	lastLabelUpdate             domain.NodeLabelUpdate
+	taintDetail                 domain.NodeDetail
+	taintErr                    error
+	setTaintCalls               int
+	lastTaintUpdate             domain.NodeTaintUpdate
+	deleteNSCalls               int
+	lastDeleteNSName            string
+	lastDeleteNSResourceVersion string
+	deleteNSErr                 error
 }
 
 func (r *nodesRepository) ListNodes(context.Context, domain.ListQuery) ([]domain.NodeSummary, error) {
@@ -65,14 +69,22 @@ func (r *nodesRepository) ListNamespaces(context.Context, domain.ListQuery) ([]d
 func (r *nodesRepository) GetNamespace(context.Context, string) (domain.NamespaceDetail, error) {
 	return r.namespace, r.getNSErr
 }
+func (r *nodesRepository) DeleteNamespace(_ context.Context, name, resourceVersion string) error {
+	r.deleteNSCalls++
+	r.lastDeleteNSName = name
+	r.lastDeleteNSResourceVersion = resourceVersion
+	return r.deleteNSErr
+}
 
 type nodesAuthorizer struct {
 	allow  bool
 	err    error
+	calls  int
 	access domain.Access
 }
 
 func (a *nodesAuthorizer) Require(_ context.Context, _ domain.Actor, access domain.Access) error {
+	a.calls++
 	a.access = access
 	if a.err != nil {
 		return a.err
@@ -284,5 +296,70 @@ func TestNodesServiceMetadataUpdatesRequirePermission(t *testing.T) {
 	}
 	if len(auditor.events) != 2 || auditor.events[0].Action != "update-labels" || auditor.events[1].Action != "update-taints" || auditor.events[0].Result != "denied" || auditor.events[1].Result != "denied" {
 		t.Fatalf("denied audit = %#v", auditor.events)
+	}
+}
+
+func TestNodesServiceDeletesNamespaceAndAudits(t *testing.T) {
+	t.Parallel()
+	repo := &nodesRepository{}
+	authorizer := &nodesAuthorizer{allow: true}
+	auditor := &nodesAuditor{}
+	service := New(repo, authorizer, auditor)
+
+	if err := service.DeleteNamespace(context.Background(), domain.Actor{Username: "admin"}, "preview", "42"); err != nil {
+		t.Fatalf("DeleteNamespace() error = %v", err)
+	}
+	if repo.deleteNSCalls != 1 || repo.lastDeleteNSName != "preview" || repo.lastDeleteNSResourceVersion != "42" {
+		t.Fatalf("delete namespace call = %d %q %q", repo.deleteNSCalls, repo.lastDeleteNSName, repo.lastDeleteNSResourceVersion)
+	}
+	if authorizer.access != (domain.Access{Verb: "delete", Resource: "namespaces", Name: "preview"}) {
+		t.Fatalf("access = %#v", authorizer.access)
+	}
+	if len(auditor.events) != 1 || auditor.events[0].Action != "delete-namespace" || auditor.events[0].Resource != "namespace" || auditor.events[0].Result != "success" {
+		t.Fatalf("audit = %#v", auditor.events)
+	}
+}
+
+func TestNodesServiceProtectsSystemNamespacesBeforeAuthorization(t *testing.T) {
+	t.Parallel()
+	for _, name := range []string{"default", "kube-system", "kube-public", ""} {
+		repo := &nodesRepository{}
+		authorizer := &nodesAuthorizer{allow: true}
+		auditor := &nodesAuditor{}
+		service := New(repo, authorizer, auditor)
+		err := service.DeleteNamespace(context.Background(), domain.Actor{Username: "admin"}, name, "1")
+		var validation *domain.ValidationError
+		if !errors.As(err, &validation) || validation.Field != "name" {
+			t.Fatalf("DeleteNamespace(%q) error = %v", name, err)
+		}
+		if authorizer.calls != 0 || repo.deleteNSCalls != 0 {
+			t.Fatalf("protected namespace %q reached authorization/repository", name)
+		}
+		if len(auditor.events) != 1 || auditor.events[0].Result != "failure" {
+			t.Fatalf("protected namespace audit = %#v", auditor.events)
+		}
+	}
+}
+
+func TestNodesServiceNamespaceDeletionRequiresPermissionAndAuditsFailures(t *testing.T) {
+	t.Parallel()
+	repo := &nodesRepository{}
+	authorizer := &nodesAuthorizer{}
+	auditor := &nodesAuditor{}
+	service := New(repo, authorizer, auditor)
+	if err := service.DeleteNamespace(context.Background(), domain.Actor{Username: "viewer"}, "preview", "3"); !errors.Is(err, domain.ErrForbidden) {
+		t.Fatalf("DeleteNamespace() error = %v", err)
+	}
+	if repo.deleteNSCalls != 0 || len(auditor.events) != 1 || auditor.events[0].Result != "denied" {
+		t.Fatalf("denied delete = calls %d audit %#v", repo.deleteNSCalls, auditor.events)
+	}
+
+	repo.deleteNSErr = domain.ErrConflict
+	authorizer.allow = true
+	if err := service.DeleteNamespace(context.Background(), domain.Actor{Username: "admin"}, "preview", "3"); !errors.Is(err, domain.ErrConflict) {
+		t.Fatalf("DeleteNamespace() conflict error = %v", err)
+	}
+	if len(auditor.events) != 2 || auditor.events[1].Result != "failure" || !errors.Is(auditor.events[1].Err, domain.ErrConflict) {
+		t.Fatalf("conflict audit = %#v", auditor.events)
 	}
 }

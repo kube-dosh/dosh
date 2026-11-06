@@ -29,6 +29,15 @@ type httpNetworkRepository struct {
 	lastIngressQry      domain.ListQuery
 	lastIngressParams   [2]string
 	lastIngressClassQry domain.ListQuery
+	createCalls         int
+	updateCalls         int
+	deleteCalls         int
+	createErr           error
+	updateErr           error
+	deleteErr           error
+	lastCreate          domain.ServiceCreateSpec
+	lastUpdate          domain.ServiceUpdateSpec
+	lastDeleteResource  string
 }
 
 func (r *httpNetworkRepository) ListServices(_ context.Context, query domain.ListQuery) ([]domain.ServiceSummary, error) {
@@ -39,6 +48,26 @@ func (r *httpNetworkRepository) ListServices(_ context.Context, query domain.Lis
 func (r *httpNetworkRepository) GetService(_ context.Context, namespace, name string) (domain.ServiceDetail, error) {
 	r.lastServiceParams = [2]string{namespace, name}
 	return r.service, r.serviceErr
+}
+
+func (r *httpNetworkRepository) CreateService(_ context.Context, spec domain.ServiceCreateSpec) (domain.ServiceDetail, error) {
+	r.createCalls++
+	r.lastCreate = spec
+	return r.service, r.createErr
+}
+
+func (r *httpNetworkRepository) UpdateService(_ context.Context, namespace, name string, update domain.ServiceUpdateSpec) (domain.ServiceDetail, error) {
+	r.updateCalls++
+	r.lastServiceParams = [2]string{namespace, name}
+	r.lastUpdate = update
+	return r.service, r.updateErr
+}
+
+func (r *httpNetworkRepository) DeleteService(_ context.Context, namespace, name, resourceVersion string) error {
+	r.deleteCalls++
+	r.lastServiceParams = [2]string{namespace, name}
+	r.lastDeleteResource = resourceVersion
+	return r.deleteErr
 }
 
 func (r *httpNetworkRepository) ListIngresses(_ context.Context, query domain.ListQuery) ([]domain.IngressSummary, error) {
@@ -57,14 +86,36 @@ func (r *httpNetworkRepository) ListIngressClasses(_ context.Context, query doma
 }
 
 func networkTestRouter(repo *httpNetworkRepository) http.Handler {
+	return networkTestRouterWithAuthorizer(repo, networkHTTPAuthorizer{})
+}
+
+func networkTestRouterWithAuthorizer(repo *httpNetworkRepository, authorizer domain.Authorizer) http.Handler {
 	router := chi.NewRouter()
-	New(networkapp.New(repo)).Mount(router)
+	New(networkapp.New(repo, authorizer, networkHTTPAuditor{})).Mount(router)
 	return router
 }
 
+type networkHTTPAuthorizer struct{ err error }
+
+func (a networkHTTPAuthorizer) Require(context.Context, domain.Actor, domain.Access) error {
+	return a.err
+}
+
+type networkHTTPAuditor struct{}
+
+func (networkHTTPAuditor) Record(context.Context, domain.Actor, domain.AuditEvent) {}
+
 func networkRequest(handler http.Handler, path string) *httptest.ResponseRecorder {
+	return networkRequestMethod(handler, http.MethodGet, path, "")
+}
+
+func networkRequestMethod(handler http.Handler, method, path, body string) *httptest.ResponseRecorder {
 	response := httptest.NewRecorder()
-	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, path, nil))
+	request := httptest.NewRequest(method, path, strings.NewReader(body))
+	if body != "" {
+		request.Header.Set("Content-Type", "application/json")
+	}
+	handler.ServeHTTP(response, request)
 	return response
 }
 
@@ -146,5 +197,53 @@ func TestNetworkRoutesMapDependencyFailures(t *testing.T) {
 				t.Fatalf("status = %d, want %d, body = %s", response.Code, test.want, response.Body.String())
 			}
 		})
+	}
+}
+
+func TestNetworkServiceWriteRoutes(t *testing.T) {
+	t.Parallel()
+	repo := &httpNetworkRepository{service: domain.ServiceDetail{ServiceSummary: domain.ServiceSummary{Name: "api", Namespace: "prod", ResourceVersion: "11", Type: "ClusterIP"}}}
+	router := networkTestRouter(repo)
+
+	response := networkRequestMethod(router, http.MethodPost, "/services", `{"name":"api","namespace":"prod","type":"ClusterIP","selector":{"app":"web"},"ports":[{"name":"http","port":80,"targetPort":"8080"}]}`)
+	if response.Code != http.StatusCreated || !strings.Contains(response.Body.String(), `"resourceVersion":"11"`) {
+		t.Fatalf("create status = %d body = %s", response.Code, response.Body.String())
+	}
+	if repo.createCalls != 1 || repo.lastCreate.Name != "api" || repo.lastCreate.Ports[0].TargetPort != "8080" {
+		t.Fatalf("create call = %d spec = %#v", repo.createCalls, repo.lastCreate)
+	}
+
+	response = networkRequestMethod(router, http.MethodPut, "/services/prod/api", `{"type":"NodePort","selector":{"app":"web"},"ports":[{"name":"http","port":80}],"resourceVersion":"11"}`)
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"name":"api"`) {
+		t.Fatalf("update status = %d body = %s", response.Code, response.Body.String())
+	}
+	if repo.updateCalls != 1 || repo.lastServiceParams != [2]string{"prod", "api"} || repo.lastUpdate.ResourceVersion != "11" {
+		t.Fatalf("update call = %d params = %#v update = %#v", repo.updateCalls, repo.lastServiceParams, repo.lastUpdate)
+	}
+
+	response = networkRequestMethod(router, http.MethodDelete, "/services/prod/api?resourceVersion=11", "")
+	if response.Code != http.StatusAccepted || !strings.Contains(response.Body.String(), `"status":"deleting"`) {
+		t.Fatalf("delete status = %d body = %s", response.Code, response.Body.String())
+	}
+	if repo.deleteCalls != 1 || repo.lastDeleteResource != "11" {
+		t.Fatalf("delete call = %d resourceVersion = %q", repo.deleteCalls, repo.lastDeleteResource)
+	}
+}
+
+func TestNetworkServiceWriteRoutesValidateAndRequirePermission(t *testing.T) {
+	t.Parallel()
+	repo := &httpNetworkRepository{}
+	response := networkRequestMethod(networkTestRouter(repo), http.MethodPost, "/services", `{"name":"api","namespace":"prod","selector":{},"ports":[{"port":80}]}`)
+	if response.Code != http.StatusBadRequest || repo.createCalls != 0 {
+		t.Fatalf("invalid create status = %d calls = %d body = %s", response.Code, repo.createCalls, response.Body.String())
+	}
+	router := networkTestRouterWithAuthorizer(repo, networkHTTPAuthorizer{err: domain.ErrForbidden})
+	response = networkRequestMethod(router, http.MethodPut, "/services/prod/api", `{"type":"ClusterIP","selector":{"app":"web"},"ports":[{"port":80}]}`)
+	if response.Code != http.StatusForbidden || repo.updateCalls != 0 {
+		t.Fatalf("forbidden update status = %d calls = %d body = %s", response.Code, repo.updateCalls, response.Body.String())
+	}
+	response = networkRequestMethod(router, http.MethodDelete, "/services/prod/api", "")
+	if response.Code != http.StatusForbidden || repo.deleteCalls != 0 {
+		t.Fatalf("forbidden delete status = %d calls = %d body = %s", response.Code, repo.deleteCalls, response.Body.String())
 	}
 }

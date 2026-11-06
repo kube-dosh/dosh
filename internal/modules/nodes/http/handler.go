@@ -140,6 +140,15 @@ func (h *Handler) GetNamespace(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	httpx.JSON(w, stdhttp.StatusOK, item)
 }
 
+func (h *Handler) DeleteNamespace(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	actor, _ := domain.ActorFromContext(r.Context())
+	if err := h.service.DeleteNamespace(r.Context(), actor, chi.URLParam(r, "name"), httpx.Query(r, "resourceVersion")); err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	httpx.JSON(w, stdhttp.StatusAccepted, map[string]string{"status": "deleting"})
+}
+
 func (h *Handler) Mount(r chi.Router) {
 	r.Get("/nodes", h.List)
 	r.Get("/nodes/{name}", h.Get)
@@ -149,4 +158,5 @@ func (h *Handler) Mount(r chi.Router) {
 	r.Put("/nodes/{name}/taints", h.SetTaints)
 	r.Get("/namespaces", h.ListNamespaces)
 	r.Get("/namespaces/{name}", h.GetNamespace)
+	r.Delete("/namespaces/{name}", h.DeleteNamespace)
 }

@@ -11,7 +11,9 @@ import (
 	discoveryv1 "k8s.io/api/discovery/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/intstr"
+	k8stesting "k8s.io/client-go/testing"
 )
 
 func testService() *corev1.Service {
@@ -140,5 +142,81 @@ func TestGetIngressMapsNotFound(t *testing.T) {
 	_, err := client.GetIngress(context.Background(), "prod", "missing")
 	if !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("GetIngress() error = %v, want ErrNotFound", err)
+	}
+}
+
+func TestCreateUpdateAndDeleteService(t *testing.T) {
+	client, _ := newFakeKubeClient()
+	created, err := client.CreateService(context.Background(), domain.ServiceCreateSpec{
+		Name: "api", Namespace: "prod", Type: "ClusterIP",
+		Selector: map[string]string{"app": "api"},
+		Ports:    []domain.ServicePortInput{{Name: "http", Protocol: "TCP", Port: 80, TargetPort: "8080"}},
+	})
+	if err != nil {
+		t.Fatalf("CreateService() error = %v", err)
+	}
+	if created.Name != "api" || created.Namespace != "prod" || created.Type != "ClusterIP" || created.Selector["app"] != "api" || len(created.Ports) != 1 || created.Ports[0].TargetPort != "8080" {
+		t.Fatalf("created service = %#v", created)
+	}
+
+	service := testService()
+	service.ResourceVersion = "7"
+	updateClient, _ := newFakeKubeClient(service)
+	updated, err := updateClient.UpdateService(context.Background(), "prod", "web", domain.ServiceUpdateSpec{
+		Type: "NodePort", Selector: map[string]string{"app": "web"},
+		Ports: []domain.ServicePortInput{{Name: "http", Protocol: "TCP", Port: 80, TargetPort: "8080"}}, ResourceVersion: "7",
+	})
+	if err != nil {
+		t.Fatalf("UpdateService() error = %v", err)
+	}
+	if updated.Type != "NodePort" || len(updated.Ports) != 1 || updated.Ports[0].NodePort != 30080 {
+		t.Fatalf("updated service = %#v", updated)
+	}
+	_, err = updateClient.UpdateService(context.Background(), "prod", "web", domain.ServiceUpdateSpec{
+		Type: "ClusterIP", Selector: map[string]string{"app": "web"},
+		Ports: []domain.ServicePortInput{{Port: 80}}, ResourceVersion: "stale",
+	})
+	if !errors.Is(err, domain.ErrConflict) {
+		t.Fatalf("stale update error = %v", err)
+	}
+
+	service.ResourceVersion = "8"
+	deleteClient, _ := newFakeKubeClient(service)
+	if err := deleteClient.DeleteService(context.Background(), "prod", "web", "8"); err != nil {
+		t.Fatalf("DeleteService() error = %v", err)
+	}
+	if _, err := deleteClient.GetService(context.Background(), "prod", "web"); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("deleted service lookup error = %v, want ErrNotFound", err)
+	}
+}
+
+func TestCreateServiceMapsAlreadyExists(t *testing.T) {
+	client, _ := newFakeKubeClient(testService())
+	_, err := client.CreateService(context.Background(), domain.ServiceCreateSpec{
+		Name: "web", Namespace: "prod", Type: "ClusterIP",
+		Selector: map[string]string{"app": "web"},
+		Ports:    []domain.ServicePortInput{{Port: 80}},
+	})
+	if !errors.Is(err, domain.ErrAlreadyExists) {
+		t.Fatalf("CreateService() error = %v, want ErrAlreadyExists", err)
+	}
+}
+
+func TestDeleteServiceUsesResourceVersionPrecondition(t *testing.T) {
+	service := testService()
+	service.ResourceVersion = "9"
+	client, clientset := newFakeKubeClient(service)
+	var options metav1.DeleteOptions
+	clientset.PrependReactor("delete", "services", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		if deleteAction, ok := action.(k8stesting.DeleteAction); ok {
+			options = deleteAction.GetDeleteOptions()
+		}
+		return false, nil, nil
+	})
+	if err := client.DeleteService(context.Background(), "prod", "web", "9"); err != nil {
+		t.Fatalf("DeleteService() error = %v", err)
+	}
+	if options.Preconditions == nil || options.Preconditions.ResourceVersion == nil || *options.Preconditions.ResourceVersion != "9" {
+		t.Fatalf("delete options = %#v", options)
 	}
 }

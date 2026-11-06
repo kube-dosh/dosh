@@ -3,6 +3,8 @@ package app
 import (
 	"context"
 	"errors"
+	"fmt"
+	"strings"
 
 	"dosh/internal/domain"
 )
@@ -16,6 +18,7 @@ type Repository interface {
 	ListPodsForNode(ctx context.Context, node string) ([]domain.PodSummary, error)
 	ListNamespaces(ctx context.Context, query domain.ListQuery) ([]domain.Namespace, error)
 	GetNamespace(ctx context.Context, name string) (domain.NamespaceDetail, error)
+	DeleteNamespace(ctx context.Context, name, resourceVersion string) error
 }
 
 type Service struct {
@@ -114,4 +117,31 @@ func (s *Service) ListNamespaces(ctx context.Context, query domain.ListQuery) ([
 
 func (s *Service) GetNamespace(ctx context.Context, name string) (domain.NamespaceDetail, error) {
 	return s.repository.GetNamespace(ctx, name)
+}
+
+func (s *Service) DeleteNamespace(ctx context.Context, actor domain.Actor, name, resourceVersion string) error {
+	if name == "" || strings.HasPrefix(name, "kube-") || name == "default" {
+		err := &domain.ValidationError{Field: "name", Message: fmt.Sprintf("namespace %q is protected and cannot be deleted", name)}
+		s.auditNamespace(ctx, actor, "delete-namespace", name, err)
+		return err
+	}
+	access := domain.Access{Verb: "delete", Resource: "namespaces", Name: name}
+	if err := s.authorizer.Require(ctx, actor, access); err != nil {
+		s.auditNamespace(ctx, actor, "delete-namespace", name, err)
+		return err
+	}
+	err := s.repository.DeleteNamespace(ctx, name, resourceVersion)
+	s.auditNamespace(ctx, actor, "delete-namespace", name, err)
+	return err
+}
+
+func (s *Service) auditNamespace(ctx context.Context, actor domain.Actor, action, name string, err error) {
+	result := "success"
+	if err != nil {
+		result = "failure"
+		if errors.Is(err, domain.ErrForbidden) || errors.Is(err, domain.ErrReadOnly) {
+			result = "denied"
+		}
+	}
+	s.auditor.Record(ctx, actor, domain.AuditEvent{Action: action, Resource: "namespace", Name: name, Result: result, Err: err})
 }

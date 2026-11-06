@@ -2,6 +2,8 @@ package kube
 
 import (
 	"context"
+	"fmt"
+	"reflect"
 	"sort"
 	"strconv"
 	"strings"
@@ -90,6 +92,93 @@ func (c *Client) GetService(ctx context.Context, namespace, name string) (domain
 	return detail, nil
 }
 
+func (c *Client) CreateService(ctx context.Context, spec domain.ServiceCreateSpec) (domain.ServiceDetail, error) {
+	ctx, cancel := c.withTimeout(ctx)
+	defer cancel()
+	item := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{Name: spec.Name, Namespace: spec.Namespace},
+		Spec: corev1.ServiceSpec{
+			Type:     corev1.ServiceType(spec.Type),
+			Selector: cloneStringMap(spec.Selector),
+			Ports:    serviceWritePorts(spec.Ports, nil, spec.Type),
+		},
+	}
+	created, err := c.clientset.CoreV1().Services(spec.Namespace).Create(ctx, item, metav1.CreateOptions{})
+	if err != nil {
+		return domain.ServiceDetail{}, mapKubeError(err)
+	}
+	return c.GetService(ctx, created.Namespace, created.Name)
+}
+
+func (c *Client) UpdateService(ctx context.Context, namespace, name string, update domain.ServiceUpdateSpec) (domain.ServiceDetail, error) {
+	ctx, cancel := c.withTimeout(ctx)
+	defer cancel()
+	item, err := c.clientset.CoreV1().Services(namespace).Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		return domain.ServiceDetail{}, mapKubeError(err)
+	}
+	if update.ResourceVersion != "" && item.ResourceVersion != update.ResourceVersion {
+		return domain.ServiceDetail{}, fmt.Errorf("%w: expected %s, got %s", domain.ErrConflict, update.ResourceVersion, item.ResourceVersion)
+	}
+	nodePorts := make(map[string]int32, len(item.Spec.Ports))
+	for _, port := range item.Spec.Ports {
+		nodePorts[servicePortKey(string(port.Protocol), port.Port)] = port.NodePort
+	}
+	desiredPorts := serviceWritePorts(update.Ports, nodePorts, update.Type)
+	desiredSelector := cloneStringMap(update.Selector)
+	if item.Spec.Type == corev1.ServiceType(update.Type) && reflect.DeepEqual(item.Spec.Selector, desiredSelector) && reflect.DeepEqual(item.Spec.Ports, desiredPorts) {
+		return c.GetService(ctx, namespace, name)
+	}
+	item.Spec.Type = corev1.ServiceType(update.Type)
+	item.Spec.Selector = desiredSelector
+	item.Spec.Ports = desiredPorts
+	if _, err := c.clientset.CoreV1().Services(namespace).Update(ctx, item, metav1.UpdateOptions{}); err != nil {
+		return domain.ServiceDetail{}, mapKubeError(err)
+	}
+	return c.GetService(ctx, namespace, name)
+}
+
+func (c *Client) DeleteService(ctx context.Context, namespace, name, resourceVersion string) error {
+	ctx, cancel := c.withTimeout(ctx)
+	defer cancel()
+	options := metav1.DeleteOptions{}
+	if resourceVersion != "" {
+		options.Preconditions = &metav1.Preconditions{ResourceVersion: &resourceVersion}
+	}
+	return mapKubeError(c.clientset.CoreV1().Services(namespace).Delete(ctx, name, options))
+}
+
+func serviceWritePorts(inputs []domain.ServicePortInput, existingNodePorts map[string]int32, serviceType string) []corev1.ServicePort {
+	allowNodePort := serviceType == string(corev1.ServiceTypeNodePort) || serviceType == string(corev1.ServiceTypeLoadBalancer)
+	out := make([]corev1.ServicePort, 0, len(inputs))
+	for _, input := range inputs {
+		port := corev1.ServicePort{
+			Name: input.Name, Protocol: corev1.Protocol(input.Protocol),
+			Port: input.Port, TargetPort: intstr.Parse(input.TargetPort),
+		}
+		if allowNodePort {
+			port.NodePort = existingNodePorts[servicePortKey(input.Protocol, input.Port)]
+		}
+		out = append(out, port)
+	}
+	return out
+}
+
+func servicePortKey(protocol string, port int32) string {
+	return protocol + "/" + strconv.FormatInt(int64(port), 10)
+}
+
+func cloneStringMap(source map[string]string) map[string]string {
+	if source == nil {
+		return nil
+	}
+	out := make(map[string]string, len(source))
+	for key, value := range source {
+		out[key] = value
+	}
+	return out
+}
+
 func serviceEndpoints(slices []discoveryv1.EndpointSlice) []domain.ServiceEndpoint {
 	out := make([]domain.ServiceEndpoint, 0)
 	for _, slice := range slices {
@@ -169,7 +258,7 @@ func serviceSummary(item corev1.Service) domain.ServiceSummary {
 		externalIP = item.Spec.ExternalName
 	}
 	return domain.ServiceSummary{
-		Name: item.Name, Namespace: item.Namespace, Type: string(item.Spec.Type), ClusterIP: item.Spec.ClusterIP,
+		Name: item.Name, Namespace: item.Namespace, ResourceVersion: item.ResourceVersion, Type: string(item.Spec.Type), ClusterIP: item.Spec.ClusterIP,
 		ExternalIP: externalIP, Ports: ports, Selector: item.Spec.Selector, CreatedAt: item.CreationTimestamp.Time,
 	}
 }

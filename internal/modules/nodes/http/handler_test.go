@@ -15,33 +15,37 @@ import (
 )
 
 type httpNodesRepository struct {
-	nodes              []domain.NodeSummary
-	detail             domain.NodeDetail
-	pods               []domain.PodSummary
-	namespaces         []domain.Namespace
-	namespace          domain.NamespaceDetail
-	listErr            error
-	detailErr          error
-	podsErr            error
-	namespacesErr      error
-	namespaceErr       error
-	lastNodeQuery      domain.ListQuery
-	lastNSQuery        domain.ListQuery
-	lastNodeName       string
-	lastNSName         string
-	scheduling         domain.NodeSummary
-	schedulingErr      error
-	schedulingCalls    int
-	lastSchedulingName string
-	lastUnschedulable  bool
-	labelDetail        domain.NodeDetail
-	labelErr           error
-	setLabelCalls      int
-	lastLabelUpdate    domain.NodeLabelUpdate
-	taintDetail        domain.NodeDetail
-	taintErr           error
-	setTaintCalls      int
-	lastTaintUpdate    domain.NodeTaintUpdate
+	nodes                       []domain.NodeSummary
+	detail                      domain.NodeDetail
+	pods                        []domain.PodSummary
+	namespaces                  []domain.Namespace
+	namespace                   domain.NamespaceDetail
+	listErr                     error
+	detailErr                   error
+	podsErr                     error
+	namespacesErr               error
+	namespaceErr                error
+	lastNodeQuery               domain.ListQuery
+	lastNSQuery                 domain.ListQuery
+	lastNodeName                string
+	lastNSName                  string
+	scheduling                  domain.NodeSummary
+	schedulingErr               error
+	schedulingCalls             int
+	lastSchedulingName          string
+	lastUnschedulable           bool
+	labelDetail                 domain.NodeDetail
+	labelErr                    error
+	setLabelCalls               int
+	lastLabelUpdate             domain.NodeLabelUpdate
+	taintDetail                 domain.NodeDetail
+	taintErr                    error
+	setTaintCalls               int
+	lastTaintUpdate             domain.NodeTaintUpdate
+	deleteNSCalls               int
+	lastDeleteNSName            string
+	lastDeleteNSResourceVersion string
+	deleteNSErr                 error
 }
 
 func (r *httpNodesRepository) ListNodes(_ context.Context, query domain.ListQuery) ([]domain.NodeSummary, error) {
@@ -88,6 +92,13 @@ func (r *httpNodesRepository) ListNamespaces(_ context.Context, query domain.Lis
 func (r *httpNodesRepository) GetNamespace(_ context.Context, name string) (domain.NamespaceDetail, error) {
 	r.lastNSName = name
 	return r.namespace, r.namespaceErr
+}
+
+func (r *httpNodesRepository) DeleteNamespace(_ context.Context, name, resourceVersion string) error {
+	r.deleteNSCalls++
+	r.lastDeleteNSName = name
+	r.lastDeleteNSResourceVersion = resourceVersion
+	return r.deleteNSErr
 }
 
 type httpNodesAuthorizer struct{ err error }
@@ -292,5 +303,39 @@ func TestNodesMetadataRoutesRequirePermission(t *testing.T) {
 	response = nodesRequestJSON(router, http.MethodPut, "/nodes/worker-a/taints", `{"taints":[]}`)
 	if response.Code != http.StatusForbidden || repo.setTaintCalls != 0 {
 		t.Fatalf("taint forbidden status = %d calls = %d body = %s", response.Code, repo.setTaintCalls, response.Body.String())
+	}
+}
+
+func TestNamespaceDeleteRoute(t *testing.T) {
+	t.Parallel()
+	repo := &httpNodesRepository{}
+	router := nodesTestRouter(repo)
+	response := nodesRequestMethod(router, http.MethodDelete, "/namespaces/preview?resourceVersion=17")
+	if response.Code != http.StatusAccepted || !strings.Contains(response.Body.String(), `"status":"deleting"`) {
+		t.Fatalf("delete namespace status = %d body = %s", response.Code, response.Body.String())
+	}
+	if repo.deleteNSCalls != 1 || repo.lastDeleteNSName != "preview" || repo.lastDeleteNSResourceVersion != "17" {
+		t.Fatalf("delete namespace call = %d %q %q", repo.deleteNSCalls, repo.lastDeleteNSName, repo.lastDeleteNSResourceVersion)
+	}
+
+	response = nodesRequestMethod(router, http.MethodDelete, "/namespaces/default")
+	if response.Code != http.StatusBadRequest || repo.deleteNSCalls != 1 {
+		t.Fatalf("protected namespace status = %d calls = %d body = %s", response.Code, repo.deleteNSCalls, response.Body.String())
+	}
+}
+
+func TestNamespaceDeleteRouteRequiresPermissionAndMapsConflicts(t *testing.T) {
+	t.Parallel()
+	repo := &httpNodesRepository{}
+	router := nodesTestRouterWithAuthorizer(repo, httpNodesAuthorizer{err: domain.ErrForbidden})
+	response := nodesRequestMethod(router, http.MethodDelete, "/namespaces/preview")
+	if response.Code != http.StatusForbidden || repo.deleteNSCalls != 0 {
+		t.Fatalf("forbidden delete status = %d calls = %d body = %s", response.Code, repo.deleteNSCalls, response.Body.String())
+	}
+
+	repo.deleteNSErr = domain.ErrConflict
+	response = nodesRequestMethod(nodesTestRouter(repo), http.MethodDelete, "/namespaces/preview?resourceVersion=stale")
+	if response.Code != http.StatusConflict {
+		t.Fatalf("conflict delete status = %d body = %s", response.Code, response.Body.String())
 	}
 }
