@@ -92,9 +92,9 @@ export function AppShell() {
 
   return (
     <div className="min-h-screen bg-background">
-      <header className="sticky top-0 z-40 flex h-14 items-center border-b bg-card/95 px-4 backdrop-blur md:px-5">
-        <Button variant="ghost" size="icon" className="mr-2 md:hidden" onClick={() => setMobileOpen(true)} aria-label="打开导航" aria-expanded={mobileOpen} aria-controls="app-navigation"><Menu className="h-5 w-5" /></Button>
-        <Link to="/" className="flex items-center gap-2.5">
+      <header className="sticky top-0 z-40 flex h-14 min-w-0 items-center border-b bg-card/95 px-4 backdrop-blur md:px-5">
+        <Button variant="ghost" size="icon" className="mr-2 shrink-0 md:hidden" onClick={() => setMobileOpen(true)} aria-label="打开导航" aria-expanded={mobileOpen} aria-controls="app-navigation"><Menu className="h-5 w-5" /></Button>
+        <Link to="/" className="flex shrink-0 items-center gap-2.5">
           <div className="grid h-8 w-8 place-items-center rounded-lg bg-primary text-sm font-bold text-primary-foreground shadow-sm">D</div>
           <div className="hidden sm:block">
             <p className="text-sm font-semibold leading-4">Dosh Console</p>
@@ -107,27 +107,31 @@ export function AppShell() {
           <span className="max-w-44 truncate font-medium" title={cluster.name}>{cluster.name}</span>
           <span className="text-muted-foreground">/ {cluster.label}</span>
         </div>
-        <div className="ml-auto flex items-center gap-1.5">
+        <div className="ml-auto flex min-w-0 shrink-0 items-center gap-1 sm:gap-1.5">
           <button type="button" onClick={() => setSearchOpen(true)} className="hidden h-9 w-64 items-center gap-2 rounded-md border bg-muted/35 px-3 text-sm text-muted-foreground transition-colors hover:bg-muted md:flex">
             <Search className="h-3.5 w-3.5" /><span>搜索资源</span><kbd className="ml-auto rounded border bg-card px-1.5 py-0.5 text-[10px]">⌘ K</kbd>
           </button>
           <Button variant="ghost" size="icon" className="md:hidden" onClick={() => setSearchOpen(true)} aria-label="搜索"><Search className="h-4 w-4" /></Button>
-          <Button variant="ghost" size="icon" asChild aria-label="事件"><Link to="/events"><Bell className="h-4 w-4" /></Link></Button>
-          <Button variant="ghost" size="icon" onClick={toggleTheme} aria-label={theme === "dark" ? "切换为浅色主题" : "切换为深色主题"} aria-pressed={theme === "dark"}>
+          <Button variant="ghost" size="icon" asChild aria-label="事件" className="hidden sm:inline-flex"><Link to="/events"><Bell className="h-4 w-4" /></Link></Button>
+          <Button variant="ghost" size="icon" onClick={toggleTheme} aria-label={theme === "dark" ? "切换为浅色主题" : "切换为深色主题"} aria-pressed={theme === "dark"} className="hidden sm:inline-flex">
             {theme === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
           </Button>
-          <Button variant="ghost" size="icon" onClick={() => setHelpOpen(true)} aria-label="帮助"><HelpCircle className="h-4 w-4" /></Button>
+          <Button variant="ghost" size="icon" onClick={() => setHelpOpen(true)} aria-label="帮助" className="hidden sm:inline-flex"><HelpCircle className="h-4 w-4" /></Button>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="ghost" className="h-9 gap-2 px-2">
+              <Button variant="ghost" className="h-9 gap-2 px-1.5 sm:px-2">
                 <span className="grid h-6 w-6 place-items-center rounded-full bg-primary/10 text-xs font-semibold text-primary">{(session.data?.user.username || "A").slice(0, 1).toUpperCase()}</span>
                 <span className="hidden max-w-28 truncate text-sm sm:block">{session.data?.user.username || "管理员"}</span>
-                <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
+                <ChevronDown className="hidden h-3.5 w-3.5 text-muted-foreground sm:block" />
               </Button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-56">
+            <DropdownMenuContent align="end" className="w-56 max-w-[calc(100vw-1rem)]">
               <DropdownMenuLabel><span className="block text-foreground">{session.data?.user.username || "管理员"}</span><span className="font-normal">{session.data?.authMode === "oidc" ? "企业身份" : session.data?.authMode === "token" ? "Kubernetes Token" : "本地管理员"}</span></DropdownMenuLabel>
               <DropdownMenuSeparator />
+              <DropdownMenuItem className="sm:hidden" asChild><Link to="/events"><Bell className="h-4 w-4" />集群事件</Link></DropdownMenuItem>
+              <DropdownMenuItem className="sm:hidden" onClick={toggleTheme}>{theme === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}{theme === "dark" ? "切换为浅色主题" : "切换为深色主题"}</DropdownMenuItem>
+              <DropdownMenuItem className="sm:hidden" onClick={() => setHelpOpen(true)}><HelpCircle className="h-4 w-4" />帮助</DropdownMenuItem>
+              <DropdownMenuSeparator className="sm:hidden" />
               {session.data?.authMode === "oidc" ? (
                 <DropdownMenuItem asChild><a href="/api/v1/auth/oidc/logout"><LogOut className="h-4 w-4" />退出登录</a></DropdownMenuItem>
               ) : (

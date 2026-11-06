@@ -479,11 +479,14 @@ async function waitForVisualStability(page: Page) {
 
 async function expectNoPageOverflow(page: Page, context: string) {
   const overflow = await page.evaluate(() => {
-    const viewportWidth = window.innerWidth;
+    const viewportWidth = window.visualViewport?.width ?? window.innerWidth;
     return {
       documentWidth: document.documentElement.scrollWidth,
       bodyWidth: document.body.scrollWidth,
       viewportWidth,
+      innerWidth: window.innerWidth,
+      visualViewportWidth: window.visualViewport?.width,
+      screenWidth: window.screen.width,
       offenders: Array.from(document.querySelectorAll<HTMLElement>("body *"))
         .map((element) => {
           const rect = element.getBoundingClientRect();
@@ -1191,6 +1194,29 @@ test("320px 登录页无横向溢出", async ({ page }) => {
   await expect(page.getByRole("heading", { name: "登录控制台" })).toBeVisible();
   await expectNoPageOverflow(page, "320px login");
   await page.screenshot({ path: "test-results/mobile-320/login.png", fullPage: true });
+});
+
+test("320px 大字体缩放时页面不产生横向溢出", async ({ page }) => {
+  test.setTimeout(120_000);
+  await installApiMocks(page);
+  await page.setViewportSize({ width: 320, height: 720 });
+  await page.addInitScript(() => {
+    document.documentElement.style.fontSize = "20px";
+  });
+
+  for (const route of [
+    { path: "/", name: "overview" },
+    { path: "/nodes", name: "nodes" },
+    { path: "/workloads/deployment/default/web", name: "workload-detail" },
+    { path: "/pods/default/web-abcdef-12345?tab=logs", name: "pod-logs" },
+    { path: "/configuration?tab=secrets", name: "secrets" },
+    { path: "/events", name: "events" },
+  ]) {
+    await page.goto(route.path);
+    await page.locator("main h1").waitFor({ state: "visible" });
+    await expectNoPageOverflow(page, `320px large font ${route.name}`);
+    await page.screenshot({ path: `test-results/mobile-320-large-font/${route.name}.png`, fullPage: true });
+  }
 });
 
 test("移动端关键弹窗与确认框保持在视口内", async ({ page }) => {

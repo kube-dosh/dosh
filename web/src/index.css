@@ -68,11 +68,20 @@
 
   html {
     @apply antialiased;
+    max-width: 100%;
+    overflow-x: clip;
   }
 
   body {
     @apply bg-background text-foreground;
+    max-width: 100%;
+    overflow-x: clip;
     font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  }
+
+  #root {
+    min-width: 0;
+    max-width: 100%;
   }
 
   ::selection {
