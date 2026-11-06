@@ -24,6 +24,14 @@ type nodesRepository struct {
 	setSchedulingCalls int
 	lastUnschedulable  bool
 	lastSchedulingName string
+	labelDetail        domain.NodeDetail
+	labelErr           error
+	setLabelCalls      int
+	lastLabelUpdate    domain.NodeLabelUpdate
+	taintDetail        domain.NodeDetail
+	taintErr           error
+	setTaintCalls      int
+	lastTaintUpdate    domain.NodeTaintUpdate
 }
 
 func (r *nodesRepository) ListNodes(context.Context, domain.ListQuery) ([]domain.NodeSummary, error) {
@@ -37,6 +45,16 @@ func (r *nodesRepository) SetNodeScheduling(_ context.Context, name string, unsc
 	r.lastSchedulingName = name
 	r.lastUnschedulable = unschedulable
 	return r.scheduling, r.schedulingErr
+}
+func (r *nodesRepository) SetNodeLabels(_ context.Context, _ string, update domain.NodeLabelUpdate) (domain.NodeDetail, error) {
+	r.setLabelCalls++
+	r.lastLabelUpdate = update
+	return r.labelDetail, r.labelErr
+}
+func (r *nodesRepository) SetNodeTaints(_ context.Context, _ string, update domain.NodeTaintUpdate) (domain.NodeDetail, error) {
+	r.setTaintCalls++
+	r.lastTaintUpdate = update
+	return r.taintDetail, r.taintErr
 }
 func (r *nodesRepository) ListPodsForNode(context.Context, string) ([]domain.PodSummary, error) {
 	return r.pods, r.podsErr
@@ -165,5 +183,106 @@ func TestNodesServiceAuditsSchedulingFailures(t *testing.T) {
 	}
 	if len(auditor.events) != 1 || auditor.events[0].Result != "failure" || !errors.Is(auditor.events[0].Err, domain.ErrUnavailable) {
 		t.Fatalf("failure audit = %#v", auditor.events)
+	}
+}
+
+func TestNodesServiceUpdatesLabelsAndTaintsWithValidationAndAudit(t *testing.T) {
+	t.Parallel()
+	repo := &nodesRepository{
+		labelDetail: domain.NodeDetail{NodeSummary: domain.NodeSummary{Name: "worker-a"}, Labels: map[string]string{"team": "platform"}},
+		taintDetail: domain.NodeDetail{NodeSummary: domain.NodeSummary{Name: "worker-a"}, Taints: []domain.Taint{{Key: "dedicated", Value: "gpu", Effect: "NoSchedule"}}},
+	}
+	authorizer := &nodesAuthorizer{allow: true}
+	auditor := &nodesAuditor{}
+	service := New(repo, authorizer, auditor)
+
+	detail, err := service.SetLabels(context.Background(), domain.Actor{Username: "admin"}, "worker-a", domain.NodeLabelUpdate{
+		Labels: map[string]string{" team ": " platform ", "topology.kubernetes.io/zone": "az-1"}, ResourceVersion: "9",
+	})
+	if err != nil || detail.Labels["team"] != "platform" || repo.setLabelCalls != 1 {
+		t.Fatalf("SetLabels() = (%#v, %v), calls = %d", detail, err, repo.setLabelCalls)
+	}
+	if repo.lastLabelUpdate.ResourceVersion != "9" || repo.lastLabelUpdate.Labels["team"] != "platform" || repo.lastLabelUpdate.Labels["topology.kubernetes.io/zone"] != "az-1" {
+		t.Fatalf("label update = %#v", repo.lastLabelUpdate)
+	}
+	if authorizer.access != (domain.Access{Verb: "update", Resource: "nodes", Name: "worker-a"}) {
+		t.Fatalf("access = %#v", authorizer.access)
+	}
+	if len(auditor.events) != 1 || auditor.events[0].Action != "update-labels" || auditor.events[0].Result != "success" {
+		t.Fatalf("label audit = %#v", auditor.events)
+	}
+
+	detail, err = service.SetTaints(context.Background(), domain.Actor{Username: "admin"}, "worker-a", domain.NodeTaintUpdate{
+		Taints: []domain.Taint{{Key: "dedicated", Value: "gpu", Effect: "NoSchedule"}}, ResourceVersion: "10",
+	})
+	if err != nil || len(detail.Taints) != 1 || repo.setTaintCalls != 1 {
+		t.Fatalf("SetTaints() = (%#v, %v), calls = %d", detail, err, repo.setTaintCalls)
+	}
+	if repo.lastTaintUpdate.ResourceVersion != "10" || len(repo.lastTaintUpdate.Taints) != 1 {
+		t.Fatalf("taint update = %#v", repo.lastTaintUpdate)
+	}
+	if len(auditor.events) != 2 || auditor.events[1].Action != "update-taints" || auditor.events[1].Result != "success" {
+		t.Fatalf("taint audit = %#v", auditor.events)
+	}
+}
+
+func TestNodesServiceRejectsInvalidMetadataBeforeRepositoryWrite(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name  string
+		field string
+		apply func(*Service, *nodesRepository)
+	}{
+		{name: "invalid label key", field: "labels", apply: func(service *Service, _ *nodesRepository) {
+			_, _ = service.SetLabels(context.Background(), domain.Actor{Username: "admin"}, "worker-a", domain.NodeLabelUpdate{Labels: map[string]string{"bad key": "value"}})
+		}},
+		{name: "invalid label value", field: "labels", apply: func(service *Service, _ *nodesRepository) {
+			_, _ = service.SetLabels(context.Background(), domain.Actor{Username: "admin"}, "worker-a", domain.NodeLabelUpdate{Labels: map[string]string{"team": "bad value"}})
+		}},
+		{name: "invalid taint effect", field: "taints", apply: func(service *Service, _ *nodesRepository) {
+			_, _ = service.SetTaints(context.Background(), domain.Actor{Username: "admin"}, "worker-a", domain.NodeTaintUpdate{Taints: []domain.Taint{{Key: "dedicated", Effect: "Block"}}})
+		}},
+		{name: "duplicate taint", field: "taints", apply: func(service *Service, _ *nodesRepository) {
+			_, _ = service.SetTaints(context.Background(), domain.Actor{Username: "admin"}, "worker-a", domain.NodeTaintUpdate{Taints: []domain.Taint{{Key: "dedicated", Effect: "NoSchedule"}, {Key: "dedicated", Effect: "NoSchedule"}}})
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			repo := &nodesRepository{}
+			auditor := &nodesAuditor{}
+			service := New(repo, &nodesAuthorizer{allow: true}, auditor)
+			test.apply(service, repo)
+			if repo.setLabelCalls != 0 || repo.setTaintCalls != 0 {
+				t.Fatalf("repository write occurred for invalid input: labels=%d taints=%d", repo.setLabelCalls, repo.setTaintCalls)
+			}
+			if len(auditor.events) != 1 || auditor.events[0].Result != "failure" {
+				t.Fatalf("validation audit = %#v", auditor.events)
+			}
+			var validation *domain.ValidationError
+			if !errors.As(auditor.events[0].Err, &validation) || validation.Field != test.field {
+				t.Fatalf("validation error = %#v", auditor.events[0].Err)
+			}
+		})
+	}
+}
+
+func TestNodesServiceMetadataUpdatesRequirePermission(t *testing.T) {
+	t.Parallel()
+	repo := &nodesRepository{}
+	authorizer := &nodesAuthorizer{}
+	auditor := &nodesAuditor{}
+	service := New(repo, authorizer, auditor)
+
+	if _, err := service.SetLabels(context.Background(), domain.Actor{Username: "viewer"}, "worker-a", domain.NodeLabelUpdate{Labels: map[string]string{"team": "platform"}}); !errors.Is(err, domain.ErrForbidden) {
+		t.Fatalf("SetLabels() error = %v", err)
+	}
+	if _, err := service.SetTaints(context.Background(), domain.Actor{Username: "viewer"}, "worker-a", domain.NodeTaintUpdate{}); !errors.Is(err, domain.ErrForbidden) {
+		t.Fatalf("SetTaints() error = %v", err)
+	}
+	if repo.setLabelCalls != 0 || repo.setTaintCalls != 0 {
+		t.Fatalf("repository called without permission: labels=%d taints=%d", repo.setLabelCalls, repo.setTaintCalls)
+	}
+	if len(auditor.events) != 2 || auditor.events[0].Action != "update-labels" || auditor.events[1].Action != "update-taints" || auditor.events[0].Result != "denied" || auditor.events[1].Result != "denied" {
+		t.Fatalf("denied audit = %#v", auditor.events)
 	}
 }

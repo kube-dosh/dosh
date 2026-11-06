@@ -16,7 +16,9 @@ import type {
   NamespaceItem,
   NamespaceDetail,
   NodeDetail,
+  NodeLabelUpdate,
   NodeSummary,
+  NodeTaintUpdate,
   Overview,
   PersistentVolume,
   PersistentVolumeClaim,
@@ -233,6 +235,10 @@ export const api = {
   node: async (name: string) => normalizeNodeDetail(await request<NodeDetail>(`/api/v1/nodes/${encodeURIComponent(name)}`)),
   cordonNode: (name: string) => request<NodeSummary>(`/api/v1/nodes/${encodeURIComponent(name)}/cordon`, { method: "POST" }),
   uncordonNode: (name: string) => request<NodeSummary>(`/api/v1/nodes/${encodeURIComponent(name)}/uncordon`, { method: "POST" }),
+  setNodeLabels: async (name: string, input: NodeLabelUpdate) =>
+    normalizeNodeDetail(await request<NodeDetail>(`/api/v1/nodes/${encodeURIComponent(name)}/labels`, { method: "PUT", body: JSON.stringify(input) })),
+  setNodeTaints: async (name: string, input: NodeTaintUpdate) =>
+    normalizeNodeDetail(await request<NodeDetail>(`/api/v1/nodes/${encodeURIComponent(name)}/taints`, { method: "PUT", body: JSON.stringify(input) })),
   namespaces: (params?: ListParams) => request<ListResponse<NamespaceItem>>(`/api/v1/namespaces${query(params)}`),
   namespace: async (name: string) => normalizeNamespaceDetail(await request<NamespaceDetail>(`/api/v1/namespaces/${encodeURIComponent(name)}`)),
   workloads: (params?: ListParams) => request<ListResponse<WorkloadSummary>>(`/api/v1/workloads${query(params)}`),

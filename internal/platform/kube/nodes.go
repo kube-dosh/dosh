@@ -3,6 +3,7 @@ package kube
 import (
 	"context"
 	"fmt"
+	"maps"
 	"sort"
 
 	"dosh/internal/domain"
@@ -66,7 +67,11 @@ func (c *Client) GetNode(ctx context.Context, name string) (domain.NodeDetail, e
 	if err != nil {
 		return domain.NodeDetail{}, mapKubeError(err)
 	}
-	pods, err := c.clientset.CoreV1().Pods(metav1.NamespaceAll).List(ctx, metav1.ListOptions{FieldSelector: "spec.nodeName=" + name})
+	return c.nodeDetail(ctx, node)
+}
+
+func (c *Client) nodeDetail(ctx context.Context, node *corev1.Node) (domain.NodeDetail, error) {
+	pods, err := c.clientset.CoreV1().Pods(metav1.NamespaceAll).List(ctx, metav1.ListOptions{FieldSelector: "spec.nodeName=" + node.Name})
 	if err != nil {
 		return domain.NodeDetail{}, mapKubeError(err)
 	}
@@ -77,12 +82,13 @@ func (c *Client) GetNode(ctx context.Context, name string) (domain.NodeDetail, e
 		summary.HasMetrics = true
 	}
 	detail := domain.NodeDetail{
-		NodeSummary: summary,
-		Conditions:  nodeConditionList(node.Status.Conditions),
-		Taints:      make([]domain.Taint, 0, len(node.Spec.Taints)),
-		Labels:      node.Labels,
-		Annotations: node.Annotations,
-		Pods:        make([]domain.PodSummary, 0, len(pods.Items)),
+		NodeSummary:     summary,
+		ResourceVersion: node.ResourceVersion,
+		Conditions:      nodeConditionList(node.Status.Conditions),
+		Taints:          make([]domain.Taint, 0, len(node.Spec.Taints)),
+		Labels:          node.Labels,
+		Annotations:     node.Annotations,
+		Pods:            make([]domain.PodSummary, 0, len(pods.Items)),
 	}
 	for _, taint := range node.Spec.Taints {
 		detail.Taints = append(detail.Taints, domain.Taint{Key: taint.Key, Value: taint.Value, Effect: string(taint.Effect)})
@@ -92,6 +98,92 @@ func (c *Client) GetNode(ctx context.Context, name string) (domain.NodeDetail, e
 	}
 	sortPods(detail.Pods)
 	return detail, nil
+}
+
+func (c *Client) SetNodeLabels(ctx context.Context, name string, update domain.NodeLabelUpdate) (domain.NodeDetail, error) {
+	ctx, cancel := c.withTimeout(ctx)
+	defer cancel()
+	node, err := c.clientset.CoreV1().Nodes().Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		return domain.NodeDetail{}, mapKubeError(err)
+	}
+	desired := update.Labels
+	if desired == nil {
+		desired = map[string]string{}
+	}
+	if update.ResourceVersion != "" && node.ResourceVersion != update.ResourceVersion {
+		if maps.Equal(node.Labels, desired) {
+			return c.nodeDetail(ctx, node)
+		}
+		return domain.NodeDetail{}, fmt.Errorf("%w: expected %s, got %s", domain.ErrConflict, update.ResourceVersion, node.ResourceVersion)
+	}
+	if maps.Equal(node.Labels, desired) {
+		return c.nodeDetail(ctx, node)
+	}
+	node.Labels = desired
+	updated, err := c.clientset.CoreV1().Nodes().Update(ctx, node, metav1.UpdateOptions{FieldManager: "dosh"})
+	if err != nil {
+		return domain.NodeDetail{}, mapKubeError(err)
+	}
+	return c.nodeDetail(ctx, updated)
+}
+
+func (c *Client) SetNodeTaints(ctx context.Context, name string, update domain.NodeTaintUpdate) (domain.NodeDetail, error) {
+	ctx, cancel := c.withTimeout(ctx)
+	defer cancel()
+	node, err := c.clientset.CoreV1().Nodes().Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		return domain.NodeDetail{}, mapKubeError(err)
+	}
+	if update.ResourceVersion != "" && node.ResourceVersion != update.ResourceVersion {
+		if nodeTaintsEqual(node.Spec.Taints, update.Taints) {
+			return c.nodeDetail(ctx, node)
+		}
+		return domain.NodeDetail{}, fmt.Errorf("%w: expected %s, got %s", domain.ErrConflict, update.ResourceVersion, node.ResourceVersion)
+	}
+	if nodeTaintsEqual(node.Spec.Taints, update.Taints) {
+		return c.nodeDetail(ctx, node)
+	}
+	node.Spec.Taints = nodeTaintsFromDomain(update.Taints, node.Spec.Taints)
+	updated, err := c.clientset.CoreV1().Nodes().Update(ctx, node, metav1.UpdateOptions{FieldManager: "dosh"})
+	if err != nil {
+		return domain.NodeDetail{}, mapKubeError(err)
+	}
+	return c.nodeDetail(ctx, updated)
+}
+
+func nodeTaintsFromDomain(desired []domain.Taint, existing []corev1.Taint) []corev1.Taint {
+	now := metav1.Now()
+	existingTimes := make(map[string]*metav1.Time, len(existing))
+	for _, taint := range existing {
+		if taint.TimeAdded != nil {
+			existingTimes[taint.Key+"\x00"+string(taint.Effect)] = taint.TimeAdded
+		}
+	}
+	result := make([]corev1.Taint, 0, len(desired))
+	for _, taint := range desired {
+		item := corev1.Taint{Key: taint.Key, Value: taint.Value, Effect: corev1.TaintEffect(taint.Effect)}
+		if added := existingTimes[taint.Key+"\x00"+taint.Effect]; added != nil {
+			item.TimeAdded = added
+		} else {
+			added := now
+			item.TimeAdded = &added
+		}
+		result = append(result, item)
+	}
+	return result
+}
+
+func nodeTaintsEqual(current []corev1.Taint, desired []domain.Taint) bool {
+	if len(current) != len(desired) {
+		return false
+	}
+	for index, taint := range current {
+		if taint.Key != desired[index].Key || taint.Value != desired[index].Value || string(taint.Effect) != desired[index].Effect {
+			return false
+		}
+	}
+	return true
 }
 
 func (c *Client) SetNodeScheduling(ctx context.Context, name string, unschedulable bool) (domain.NodeSummary, error) {

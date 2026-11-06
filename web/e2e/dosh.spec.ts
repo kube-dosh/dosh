@@ -86,6 +86,7 @@ const nodeDetail: NodeDetail = {
   ...nodeSummary,
   conditions: [{ type: "Ready", status: "True", reason: "KubeletReady" }],
   taints: [],
+  resourceVersion: "1",
   labels: { "kubernetes.io/hostname": nodeSummary.name },
   annotations: { "node.alpha.kubernetes.io/ttl": "0" },
   pods: [podSummary],
@@ -269,14 +270,25 @@ function list<T>(items: T[]): ListResponse<T> {
 }
 
 type NodeSchedulingRequest = { method: string; path: string; csrf: string | null };
+type NodeMetadataRequest = { method: string; path: string; csrf: string | null; body: Record<string, unknown> };
 
-async function installApiMocks(page: Page, options: { authenticated?: boolean; authMode?: "local" | "token"; overview?: Overview; overviewStatus?: number; nodeSchedulingRequests?: NodeSchedulingRequest[]; expireSessionOnNodes?: boolean; noIngressController?: boolean; podName?: string } = {}) {
+async function installApiMocks(page: Page, options: { authenticated?: boolean; authMode?: "local" | "token"; overview?: Overview; overviewStatus?: number; nodeSchedulingRequests?: NodeSchedulingRequest[]; nodeMetadataRequests?: NodeMetadataRequest[]; expireSessionOnNodes?: boolean; noIngressController?: boolean; podName?: string } = {}) {
   const authenticated = options.authenticated ?? true;
   const authMode = options.authMode ?? "local";
   const sessionResponse: SessionResponse = { ...session, authMode };
   const listedPod = options.podName ? { ...podSummary, name: options.podName } : podSummary;
   let signedIn = authenticated;
   let nodeSchedulingDisabled = false;
+  let nodeLabels = { ...nodeDetail.labels };
+  let nodeTaints = [...nodeDetail.taints];
+  let nodeResourceVersion = 1;
+  const currentNodeDetail = () => ({
+    ...nodeDetail,
+    unschedulable: nodeSchedulingDisabled,
+    resourceVersion: String(nodeResourceVersion),
+    labels: nodeLabels,
+    taints: nodeTaints,
+  });
   await page.route("**/api/v1/**", async (route) => {
     const request = route.request();
     const path = new URL(request.url()).pathname;
@@ -309,7 +321,23 @@ async function installApiMocks(page: Page, options: { authenticated?: boolean; a
     if (path === "/api/v1/overview") return json(route, options.overview ?? overview, options.overviewStatus ?? 200);
     if (path === "/api/v1/capabilities") return json(route, session.capabilities);
     if (path === "/api/v1/nodes") return json(route, list([{ ...nodeSummary, unschedulable: nodeSchedulingDisabled }]));
-    if (path === "/api/v1/nodes/worker-0001") return json(route, { ...nodeDetail, unschedulable: nodeSchedulingDisabled });
+    if (path === "/api/v1/nodes/worker-0001") return json(route, currentNodeDetail());
+    if (path === "/api/v1/nodes/worker-0001/labels" && method === "PUT") {
+      const body = request.postDataJSON() as { labels: Record<string, string>; resourceVersion: string };
+      options.nodeMetadataRequests?.push({ method, path, csrf: request.headers()["x-csrf-token"] ?? null, body });
+      if (body.resourceVersion !== String(nodeResourceVersion)) return json(route, { code: "conflict", message: "resource changed since it was loaded" }, 409);
+      nodeLabels = { ...body.labels };
+      nodeResourceVersion++;
+      return json(route, currentNodeDetail());
+    }
+    if (path === "/api/v1/nodes/worker-0001/taints" && method === "PUT") {
+      const body = request.postDataJSON() as { taints: NodeDetail["taints"]; resourceVersion: string };
+      options.nodeMetadataRequests?.push({ method, path, csrf: request.headers()["x-csrf-token"] ?? null, body });
+      if (body.resourceVersion !== String(nodeResourceVersion)) return json(route, { code: "conflict", message: "resource changed since it was loaded" }, 409);
+      nodeTaints = body.taints.map((taint) => ({ ...taint, timeAdded: taint.timeAdded ?? "2026-11-06T08:00:00Z" }));
+      nodeResourceVersion++;
+      return json(route, currentNodeDetail());
+    }
     if (path === "/api/v1/nodes/worker-0001/cordon" && method === "POST") {
       options.nodeSchedulingRequests?.push({ method, path, csrf: request.headers()["x-csrf-token"] ?? null });
       nodeSchedulingDisabled = true;
@@ -702,6 +730,67 @@ test("节点详情确认后停止并恢复调度", async ({ page }) => {
   }
 });
 
+test("节点标签和污点支持新增、编辑与删除", async ({ page }) => {
+  const metadataRequests: NodeMetadataRequest[] = [];
+  await installApiMocks(page, { nodeMetadataRequests: metadataRequests });
+  await page.goto("/nodes/worker-0001?tab=labels");
+
+  await expect(page.getByRole("heading", { name: /节点标签/ })).toBeVisible();
+  await page.getByRole("button", { name: "添加标签" }).click();
+  let dialog = page.getByRole("dialog", { name: "添加节点标签" });
+  await dialog.getByLabel("标签键").fill("topology.kubernetes.io/zone");
+  await dialog.getByLabel("标签值").fill("az-1");
+  await dialog.getByRole("button", { name: "添加标签" }).click();
+  await expect(page.getByText("topology.kubernetes.io/zone", { exact: true })).toBeVisible();
+  await expect(page.getByText("az-1", { exact: true })).toBeVisible();
+
+  await page.getByRole("button", { name: "编辑标签 topology.kubernetes.io/zone" }).click();
+  dialog = page.getByRole("dialog", { name: "编辑节点标签" });
+  await dialog.getByLabel("标签值").fill("az-2");
+  await dialog.getByRole("button", { name: "保存修改" }).click();
+  await expect(page.getByText("az-2", { exact: true })).toBeVisible();
+
+  await page.getByRole("button", { name: "删除标签 topology.kubernetes.io/zone" }).click();
+  await expect(page.getByRole("alertdialog")).toContainText("删除节点标签？");
+  await page.getByRole("button", { name: "确认删除" }).click();
+  await expect(page.getByText("topology.kubernetes.io/zone", { exact: true })).not.toBeVisible();
+
+  await page.getByRole("tab", { name: /污点/ }).click();
+  await expect(page.getByRole("heading", { name: /节点污点/ })).toBeVisible();
+  await page.getByRole("button", { name: "添加污点" }).click();
+  dialog = page.getByRole("dialog", { name: "添加节点污点" });
+  await dialog.getByLabel("污点键").fill("dedicated");
+  await dialog.getByLabel("污点值").fill("gpu");
+  await dialog.getByLabel("污点效果").click();
+  await page.getByRole("option", { name: "NoExecute" }).click();
+  await dialog.getByRole("button", { name: "添加污点" }).click();
+  await expect(page.getByText("dedicated=gpu", { exact: true })).toBeVisible();
+  await expect(page.getByText("NoExecute", { exact: true })).toBeVisible();
+  await expect(page.getByText(/驱逐不 toleration 该污点的已有 Pod/)).toBeVisible();
+
+  await page.getByRole("button", { name: "编辑污点 dedicated NoExecute" }).click();
+  dialog = page.getByRole("dialog", { name: "编辑节点污点" });
+  await dialog.getByLabel("污点值").fill("gpu-a");
+  await dialog.getByRole("button", { name: "保存修改" }).click();
+  await expect(page.getByText("dedicated=gpu-a", { exact: true })).toBeVisible();
+
+  await page.getByRole("button", { name: "删除污点 dedicated NoExecute" }).click();
+  await expect(page.getByRole("alertdialog")).toContainText("删除节点污点？");
+  await page.getByRole("button", { name: "确认删除" }).click();
+  await expect(page.getByText("dedicated=gpu-a", { exact: true })).not.toBeVisible();
+
+  expect(metadataRequests.map((request) => request.path)).toEqual([
+    "/api/v1/nodes/worker-0001/labels",
+    "/api/v1/nodes/worker-0001/labels",
+    "/api/v1/nodes/worker-0001/labels",
+    "/api/v1/nodes/worker-0001/taints",
+    "/api/v1/nodes/worker-0001/taints",
+    "/api/v1/nodes/worker-0001/taints",
+  ]);
+  expect(metadataRequests.every((request) => request.method === "PUT" && request.csrf === csrfToken)).toBe(true);
+  expect(metadataRequests.map((request) => request.body.resourceVersion)).toEqual(["1", "2", "3", "4", "5", "6"]);
+});
+
 test("顶部栏与侧栏读取真实集群上下文", async ({ page }) => {
   await installApiMocks(page, {
     overview: {
@@ -1079,6 +1168,8 @@ test("移动端逐页布局无页面级横向溢出", async ({ page }) => {
     { path: "/", name: "overview" },
     { path: "/nodes", name: "nodes" },
     { path: "/nodes/worker-0001", name: "node-detail" },
+    { path: "/nodes/worker-0001?tab=labels", name: "node-labels" },
+    { path: "/nodes/worker-0001?tab=taints", name: "node-taints" },
     { path: "/workloads", name: "workloads" },
     { path: "/workloads/deployment/default/web", name: "workload-detail" },
     { path: "/workloads/deployment/default/web?tab=logs", name: "workload-logs" },
@@ -1173,6 +1264,8 @@ test("320px 窄屏关键页面无横向溢出", async ({ page }) => {
   for (const route of [
     { path: "/", name: "overview" },
     { path: "/nodes", name: "nodes" },
+    { path: "/nodes/worker-0001?tab=labels", name: "node-labels" },
+    { path: "/nodes/worker-0001?tab=taints", name: "node-taints" },
     { path: "/workloads/deployment/default/web", name: "workload-detail" },
     { path: "/pods/default/web-abcdef-12345?tab=logs", name: "pod-logs" },
     { path: "/configuration?tab=certificate", name: "certificate" },
@@ -1255,6 +1348,15 @@ test("移动端关键弹窗与确认框保持在视口内", async ({ page }) => 
   await expect(dialog).toBeVisible();
   await expectElementInsideViewport(page, dialog, "audit detail dialog");
   await page.screenshot({ path: "test-results/mobile-interactions/audit-dialog.png", fullPage: true });
+  await page.keyboard.press("Escape");
+
+  await page.goto("/nodes/worker-0001?tab=labels");
+  await page.getByRole("button", { name: "添加标签" }).click();
+  dialog = page.getByRole("dialog", { name: "添加节点标签" });
+  await expect(dialog).toBeVisible();
+  await expectElementInsideViewport(page, dialog, "node label dialog");
+  await expectNoPageOverflow(page, "node label dialog");
+  await page.screenshot({ path: "test-results/mobile-interactions/node-label-dialog.png", fullPage: true });
   await page.keyboard.press("Escape");
 
   await page.goto("/workloads");

@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useParams, useSearch } from "@tanstack/react-router";
-import { Ban, CirclePlay, Cpu, FileCode2, HardDrive, Loader2, MemoryStick, ScrollText, Server } from "lucide-react";
+import { Ban, CirclePlay, Cpu, FileCode2, HardDrive, Loader2, MemoryStick, ScrollText, Server, ShieldAlert, Tag } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/api/client";
 import type { Condition, PodSummary, Taint } from "@/api/types";
@@ -25,11 +25,13 @@ import {
 } from "@/components/ui/alert-dialog";
 import { useCapabilities } from "@/features/auth/use-session";
 import { ResourceEvents } from "@/features/events/resource-events";
+import { NodeLabelsPanel } from "@/features/nodes/node-labels-panel";
+import { NodeTaintsPanel } from "@/features/nodes/node-taints-panel";
 import { PodLogs } from "@/features/workloads/pod-logs";
 import { formatAge, formatCPU, formatDate, formatMemory } from "@/lib/utils";
 
 const podColumn = createColumnHelper<PodSummary>();
-const nodeTabs = ["overview", "pods", "events", "logs", "yaml"] as const;
+const nodeTabs = ["overview", "labels", "taints", "pods", "events", "logs", "yaml"] as const;
 type NodeTab = (typeof nodeTabs)[number];
 
 function isNodeTab(value: string | undefined): value is NodeTab {
@@ -56,7 +58,7 @@ export function NodeDetailPage() {
   };
   const query = useQuery({ queryKey: ["node", name], queryFn: () => api.node(name) });
   const capabilities = useCapabilities().data;
-  const canCordon = Boolean(capabilities?.nodeCordon);
+  const canManageNode = Boolean(capabilities?.nodeCordon);
   const scheduling = useMutation({
     mutationFn: (action: "cordon" | "uncordon") => action === "cordon" ? api.cordonNode(name) : api.uncordonNode(name),
     onSuccess: async (_node, action) => {
@@ -74,9 +76,9 @@ export function NodeDetailPage() {
   const node = query.data!;
   return (
     <>
-      <PageHeader breadcrumb={<><Link to="/nodes" className="text-primary underline underline-offset-2">节点管理</Link> / {node.name}</>} title={<span className="flex items-center gap-3"><Server className="h-5 w-5 text-muted-foreground" />{node.name}</span>} description={<span className="flex items-center gap-2"><StatusBadge status={node.unschedulable ? "SchedulingDisabled" : node.status} />{node.roles.map((role) => <Badge key={role} variant="secondary">{role}</Badge>)}</span>} actions={<div className="flex items-center gap-2">{canCordon ? <Button variant="outline" onClick={() => setSchedulingOpen(true)}>{node.unschedulable ? <CirclePlay className="h-4 w-4" /> : <Ban className="h-4 w-4" />}{node.unschedulable ? "恢复调度" : "停止调度"}</Button> : null}<Button variant="outline" onClick={() => setYamlOpen(true)}><FileCode2 className="h-4 w-4" />YAML</Button></div>} />
+      <PageHeader breadcrumb={<><Link to="/nodes" className="text-primary underline underline-offset-2">节点管理</Link> / {node.name}</>} title={<span className="flex items-center gap-3"><Server className="h-5 w-5 text-muted-foreground" />{node.name}</span>} description={<span className="flex items-center gap-2"><StatusBadge status={node.unschedulable ? "SchedulingDisabled" : node.status} />{node.roles.map((role) => <Badge key={role} variant="secondary">{role}</Badge>)}</span>} actions={<div className="flex items-center gap-2">{canManageNode ? <Button variant="outline" onClick={() => setSchedulingOpen(true)}>{node.unschedulable ? <CirclePlay className="h-4 w-4" /> : <Ban className="h-4 w-4" />}{node.unschedulable ? "恢复调度" : "停止调度"}</Button> : null}<Button variant="outline" onClick={() => setYamlOpen(true)}><FileCode2 className="h-4 w-4" />YAML</Button></div>} />
       <Tabs value={tab} onValueChange={changeTab}>
-        <TabsList><TabsTrigger value="overview">概览</TabsTrigger><TabsTrigger value="pods">实例 ({node.pods.length})</TabsTrigger><TabsTrigger value="events">事件</TabsTrigger><TabsTrigger value="logs"><ScrollText className="h-3.5 w-3.5" />日志</TabsTrigger><TabsTrigger value="yaml"><FileCode2 className="h-3.5 w-3.5" />YAML</TabsTrigger></TabsList>
+        <TabsList><TabsTrigger value="overview">概览</TabsTrigger><TabsTrigger value="labels"><Tag className="h-3.5 w-3.5" />标签 ({Object.keys(node.labels).length})</TabsTrigger><TabsTrigger value="taints"><ShieldAlert className="h-3.5 w-3.5" />污点 ({node.taints.length})</TabsTrigger><TabsTrigger value="pods">实例 ({node.pods.length})</TabsTrigger><TabsTrigger value="events">事件</TabsTrigger><TabsTrigger value="logs"><ScrollText className="h-3.5 w-3.5" />日志</TabsTrigger><TabsTrigger value="yaml"><FileCode2 className="h-3.5 w-3.5" />YAML</TabsTrigger></TabsList>
         <TabsContent value="overview">
           <div className="grid gap-4 xl:grid-cols-[1.05fr_0.95fr]">
             <Card><CardHeader><CardTitle>节点信息</CardTitle></CardHeader><CardContent><dl className="grid gap-4 sm:grid-cols-2"><DetailItem label="内部 IP"><span className="font-mono">{node.internalIP}</span></DetailItem><DetailItem label="Kubelet">{node.version}</DetailItem><DetailItem label="操作系统">{node.osImage}</DetailItem><DetailItem label="内核">{node.kernelVersion}</DetailItem><DetailItem label="容器运行时">{node.containerRuntime}</DetailItem><DetailItem label="创建时间">{formatDate(node.createdAt)}</DetailItem></dl></CardContent></Card>
@@ -84,10 +86,12 @@ export function NodeDetailPage() {
           </div>
           <div className="mt-4 grid gap-4 xl:grid-cols-2">
             <Card><CardHeader><CardTitle>Conditions</CardTitle></CardHeader><CardContent className="p-0"><SimpleConditions conditions={node.conditions} /></CardContent></Card>
-            <Card><CardHeader><CardTitle>Taints</CardTitle></CardHeader><CardContent className="p-0"><SimpleTaints taints={node.taints} /></CardContent></Card>
+            <Card><CardHeader className="flex-row items-start justify-between gap-3"><CardTitle>Taints</CardTitle><Button variant="ghost" size="sm" onClick={() => changeTab("taints")}>{canManageNode ? "管理污点" : "查看全部"}</Button></CardHeader><CardContent className="p-0"><SimpleTaints taints={node.taints} /></CardContent></Card>
           </div>
-          <Card className="mt-4"><CardHeader><CardTitle>标签与注解</CardTitle></CardHeader><CardContent className="grid gap-5 lg:grid-cols-2"><MetadataList title="Labels" data={node.labels} /><MetadataList title="Annotations" data={node.annotations} /></CardContent></Card>
+          <Card className="mt-4"><CardHeader className="flex-row items-start justify-between gap-3"><CardTitle>标签与注解</CardTitle><Button variant="ghost" size="sm" onClick={() => changeTab("labels")}>{canManageNode ? "管理标签" : "查看全部"}</Button></CardHeader><CardContent className="grid gap-5 lg:grid-cols-2"><MetadataList title="Labels" data={node.labels} /><MetadataList title="Annotations" data={node.annotations} /></CardContent></Card>
         </TabsContent>
+        <TabsContent value="labels"><NodeLabelsPanel node={node} canEdit={canManageNode} /></TabsContent>
+        <TabsContent value="taints"><NodeTaintsPanel node={node} canEdit={canManageNode} /></TabsContent>
         <TabsContent value="pods">
           <Card><CardHeader><CardTitle>节点上的 Pod</CardTitle><CardDescription>{node.pods.length} 个实例</CardDescription></CardHeader><CardContent className="px-0 pb-0"><DataTable columns={[podColumn.accessor("name", { header: "名称", cell: (info) => <Link to="/pods/$namespace/$name" params={{ namespace: info.row.original.namespace, name: info.getValue() }} className="font-medium text-primary hover:underline">{info.getValue()}</Link> }), podColumn.accessor("namespace", { header: "命名空间" }), podColumn.accessor("status", { header: "状态", cell: (info) => <StatusBadge status={info.getValue()} /> }), podColumn.accessor("ready", { header: "就绪" }), podColumn.accessor("restarts", { header: "重启" }), podColumn.accessor("createdAt", { header: "年龄", cell: (info) => formatAge(info.getValue()) })]} data={node.pods} pageSize={10} /></CardContent></Card>
         </TabsContent>

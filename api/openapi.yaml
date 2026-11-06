@@ -208,6 +208,58 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
         "409": { $ref: "#/components/responses/Conflict" }
         "503": { $ref: "#/components/responses/DependencyUnavailable" }
+  /api/v1/nodes/{name}/labels:
+    put:
+      tags: [cluster]
+      summary: Replace node labels using the loaded resource version
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      parameters:
+        - { $ref: "#/components/parameters/Name" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/NodeLabelUpdate" }
+      responses:
+        "200":
+          description: Updated node detail
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/NodeDetail" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
+  /api/v1/nodes/{name}/taints:
+    put:
+      tags: [cluster]
+      summary: Replace node taints using the loaded resource version
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      parameters:
+        - { $ref: "#/components/parameters/Name" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/NodeTaintUpdate" }
+      responses:
+        "200":
+          description: Updated node detail
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/NodeDetail" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
   /api/v1/namespaces:
     get:
       tags: [cluster]
@@ -1313,20 +1365,15 @@ components:
       allOf:
         - { $ref: "#/components/schemas/NodeSummary" }
         - type: object
-          required: [conditions, taints, labels, annotations, pods]
+          required: [resourceVersion, conditions, taints, labels, annotations, pods]
           properties:
+            resourceVersion: { type: string }
             conditions:
               type: array
               items: { $ref: "#/components/schemas/Condition" }
             taints:
               type: array
-              items:
-                type: object
-                properties:
-                  key: { type: string }
-                  value: { type: string }
-                  effect: { type: string }
-                  timeAdded: { type: string }
+              items: { $ref: "#/components/schemas/Taint" }
             labels:
               type: object
               additionalProperties: { type: string }
@@ -1336,6 +1383,30 @@ components:
             pods:
               type: array
               items: { $ref: "#/components/schemas/PodSummary" }
+    Taint:
+      type: object
+      required: [key, effect]
+      properties:
+        key: { type: string }
+        value: { type: string }
+        effect: { type: string, enum: [NoSchedule, PreferNoSchedule, NoExecute] }
+        timeAdded: { type: string }
+    NodeLabelUpdate:
+      type: object
+      required: [labels]
+      properties:
+        labels:
+          type: object
+          additionalProperties: { type: string }
+        resourceVersion: { type: string }
+    NodeTaintUpdate:
+      type: object
+      required: [taints]
+      properties:
+        taints:
+          type: array
+          items: { $ref: "#/components/schemas/Taint" }
+        resourceVersion: { type: string }
     Namespace:
       type: object
       required: [name, status, createdAt]

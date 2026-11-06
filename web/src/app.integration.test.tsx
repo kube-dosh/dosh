@@ -39,6 +39,7 @@ const nodeDetail: NodeDetail = {
   memoryCapacityBytes: 4294967296, podCapacity: 110, podCount: 1, cpuRequestsMilli: 800, memoryRequestsBytes: 1073741824,
   hasMetrics: true, cpuUsageMilli: 350, memoryUsageBytes: 1073741824, unschedulable: false, createdAt: "2026-11-02T00:00:00Z",
   conditions: [{ type: "Ready", status: "True", reason: "KubeletReady" }], taints: [],
+  resourceVersion: "1",
   labels: { "kubernetes.io/hostname": "worker-0001" }, annotations: {}, pods: [],
 };
 

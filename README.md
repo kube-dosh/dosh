@@ -10,7 +10,7 @@ Dosh 是一套自研的 Kubernetes 运维控制台，后端使用 Go + chi + cli
 - 认证：默认使用 Kubernetes Bearer Token + TokenReview，身份和权限由 Kubernetes RBAC 决定；本地密码和 OIDC 为可选模式
 - 传输：HTTP/HTTPS 均可运行；TLS 证书和自定义 CA 都不是启动必需项，生产仍推荐 HTTPS
 - 证书：HTTPS 证书文件/Secret 更新后自动热加载，提供只读证书状态和受审计的手动重载
-- 节点运维：按 `update nodes` 权限提供 Cordon/Uncordon，二次确认、审计且不驱逐现有 Pod
+- 节点运维：按 `update nodes` 权限提供 Cordon/Uncordon、标签和污点管理；写操作带 resourceVersion 乐观锁、审计和危险操作确认
 - 部署：2 副本、跨节点反亲和、PDB、非 root、只读根文件系统、distroless 运行镜像
 - 契约：`api/openapi.yaml` 为唯一 API 契约源
 
@@ -116,7 +116,8 @@ Browser
   文本显示；日志不写入浏览器持久存储，事件消息不创建可执行 DOM。
 - 可访问性：保留 `--destructive-strong` 对比度修复；v2.41 三浏览器容器矩阵的亮暗 axe、主题和
   键盘路径通过。Edge/Safari 实机和企业 IdP 仍需另行验收。
-- 节点、工作负载和 Pod 详情统一为“概览、实例、事件、日志、YAML”五标签；节点事件按
+- 节点详情新增“标签、污点”管理页签，可逐项新增、编辑和删除；标签/污点更新使用节点
+  `resourceVersion`，冲突返回 409 并刷新，成功和失败写入审计。节点事件按
   `objectKind=Node`/`objectName` 过滤，节点日志只展示该节点上的 Pod。
 - 工作负载详情支持 Deployment/StatefulSet/DaemonSet 容器级镜像更新，以及 CronJob 暂停/恢复；
   两类操作都携带当前 `resourceVersion`，冲突返回 409 并提示刷新，成功和失败写入审计。

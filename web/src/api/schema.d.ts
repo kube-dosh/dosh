@@ -477,6 +477,102 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/nodes/{name}/labels": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Replace node labels using the loaded resource version */
+        put: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    name: components["parameters"]["Name"];
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["NodeLabelUpdate"];
+                };
+            };
+            responses: {
+                /** @description Updated node detail */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["NodeDetail"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+                404: components["responses"]["NotFound"];
+                409: components["responses"]["Conflict"];
+                503: components["responses"]["DependencyUnavailable"];
+            };
+        };
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/nodes/{name}/taints": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Replace node taints using the loaded resource version */
+        put: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    name: components["parameters"]["Name"];
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["NodeTaintUpdate"];
+                };
+            };
+            responses: {
+                /** @description Updated node detail */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["NodeDetail"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+                404: components["responses"]["NotFound"];
+                409: components["responses"]["Conflict"];
+                503: components["responses"]["DependencyUnavailable"];
+            };
+        };
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/namespaces": {
         parameters: {
             query?: never;
@@ -2308,13 +2404,9 @@ export interface components {
             createdAt: string;
         };
         NodeDetail: components["schemas"]["NodeSummary"] & {
+            resourceVersion: string;
             conditions: components["schemas"]["Condition"][];
-            taints: {
-                key?: string;
-                value?: string;
-                effect?: string;
-                timeAdded?: string;
-            }[];
+            taints: components["schemas"]["Taint"][];
             labels: {
                 [key: string]: string;
             };
@@ -2322,6 +2414,23 @@ export interface components {
                 [key: string]: string;
             };
             pods: components["schemas"]["PodSummary"][];
+        };
+        Taint: {
+            key: string;
+            value?: string;
+            /** @enum {string} */
+            effect: "NoSchedule" | "PreferNoSchedule" | "NoExecute";
+            timeAdded?: string;
+        };
+        NodeLabelUpdate: {
+            labels: {
+                [key: string]: string;
+            };
+            resourceVersion?: string;
+        };
+        NodeTaintUpdate: {
+            taints: components["schemas"]["Taint"][];
+            resourceVersion?: string;
         };
         Namespace: {
             name: string;

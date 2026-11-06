@@ -211,11 +211,22 @@ type NodeSummary struct {
 
 type NodeDetail struct {
 	NodeSummary
-	Conditions  []Condition       `json:"conditions"`
-	Taints      []Taint           `json:"taints"`
-	Labels      map[string]string `json:"labels"`
-	Annotations map[string]string `json:"annotations"`
-	Pods        []PodSummary      `json:"pods"`
+	ResourceVersion string            `json:"resourceVersion"`
+	Conditions      []Condition       `json:"conditions"`
+	Taints          []Taint           `json:"taints"`
+	Labels          map[string]string `json:"labels"`
+	Annotations     map[string]string `json:"annotations"`
+	Pods            []PodSummary      `json:"pods"`
+}
+
+type NodeLabelUpdate struct {
+	Labels          map[string]string `json:"labels"`
+	ResourceVersion string            `json:"resourceVersion,omitempty"`
+}
+
+type NodeTaintUpdate struct {
+	Taints          []Taint `json:"taints"`
+	ResourceVersion string  `json:"resourceVersion,omitempty"`
 }
 
 type Namespace struct {

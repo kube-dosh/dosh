@@ -11,6 +11,8 @@ type Repository interface {
 	ListNodes(ctx context.Context, query domain.ListQuery) ([]domain.NodeSummary, error)
 	GetNode(ctx context.Context, name string) (domain.NodeDetail, error)
 	SetNodeScheduling(ctx context.Context, name string, unschedulable bool) (domain.NodeSummary, error)
+	SetNodeLabels(ctx context.Context, name string, update domain.NodeLabelUpdate) (domain.NodeDetail, error)
+	SetNodeTaints(ctx context.Context, name string, update domain.NodeTaintUpdate) (domain.NodeDetail, error)
 	ListPodsForNode(ctx context.Context, node string) ([]domain.PodSummary, error)
 	ListNamespaces(ctx context.Context, query domain.ListQuery) ([]domain.Namespace, error)
 	GetNamespace(ctx context.Context, name string) (domain.NamespaceDetail, error)
@@ -49,6 +51,39 @@ func (s *Service) Cordon(ctx context.Context, actor domain.Actor, name string) (
 
 func (s *Service) Uncordon(ctx context.Context, actor domain.Actor, name string) (domain.NodeSummary, error) {
 	return s.setScheduling(ctx, actor, name, "uncordon", false)
+}
+
+func (s *Service) SetLabels(ctx context.Context, actor domain.Actor, name string, update domain.NodeLabelUpdate) (domain.NodeDetail, error) {
+	return s.setMetadata(ctx, actor, name, "update-labels", func() (domain.NodeDetail, error) {
+		labels, err := normalizeNodeLabels(update.Labels)
+		if err != nil {
+			return domain.NodeDetail{}, err
+		}
+		update.Labels = labels
+		return s.repository.SetNodeLabels(ctx, name, update)
+	})
+}
+
+func (s *Service) SetTaints(ctx context.Context, actor domain.Actor, name string, update domain.NodeTaintUpdate) (domain.NodeDetail, error) {
+	return s.setMetadata(ctx, actor, name, "update-taints", func() (domain.NodeDetail, error) {
+		taints, err := normalizeNodeTaints(update.Taints)
+		if err != nil {
+			return domain.NodeDetail{}, err
+		}
+		update.Taints = taints
+		return s.repository.SetNodeTaints(ctx, name, update)
+	})
+}
+
+func (s *Service) setMetadata(ctx context.Context, actor domain.Actor, name, action string, update func() (domain.NodeDetail, error)) (domain.NodeDetail, error) {
+	access := domain.Access{Verb: "update", Resource: "nodes", Name: name}
+	if err := s.authorizer.Require(ctx, actor, access); err != nil {
+		s.audit(ctx, actor, action, name, err)
+		return domain.NodeDetail{}, err
+	}
+	detail, err := update()
+	s.audit(ctx, actor, action, name, err)
+	return detail, err
 }
 
 func (s *Service) setScheduling(ctx context.Context, actor domain.Actor, name, action string, unschedulable bool) (domain.NodeSummary, error) {

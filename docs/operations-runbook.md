@@ -82,7 +82,39 @@ kubectl get node <node> -o jsonpath='{.spec.unschedulable}{"\n"}'   # 空/false
 审计日志中的 `action=cordon|uncordon`、`result=denied|success`、`request_id`。任何验收失败都
 必须立即执行 Uncordon；不要在生产节点上做测试。
 
-### 2.1.1 审计历史查询
+### 2.1.1 节点标签与污点
+
+节点详情的“标签”和“污点”页签支持新增、编辑和删除，编辑权限与 Cordon/Uncordon 一致，要求
+Kubernetes `update nodes`。每次写入都携带页面加载时的节点 `resourceVersion`；节点在此期间被
+其他控制器更新时返回 409，页面提示刷新后重试，避免覆盖并发变更。标签和污点变更分别记录
+`action=update-labels|update-taints` 审计事件。
+
+标签 API 对账（已登录会话、带 CSRF；先读取 `resourceVersion`）：
+
+```bash
+RESOURCE_VERSION=$(kubectl get node <node> -o jsonpath='{.metadata.resourceVersion}')
+curl -k -b session.cookie -H "X-CSRF-Token: $CSRF" -X PUT \
+  -H 'Content-Type: application/json' \
+  https://<node-ip>:32626/api/v1/nodes/<node>/labels \
+  -d "{\"resourceVersion\":\"$RESOURCE_VERSION\",\"labels\":{\"topology.kubernetes.io/zone\":\"az-1\"}}"
+kubectl get node <node> -o jsonpath='{.metadata.labels.topology\.kubernetes\.io/zone}{"\n"}'
+```
+
+污点 API 使用同一资源版本和安全边界：
+
+```bash
+RESOURCE_VERSION=$(kubectl get node <node> -o jsonpath='{.metadata.resourceVersion}')
+curl -k -b session.cookie -H "X-CSRF-Token: $CSRF" -X PUT \
+  -H 'Content-Type: application/json' \
+  https://<node-ip>:32626/api/v1/nodes/<node>/taints \
+  -d "{\"resourceVersion\":\"$RESOURCE_VERSION\",\"taints\":[{\"key\":\"dedicated\",\"value\":\"gpu\",\"effect\":\"NoSchedule\"}]}"
+kubectl get node <node> -o jsonpath='{.spec.taints}{"\n"}'
+```
+
+`NoExecute` 会驱逐缺少对应 toleration 的已有 Pod。生产验收应先在非生产节点使用
+`PreferNoSchedule` 或无害标签完成 API 对账，禁止直接在承载关键业务的节点上测试污点。
+
+### 2.1.2 审计历史查询
 
 管理员可在“审计历史”页面查询当前实例最近 1000 条审计记录，按命名空间、动作、结果和关键词
 过滤，并分页/排序。API 为 `GET /api/v1/audit-events`；viewer/operator 返回 403，未认证返回 401，

@@ -212,6 +212,64 @@ func TestSetNodeSchedulingMapsMissingNode(t *testing.T) {
 	}
 }
 
+func TestSetNodeLabelsPreservesNodeAndChecksResourceVersion(t *testing.T) {
+	node := testNode()
+	node.ResourceVersion = "9"
+	node.Annotations = map[string]string{"owner": "platform"}
+	client, clientset := newFakeKubeClient(node)
+
+	detail, err := client.SetNodeLabels(context.Background(), "worker-1", domain.NodeLabelUpdate{
+		Labels: map[string]string{"node-role.kubernetes.io/worker": "", "topology.kubernetes.io/zone": "az-1"}, ResourceVersion: "9",
+	})
+	if err != nil || detail.Labels["topology.kubernetes.io/zone"] != "az-1" || detail.Annotations["owner"] != "platform" || detail.ResourceVersion == "" {
+		t.Fatalf("SetNodeLabels() = (%#v, %v)", detail, err)
+	}
+	stored, err := clientset.CoreV1().Nodes().Get(context.Background(), "worker-1", metav1.GetOptions{})
+	if err != nil || stored.Labels["topology.kubernetes.io/zone"] != "az-1" || stored.Annotations["owner"] != "platform" {
+		t.Fatalf("node after label update = %#v, err = %v", stored, err)
+	}
+
+	if _, err := client.SetNodeLabels(context.Background(), "worker-1", domain.NodeLabelUpdate{
+		Labels: map[string]string{"node-role.kubernetes.io/worker": "", "topology.kubernetes.io/zone": "az-1"}, ResourceVersion: "stale",
+	}); err != nil {
+		t.Fatalf("idempotent label update = %v", err)
+	}
+	if _, err := client.SetNodeLabels(context.Background(), "worker-1", domain.NodeLabelUpdate{
+		Labels: map[string]string{"team": "other"}, ResourceVersion: "stale",
+	}); !errors.Is(err, domain.ErrConflict) {
+		t.Fatalf("stale label update error = %v, want ErrConflict", err)
+	}
+}
+
+func TestSetNodeTaintsPreservesTimeAddedAndChecksResourceVersion(t *testing.T) {
+	added := metav1.NewTime(time.Date(2026, 11, 1, 8, 0, 0, 0, time.UTC))
+	node := testNode()
+	node.ResourceVersion = "12"
+	node.Spec.Taints = []corev1.Taint{{Key: "dedicated", Value: "gpu", Effect: corev1.TaintEffectNoSchedule, TimeAdded: &added}}
+	client, clientset := newFakeKubeClient(node)
+
+	detail, err := client.SetNodeTaints(context.Background(), "worker-1", domain.NodeTaintUpdate{
+		Taints: []domain.Taint{{Key: "dedicated", Value: "gpu", Effect: "NoSchedule"}, {Key: "maintenance", Value: "true", Effect: "NoExecute"}}, ResourceVersion: "12",
+	})
+	if err != nil || len(detail.Taints) != 2 || detail.Taints[1].Effect != "NoExecute" {
+		t.Fatalf("SetNodeTaints() = (%#v, %v)", detail, err)
+	}
+	stored, err := clientset.CoreV1().Nodes().Get(context.Background(), "worker-1", metav1.GetOptions{})
+	if err != nil || len(stored.Spec.Taints) != 2 || stored.Spec.Taints[0].TimeAdded == nil || !stored.Spec.Taints[0].TimeAdded.Equal(&added) || stored.Spec.Taints[1].TimeAdded == nil {
+		t.Fatalf("node after taint update = %#v, err = %v", stored.Spec.Taints, err)
+	}
+	if _, err := client.SetNodeTaints(context.Background(), "worker-1", domain.NodeTaintUpdate{
+		Taints: []domain.Taint{{Key: "dedicated", Value: "gpu", Effect: "NoSchedule"}, {Key: "maintenance", Value: "true", Effect: "NoExecute"}}, ResourceVersion: "stale",
+	}); err != nil {
+		t.Fatalf("idempotent taint update = %v", err)
+	}
+	if _, err := client.SetNodeTaints(context.Background(), "worker-1", domain.NodeTaintUpdate{
+		Taints: []domain.Taint{{Key: "other", Effect: "NoSchedule"}}, ResourceVersion: "stale",
+	}); !errors.Is(err, domain.ErrConflict) {
+		t.Fatalf("stale taint update error = %v, want ErrConflict", err)
+	}
+}
+
 func TestNamespacesSearchAndNotFound(t *testing.T) {
 	client, _ := newFakeKubeClient(
 		&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "prod"}, Status: corev1.NamespaceStatus{Phase: corev1.NamespaceActive}},

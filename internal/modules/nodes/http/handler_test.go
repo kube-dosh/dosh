@@ -34,6 +34,14 @@ type httpNodesRepository struct {
 	schedulingCalls    int
 	lastSchedulingName string
 	lastUnschedulable  bool
+	labelDetail        domain.NodeDetail
+	labelErr           error
+	setLabelCalls      int
+	lastLabelUpdate    domain.NodeLabelUpdate
+	taintDetail        domain.NodeDetail
+	taintErr           error
+	setTaintCalls      int
+	lastTaintUpdate    domain.NodeTaintUpdate
 }
 
 func (r *httpNodesRepository) ListNodes(_ context.Context, query domain.ListQuery) ([]domain.NodeSummary, error) {
@@ -51,6 +59,20 @@ func (r *httpNodesRepository) SetNodeScheduling(_ context.Context, name string, 
 	r.lastSchedulingName = name
 	r.lastUnschedulable = unschedulable
 	return r.scheduling, r.schedulingErr
+}
+
+func (r *httpNodesRepository) SetNodeLabels(_ context.Context, name string, update domain.NodeLabelUpdate) (domain.NodeDetail, error) {
+	r.setLabelCalls++
+	r.lastNodeName = name
+	r.lastLabelUpdate = update
+	return r.labelDetail, r.labelErr
+}
+
+func (r *httpNodesRepository) SetNodeTaints(_ context.Context, name string, update domain.NodeTaintUpdate) (domain.NodeDetail, error) {
+	r.setTaintCalls++
+	r.lastNodeName = name
+	r.lastTaintUpdate = update
+	return r.taintDetail, r.taintErr
 }
 
 func (r *httpNodesRepository) ListPodsForNode(_ context.Context, name string) ([]domain.PodSummary, error) {
@@ -95,6 +117,14 @@ func nodesRequest(handler http.Handler, path string) *httptest.ResponseRecorder 
 func nodesRequestMethod(handler http.Handler, method, path string) *httptest.ResponseRecorder {
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, httptest.NewRequest(method, path, nil))
+	return response
+}
+
+func nodesRequestJSON(handler http.Handler, method, path, body string) *httptest.ResponseRecorder {
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(method, path, strings.NewReader(body))
+	request.Header.Set("Content-Type", "application/json")
+	handler.ServeHTTP(response, request)
 	return response
 }
 
@@ -200,5 +230,67 @@ func TestNodesSchedulingRoutesMapAuthorizationAndDependencyFailures(t *testing.T
 	response = nodesRequestMethod(nodesTestRouter(repo), http.MethodPost, "/nodes/worker-a/uncordon")
 	if response.Code != http.StatusServiceUnavailable {
 		t.Fatalf("unavailable status = %d body = %s", response.Code, response.Body.String())
+	}
+}
+
+func TestNodesMetadataRoutesReturnUpdatedDetail(t *testing.T) {
+	repo := &httpNodesRepository{
+		labelDetail: domain.NodeDetail{NodeSummary: domain.NodeSummary{Name: "worker-a"}, ResourceVersion: "11", Labels: map[string]string{"team": "platform"}},
+		taintDetail: domain.NodeDetail{NodeSummary: domain.NodeSummary{Name: "worker-a"}, ResourceVersion: "12", Taints: []domain.Taint{{Key: "dedicated", Value: "gpu", Effect: "NoSchedule"}}},
+	}
+	router := nodesTestRouter(repo)
+
+	response := nodesRequestJSON(router, http.MethodPut, "/nodes/worker-a/labels", `{"labels":{"team":"platform"},"resourceVersion":"10"}`)
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"resourceVersion":"11"`) || !strings.Contains(response.Body.String(), `"team":"platform"`) {
+		t.Fatalf("labels status = %d body = %s", response.Code, response.Body.String())
+	}
+	if repo.setLabelCalls != 1 || repo.lastNodeName != "worker-a" || repo.lastLabelUpdate.ResourceVersion != "10" || repo.lastLabelUpdate.Labels["team"] != "platform" {
+		t.Fatalf("label update calls = %d name = %q update = %#v", repo.setLabelCalls, repo.lastNodeName, repo.lastLabelUpdate)
+	}
+
+	response = nodesRequestJSON(router, http.MethodPut, "/nodes/worker-a/taints", `{"taints":[{"key":"dedicated","value":"gpu","effect":"NoSchedule"}],"resourceVersion":"11"}`)
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"resourceVersion":"12"`) || !strings.Contains(response.Body.String(), `"effect":"NoSchedule"`) {
+		t.Fatalf("taints status = %d body = %s", response.Code, response.Body.String())
+	}
+	if repo.setTaintCalls != 1 || repo.lastTaintUpdate.ResourceVersion != "11" || len(repo.lastTaintUpdate.Taints) != 1 {
+		t.Fatalf("taint update calls = %d update = %#v", repo.setTaintCalls, repo.lastTaintUpdate)
+	}
+}
+
+func TestNodesMetadataRoutesValidateBodiesAndMapConflicts(t *testing.T) {
+	repo := &httpNodesRepository{}
+	router := nodesTestRouter(repo)
+
+	response := nodesRequestJSON(router, http.MethodPut, "/nodes/worker-a/labels", `{}`)
+	if response.Code != http.StatusBadRequest || repo.setLabelCalls != 0 {
+		t.Fatalf("missing labels status = %d body = %s", response.Code, response.Body.String())
+	}
+	response = nodesRequestJSON(router, http.MethodPut, "/nodes/worker-a/taints", `{}`)
+	if response.Code != http.StatusBadRequest || repo.setTaintCalls != 0 {
+		t.Fatalf("missing taints status = %d body = %s", response.Code, response.Body.String())
+	}
+
+	repo.labelErr = domain.ErrConflict
+	response = nodesRequestJSON(router, http.MethodPut, "/nodes/worker-a/labels", `{"labels":{"team":"platform"}}`)
+	if response.Code != http.StatusConflict {
+		t.Fatalf("label conflict status = %d body = %s", response.Code, response.Body.String())
+	}
+	repo.taintErr = domain.ErrUnavailable
+	response = nodesRequestJSON(router, http.MethodPut, "/nodes/worker-a/taints", `{"taints":[]}`)
+	if response.Code != http.StatusServiceUnavailable {
+		t.Fatalf("taint unavailable status = %d body = %s", response.Code, response.Body.String())
+	}
+}
+
+func TestNodesMetadataRoutesRequirePermission(t *testing.T) {
+	repo := &httpNodesRepository{}
+	router := nodesTestRouterWithAuthorizer(repo, httpNodesAuthorizer{err: domain.ErrForbidden})
+	response := nodesRequestJSON(router, http.MethodPut, "/nodes/worker-a/labels", `{"labels":{"team":"platform"}}`)
+	if response.Code != http.StatusForbidden || repo.setLabelCalls != 0 {
+		t.Fatalf("label forbidden status = %d calls = %d body = %s", response.Code, repo.setLabelCalls, response.Body.String())
+	}
+	response = nodesRequestJSON(router, http.MethodPut, "/nodes/worker-a/taints", `{"taints":[]}`)
+	if response.Code != http.StatusForbidden || repo.setTaintCalls != 0 {
+		t.Fatalf("taint forbidden status = %d calls = %d body = %s", response.Code, repo.setTaintCalls, response.Body.String())
 	}
 }

@@ -64,6 +64,56 @@ func (h *Handler) Uncordon(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	httpx.JSON(w, stdhttp.StatusOK, item)
 }
 
+type nodeLabelsRequest struct {
+	Labels          *map[string]string `json:"labels"`
+	ResourceVersion string             `json:"resourceVersion"`
+}
+
+func (h *Handler) SetLabels(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	var request nodeLabelsRequest
+	if !httpx.DecodeJSON(w, r, &request) {
+		return
+	}
+	if request.Labels == nil {
+		httpx.Error(w, r, httpx.Validation("labels", "labels is required"))
+		return
+	}
+	actor, _ := domain.ActorFromContext(r.Context())
+	item, err := h.service.SetLabels(r.Context(), actor, chi.URLParam(r, "name"), domain.NodeLabelUpdate{
+		Labels: *request.Labels, ResourceVersion: request.ResourceVersion,
+	})
+	if err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	httpx.JSON(w, stdhttp.StatusOK, item)
+}
+
+type nodeTaintsRequest struct {
+	Taints          *[]domain.Taint `json:"taints"`
+	ResourceVersion string          `json:"resourceVersion"`
+}
+
+func (h *Handler) SetTaints(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	var request nodeTaintsRequest
+	if !httpx.DecodeJSON(w, r, &request) {
+		return
+	}
+	if request.Taints == nil {
+		httpx.Error(w, r, httpx.Validation("taints", "taints is required"))
+		return
+	}
+	actor, _ := domain.ActorFromContext(r.Context())
+	item, err := h.service.SetTaints(r.Context(), actor, chi.URLParam(r, "name"), domain.NodeTaintUpdate{
+		Taints: *request.Taints, ResourceVersion: request.ResourceVersion,
+	})
+	if err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	httpx.JSON(w, stdhttp.StatusOK, item)
+}
+
 func (h *Handler) ListNamespaces(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	query := domain.ListQuery{Search: httpx.Query(r, "q")}
 	options, err := httpx.ParseListOptions(r, []string{"name"})
@@ -95,6 +145,8 @@ func (h *Handler) Mount(r chi.Router) {
 	r.Get("/nodes/{name}", h.Get)
 	r.Post("/nodes/{name}/cordon", h.Cordon)
 	r.Post("/nodes/{name}/uncordon", h.Uncordon)
+	r.Put("/nodes/{name}/labels", h.SetLabels)
+	r.Put("/nodes/{name}/taints", h.SetTaints)
 	r.Get("/namespaces", h.ListNamespaces)
 	r.Get("/namespaces/{name}", h.GetNamespace)
 }

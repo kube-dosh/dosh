@@ -184,11 +184,22 @@ export interface NodeSummary {
 }
 
 export interface NodeDetail extends NodeSummary {
+  resourceVersion: string;
   conditions: Condition[];
   taints: Taint[];
   labels: Record<string, string>;
   annotations: Record<string, string>;
   pods: PodSummary[];
+}
+
+export interface NodeLabelUpdate {
+  labels: Record<string, string>;
+  resourceVersion: string;
+}
+
+export interface NodeTaintUpdate {
+  taints: Taint[];
+  resourceVersion: string;
 }
 
 export interface NamespaceItem {
