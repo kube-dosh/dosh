@@ -561,12 +561,21 @@ async function installApiMocks(page: Page, options: { authenticated?: boolean; a
       ));
       return json(route, list(records));
     }
-    if (path === "/api/v1/yaml") return json(route, {
-      kind: "Pod",
-      namespace: "default",
-      name: "web-abcdef-12345",
-      yaml: "apiVersion: v1\nkind: Pod\nmetadata:\n  name: web-abcdef-12345\n",
-    });
+    if (path === "/api/v1/yaml") {
+      const params = new URL(request.url()).searchParams;
+      if (params.get("type") === "secret") return json(route, {
+        kind: "Secret",
+        namespace: "default",
+        name: "app-secret",
+        yaml: "apiVersion: v1\nkind: Secret\nmetadata:\n  name: app-secret\n  namespace: default\ndata:\n  token: dG9rZW49YWJjCg==\n",
+      });
+      return json(route, {
+        kind: "Pod",
+        namespace: "default",
+        name: "web-abcdef-12345",
+        yaml: "apiVersion: v1\nkind: Pod\nmetadata:\n  name: web-abcdef-12345\n",
+      });
+    }
     if (path === "/api/v1/yaml/apply" && method === "POST") {
       const body = request.postDataJSON() as { yaml: string };
       const kind = body.yaml.match(/^kind:\s*(\S+)/m)?.[1] ?? "Deployment";
@@ -1754,7 +1763,7 @@ test("移动端关键弹窗与确认框保持在视口内", async ({ page }) => 
 
   await page.goto("/configuration?tab=secrets");
   await openResourceMenu(page, "Secret default/app-secret");
-  await page.getByRole("menuitem", { name: "查看明文" }).click();
+  await page.getByRole("menuitem", { name: "查看数据" }).click();
   dialog = page.getByRole("dialog", { name: "app-secret" });
   await expect(dialog).toBeVisible();
   await expectElementInsideViewport(page, dialog, "Secret reveal dialog");
@@ -1997,18 +2006,33 @@ test("配置标签写入 URL 并在刷新后保持", async ({ page }) => {
   await expect(page.getByRole("cell", { name: "app-secret", exact: true })).toBeVisible();
 });
 
-test("Secret 明文查看解码文本并保留二进制 Base64", async ({ page }) => {
+test("Secret 数据查看解码文本并保留二进制 Base64", async ({ page }) => {
   await installApiMocks(page);
   await page.goto("/configuration?tab=secrets");
 
   await openResourceMenu(page, "Secret default/app-secret");
-  await page.getByRole("menuitem", { name: "查看明文" }).click();
+  await page.getByRole("menuitem", { name: "查看数据" }).click();
 
   const token = page.locator('pre[aria-label="token 值"]');
   await expect(token).toContainText("token=abc");
   await expect(token).not.toContainText("dG9rZW49YWJjCg==");
   await expect(page.getByText("Base64（二进制）")).toBeVisible();
   await expect(page.locator('pre[aria-label="blob 值"]')).toHaveText("AP8K");
+});
+
+test("Secret YAML 展示原始数据并允许编辑", async ({ page }) => {
+  await installApiMocks(page);
+  await page.goto("/configuration?tab=secrets");
+
+  await openResourceMenu(page, "Secret default/app-secret");
+  await page.getByRole("menuitem", { name: "查看 YAML" }).click();
+
+  const dialog = page.getByRole("dialog", { name: "app-secret" });
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByText("可编辑 YAML")).toBeVisible();
+  await expect(dialog.getByRole("button", { name: "编辑" })).toBeVisible();
+  await expect(dialog.getByText("dG9rZW49YWJjCg==", { exact: false })).toBeVisible();
+  await expect(dialog.getByText(/脱敏/)).toHaveCount(0);
 });
 
 test("暗色主题可切换、刷新后保持并使用暗色语义 token", async ({ page }) => {

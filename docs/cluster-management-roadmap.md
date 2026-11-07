@@ -28,7 +28,7 @@ dosh 已具备节点、工作负载、Pod、网络、配置、存储、事件和
 - “Dry Run”只调用 API Server 校验，不落盘；正式应用仍由后端自动执行一次 Dry Run 后再写入。
 - 写入前由后端检查目标资源是否存在：不存在时校验 `create`，已存在时允许 `update` 或 `patch`；存在性检查失败时 fail-closed，不触发写入。
 - 创建成功展示返回的 kind、namespace、name，并在支持详情页的资源上提供跳转。
-- Secret 返回值继续由服务端脱敏，前端不得尝试还原或缓存明文。
+- Secret YAML 与其他资源一样返回 API Server 原始数据；读取和写入仍分别受 Kubernetes RBAC 与审计约束。
 
 当前支持的资源类型：
 
@@ -187,7 +187,7 @@ dosh 已具备节点、工作负载、Pod、网络、配置、存储、事件和
 | WBS-Y2 | YAML 模板与编辑器页面 | `web/src/features/yaml/yaml-create-page.tsx` | 七类模板、多文档解析、Dry Run、顺序应用、编辑工具、错误与逐资源结果可用 |
 | WBS-Y2.1 | YAML 文档解析工具 | `web/src/lib/yaml-documents.ts` | 文档身份、重复目标、命名空间回填、注释保留格式化均有单测 |
 | WBS-Y3 | 路由与导航 | `web/src/router.tsx`、`web/src/components/layout/app-shell.tsx` | `/yaml/create` 和导航入口可用，无路由类型错误 |
-| WBS-Y4 | 权限与安全交互 | `web/src/features/auth/use-session.ts`、YAML 页面 | 只读身份禁用操作；Secret 响应脱敏 |
+| WBS-Y4 | 权限与安全交互 | `web/src/features/auth/use-session.ts`、YAML 页面 | 只读身份禁用操作；Secret YAML 按权限展示和编辑 |
 | WBS-Y5 | YAML 前端测试 | `web/src/app.integration.test.tsx`、Playwright | Dry Run 和正式应用请求体、结果跳转、移动端溢出均有覆盖 |
 | WBS-Y6 | YAML 写入分权与存在性检查 | `internal/modules/yaml/app`、`internal/platform/kube/yaml.go` | create/update/patch 分权、fail-closed 与审计均有单测 |
 | WBS-C1 | 集群配置读取器 | `internal/platform/kube/cluster_config.go` | 读取版本、kubeadm 网络配置、节点 CIDR、Service IP |
@@ -209,7 +209,7 @@ dosh 已具备节点、工作负载、Pod、网络、配置、存储、事件和
 | 新建资源 | 仅要求 create，成功应用 | Service 单测 + Kube Exists 单测 |
 | 更新已有资源 | update 或 patch 任一可用即可应用 | Service 单测 |
 | 存在性检查失败 | fail-closed，不写入并记录失败审计 | Service 单测 |
-| Secret 创建成功 | 响应 data/stringData 为 `<redacted>` | 后端单测 |
+| Secret 创建成功 | 响应返回 API Server 的 Secret data/stringData | 后端单测 |
 | kubeadm-config 缺失 | 返回 Node CIDR/Service IP 与 warnings | Go 单测 |
 | 节点列表缺失 | 返回其他配置与 warnings | Go 单测 |
 | 全部数据源不可用 | 返回依赖不可用错误 | Go 单测 |
@@ -242,7 +242,7 @@ cd web && npm run e2e:chromium -- --grep "YAML|集群配置"
 - 增加 namespace 覆盖或锁定机制，明确模板命名空间与最终对象命名空间的一致性校验。
 - 增加资源 API Discovery 与 CRD 支持，前端根据发现结果提供模板和类型校验。
 - 增加折叠、搜索结果导航、Schema 基础校验和编辑器全屏模式。
-- 增加应用前 Diff 预览，突出新增、修改与删除字段；Secret 字段继续保持脱敏。
+- 增加应用前 Diff 预览，突出新增、修改与删除字段。
 - 增加最近使用模板、资源历史和从已有资源“另存为 YAML”。
 - 扩展集群配置字段：kube-proxy 模式、NodePort 范围、Pod/Service 双栈、CNI 配置来源和集群创建时间。
 

@@ -89,7 +89,7 @@ export function ConfigurationPage() {
     { label: "删除 ConfigMap", icon: <Trash2 className="h-4 w-4" />, onSelect: () => setDeletingConfigMap(item), destructive: true, disabled: !configMapCaps.delete, separatorBefore: true },
   ];
   const secretActions = (item: SecretSummary): ResourceAction[] => [
-    { label: "查看明文", icon: <Eye className="h-4 w-4" />, onSelect: () => reveal.mutate(item), disabled: !capabilities?.revealSecrets },
+    { label: "查看数据", icon: <Eye className="h-4 w-4" />, onSelect: () => reveal.mutate(item), disabled: !capabilities?.revealSecrets },
     { label: "编辑 Secret", icon: <Pencil className="h-4 w-4" />, onSelect: () => void openSecretEdit(item), disabled: !secretCaps.update || !capabilities?.revealSecrets },
     { label: "查看 YAML", icon: <FileCode2 className="h-4 w-4" />, onSelect: () => setYamlTarget({ type: "secret", namespace: item.namespace, name: item.name }) },
     { label: "删除 Secret", icon: <Trash2 className="h-4 w-4" />, onSelect: () => setDeletingSecret(item), destructive: true, disabled: !secretCaps.delete, separatorBefore: true },
@@ -150,11 +150,11 @@ export function ConfigurationPage() {
       <SecretFormDialog open={secretFormOpen} onOpenChange={(open) => { setSecretFormOpen(open); if (!open) setEditingSecret(undefined); }} namespace={editingSecret?.namespace || namespace} item={editingSecret} onSaved={refreshSecrets} />
       <DeleteResourceDialog open={Boolean(deletingConfigMap)} onOpenChange={(open) => { if (!open) setDeletingConfigMap(undefined); }} resourceKind="ConfigMap" name={deletingConfigMap?.name ?? ""} description="引用该 ConfigMap 的工作负载可能无法重新加载配置。" onConfirm={async () => { if (!deletingConfigMap) return; await api.deleteConfigMap(deletingConfigMap.namespace, deletingConfigMap.name, deletingConfigMap.resourceVersion); await refreshConfigMaps(); }} />
       <DeleteResourceDialog open={Boolean(deletingSecret)} onOpenChange={(open) => { if (!open) setDeletingSecret(undefined); }} resourceKind="Secret" name={deletingSecret?.name ?? ""} description="引用该 Secret 的工作负载可能无法拉取镜像、挂载证书或读取凭据。" onConfirm={async () => { if (!deletingSecret) return; await api.deleteSecret(deletingSecret.namespace, deletingSecret.name, deletingSecret.resourceVersion); await refreshSecrets(); }} />
-      <YamlDialog open={Boolean(yamlTarget)} onOpenChange={(open) => { if (!open) setYamlTarget(undefined); }} type={yamlTarget?.type ?? "configmap"} name={yamlTarget?.name ?? ""} namespace={yamlTarget?.namespace} readOnly={yamlTarget?.type === "secret"} />
+      <YamlDialog open={Boolean(yamlTarget)} onOpenChange={(open) => { if (!open) setYamlTarget(undefined); }} type={yamlTarget?.type ?? "configmap"} name={yamlTarget?.name ?? ""} namespace={yamlTarget?.namespace} />
 
       <Dialog open={Boolean(revealResult)} onOpenChange={(open) => { if (!open) setRevealResult(null); }}>
         <DialogContent className="max-w-3xl">
-          <DialogHeader><DialogTitle>{revealResult?.name}</DialogTitle><DialogDescription>{revealResult?.namespace} · {revealResult?.type} · 敏感数据仅显示于当前弹窗；可解码文本按明文显示，二进制保留 Base64</DialogDescription></DialogHeader>
+          <DialogHeader><DialogTitle>{revealResult?.name}</DialogTitle><DialogDescription>{revealResult?.namespace} · {revealResult?.type} · 可解码文本按明文显示，二进制保留 Base64</DialogDescription></DialogHeader>
           <div className="max-h-[65vh] min-w-0 max-w-full space-y-3 overflow-auto pr-1 scrollbar-thin">{revealResult ? Object.entries(revealResult.data ?? {}).map(([key, value]) => <SecretValueBlock key={key} name={key} encoded={value} />) : null}</div>
         </DialogContent>
       </Dialog>

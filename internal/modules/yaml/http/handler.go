@@ -25,6 +25,7 @@ func (h *Handler) Get(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		httpx.Error(w, r, err)
 		return
 	}
+	w.Header().Set("Cache-Control", "no-store")
 	httpx.JSON(w, stdhttp.StatusOK, item)
 }
 
@@ -39,6 +40,7 @@ func (h *Handler) Apply(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		httpx.Error(w, r, err)
 		return
 	}
+	w.Header().Set("Cache-Control", "no-store")
 	httpx.JSON(w, stdhttp.StatusOK, item)
 }
 

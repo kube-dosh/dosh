@@ -274,6 +274,13 @@ describe("dosh application", () => {
     expect(screen.getByText("192.168.122.200")).toBeInTheDocument();
   });
 
+  it("exposes YAML creation from the quick entry navigation", async () => {
+    renderRoute("/");
+
+    expect(await screen.findByRole("heading", { name: "集群总览" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "YAML 创建" })).toHaveAttribute("href", "/yaml/create");
+  });
+
   it("renders cluster network ranges and links node Pod CIDRs", async () => {
     renderRoute("/cluster/config");
 
@@ -430,7 +437,7 @@ describe("dosh application", () => {
     expect(screen.queryByText("token · 10 B")).not.toBeInTheDocument();
     expect(screen.queryByText("blob · 3 B")).not.toBeInTheDocument();
     openResourceMenu("Secret default/app-secret");
-    fireEvent.click(await screen.findByRole("menuitem", { name: "查看明文" }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: "查看数据" }));
 
     expect(await screen.findByLabelText("token 值")).toHaveTextContent("token=abc");
     expect(screen.getByLabelText("token 值")).not.toHaveTextContent(encodedToken);
@@ -450,11 +457,42 @@ describe("dosh application", () => {
 
     expect(await screen.findByRole("cell", { name: "long-secret" })).toBeInTheDocument();
     openResourceMenu("Secret default/long-secret");
-    fireEvent.click(await screen.findByRole("menuitem", { name: "查看明文" }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: "查看数据" }));
 
     const value = await screen.findByLabelText("payload 值");
     expect(value).toHaveClass("soft-wrap");
     expect(value).toHaveTextContent(longValue);
+  });
+
+  it("shows Secret YAML with original data and allows editing", async () => {
+    const secret = { name: "app-secret", namespace: "default", type: "Opaque", keys: [{ key: "token", size: 10 }], createdAt: "2026-11-02T00:00:00Z" };
+    server.use(
+      http.get("/api/v1/configmaps", () => HttpResponse.json({ items: [], meta: { total: 0 } })),
+      http.get("/api/v1/secrets", () => HttpResponse.json({ items: [secret], meta: { total: 1 } })),
+      http.get("/api/v1/yaml", ({ request }) => {
+        const url = new URL(request.url);
+        expect(url.searchParams.get("type")).toBe("secret");
+        expect(url.searchParams.get("namespace")).toBe("default");
+        expect(url.searchParams.get("name")).toBe("app-secret");
+        return HttpResponse.json({
+          kind: "Secret",
+          namespace: "default",
+          name: "app-secret",
+          yaml: "apiVersion: v1\nkind: Secret\nmetadata:\n  name: app-secret\n  namespace: default\ndata:\n  token: c2Vuc2l0aXZl\n",
+        });
+      }),
+    );
+    renderRoute("/configuration?tab=secrets");
+
+    expect(await screen.findByRole("cell", { name: "app-secret" })).toBeInTheDocument();
+    openResourceMenu("Secret default/app-secret");
+    fireEvent.click(await screen.findByRole("menuitem", { name: "查看 YAML" }));
+
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText(/可编辑 YAML/)).toBeInTheDocument();
+    expect(await within(dialog).findByRole("button", { name: "编辑" })).toBeInTheDocument();
+    expect(await within(dialog).findByText(/c2Vuc2l0aXZl/)).toBeInTheDocument();
+    expect(within(dialog).queryByText(/脱敏/)).not.toBeInTheDocument();
   });
 
   it("creates, edits and deletes a ConfigMap with resource versions", async () => {

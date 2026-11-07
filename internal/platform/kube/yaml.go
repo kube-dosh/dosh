@@ -64,9 +64,6 @@ func (c *Client) GetYAML(ctx context.Context, resourceType domain.ResourceType, 
 	}
 	obj := item.DeepCopy()
 	obj.SetManagedFields(nil)
-	if resourceType == domain.ResourceSecret {
-		redactSecret(obj)
-	}
 	data, err := yaml.Marshal(obj.Object)
 	if err != nil {
 		return domain.YAMLResource{}, fmt.Errorf("marshal yaml: %w", err)
@@ -121,27 +118,11 @@ func (c *Client) ApplyYAML(ctx context.Context, request domain.ApplyRequest) (do
 		return domain.YAMLResource{}, mapKubeError(err)
 	}
 	result.SetManagedFields(nil)
-	if resourceType == domain.ResourceSecret {
-		redactSecret(result)
-	}
 	data, err := yaml.Marshal(result.Object)
 	if err != nil {
 		return domain.YAMLResource{}, fmt.Errorf("marshal applied yaml: %w", err)
 	}
 	return domain.YAMLResource{Kind: resourceTypeString(resourceType), Namespace: namespace, Name: name, YAML: string(data)}, nil
-}
-
-func redactSecret(obj *unstructured.Unstructured) {
-	if data, ok := obj.Object["data"].(map[string]any); ok {
-		for key := range data {
-			data[key] = "<redacted>"
-		}
-	}
-	if data, ok := obj.Object["stringData"].(map[string]any); ok {
-		for key := range data {
-			data[key] = "<redacted>"
-		}
-	}
 }
 
 func resourceTypeFromGVK(apiVersion, kind string) (domain.ResourceType, bool, bool) {

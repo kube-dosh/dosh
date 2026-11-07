@@ -553,7 +553,6 @@ export function YAMLCreatePage() {
             </CardHeader>
             <CardContent className="space-y-2 text-xs text-muted-foreground">
               <p>多文档顺序提交不是原子事务；某个文档失败时后续文档停止，已成功资源不会回滚。</p>
-              <p>Secret 的响应 YAML 会自动脱敏，不展示明文数据。</p>
               <p>同名资源存在时会按 Server-Side Apply 合并更新，请确认字段所有权和变更范围。</p>
             </CardContent>
           </Card>
@@ -578,7 +577,7 @@ export function YAMLCreatePage() {
             <div className="flex flex-wrap items-start justify-between gap-3 pr-6">
               <div>
                 <DialogTitle>{resultDialog ? resourceIdentity(resultDialog) : "API Server 返回 YAML"}</DialogTitle>
-                <DialogDescription>API Server 规范化后的响应；Secret 敏感字段已脱敏。</DialogDescription>
+                <DialogDescription>API Server 规范化后的响应。</DialogDescription>
               </div>
               {resultDialog ? <CopyButton value={resultDialog.yaml} label="复制 YAML" /> : null}
             </div>

@@ -584,7 +584,7 @@ podman push --tls-verify=false 192.168.122.10:5000/dosh/dosh:0.1.5
 ## 安全说明
 
 - 不提供任意 Kubernetes API proxy、Pod exec 或 port-forward。
-- Secret 列表只返回键名和大小；点击“查看明文”直接读取，仍需管理员能力、CSRF 授权并写审计日志。
+- Secret 列表只返回键名和大小；数据查看与 YAML 查看均按 Kubernetes `get secrets` 权限读取并受会话约束，显式数据查看动作另经 CSRF 校验并写审计日志。
 - 所有写操作同时执行同源/Fetch Metadata 校验、CSRF、前端按钮隐藏、后端能力校验、
   Kubernetes RBAC 和审计记录；跨域 `Origin` 或 `Sec-Fetch-Site: cross-site` 写请求返回 403。
 - Cordon/Uncordon 需要 `update nodes`；Cordon 只阻止新 Pod 调度，不驱逐已有 Pod。local 模式

@@ -2790,7 +2790,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Read redacted YAML for an allow-listed resource */
+        /** Read YAML for an allow-listed resource */
         get: {
             parameters: {
                 query: {
@@ -2857,7 +2857,7 @@ export interface paths {
                 };
             };
             responses: {
-                /** @description Applied YAML, with Secret data redacted */
+                /** @description Applied YAML returned by the API Server */
                 200: {
                     headers: {
                         [name: string]: unknown;

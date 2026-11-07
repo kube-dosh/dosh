@@ -20,7 +20,6 @@ import { useTheme } from "@/lib/theme";
 const nav: Array<{ href: string; label: string; icon: LucideIcon; adminOnly?: boolean; match: (path: string) => boolean }> = [
   { href: "/", label: "总览", icon: LayoutDashboard, match: (path: string) => path === "/" },
   { href: "/cluster/config", label: "集群配置", icon: CloudCog, match: (path: string) => path.startsWith("/cluster/config") },
-  { href: "/yaml/create", label: "YAML 创建", icon: FileCode2, match: (path: string) => path.startsWith("/yaml/create") },
   { href: "/nodes", label: "节点管理", icon: Server, match: (path: string) => path.startsWith("/nodes") },
   { href: "/workloads", label: "工作负载", icon: Boxes, match: (path: string) => path.startsWith("/workloads") || path.startsWith("/pods") },
   { href: "/network", label: "服务与路由", icon: Network, match: (path: string) => path.startsWith("/network") },
@@ -163,6 +162,7 @@ export function AppShell() {
             })}
             <div className="pt-3">
               <p className="px-3 pb-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">快捷入口</p>
+              <Link to="/yaml/create" onClick={() => setMobileOpen(false)} className={cn("flex h-9 items-center gap-3 rounded-md px-3 text-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring", pathname.startsWith("/yaml/create") && "bg-primary/10 font-medium text-primary")}><FileCode2 className="h-4 w-4" />YAML 创建</Link>
               <Link to="/pods" onClick={() => setMobileOpen(false)} className={cn("flex h-9 items-center gap-3 rounded-md px-3 text-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring", pathname.startsWith("/pods") && "bg-primary/10 font-medium text-primary")}><CircleDot className="h-4 w-4" />Pod 实例</Link>
             </div>
           </nav>

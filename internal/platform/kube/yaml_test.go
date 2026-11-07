@@ -36,7 +36,7 @@ func unstructuredConfigMap() *unstructured.Unstructured {
 	}}
 }
 
-func TestGetYAMLStripsManagedFieldsAndRedactsSecrets(t *testing.T) {
+func TestGetYAMLStripsManagedFieldsAndReturnsSecretData(t *testing.T) {
 	secret := &unstructured.Unstructured{Object: map[string]any{
 		"apiVersion": "v1", "kind": "Secret",
 		"metadata": map[string]any{"name": "app", "namespace": "prod", "managedFields": []any{map[string]any{"manager": "someone"}}},
@@ -50,12 +50,12 @@ func TestGetYAMLStripsManagedFieldsAndRedactsSecrets(t *testing.T) {
 	if strings.Contains(configMap.YAML, "managedFields") || !strings.Contains(configMap.YAML, "mode: debug") {
 		t.Fatalf("configmap yaml = %s", configMap.YAML)
 	}
-	revealedSecret, err := client.GetYAML(context.Background(), domain.ResourceSecret, "prod", "app")
+	secretYAML, err := client.GetYAML(context.Background(), domain.ResourceSecret, "prod", "app")
 	if err != nil {
 		t.Fatalf("GetYAML(secret) error = %v", err)
 	}
-	if strings.Contains(revealedSecret.YAML, "c2Vuc2l0aXZl") || !strings.Contains(revealedSecret.YAML, "<redacted>") {
-		t.Fatalf("secret wasn't redacted: %s", revealedSecret.YAML)
+	if !strings.Contains(secretYAML.YAML, "c2Vuc2l0aXZl") || strings.Contains(secretYAML.YAML, "<redacted>") {
+		t.Fatalf("secret data wasn't returned: %s", secretYAML.YAML)
 	}
 }
 
@@ -120,7 +120,7 @@ func TestApplyYAMLValidation(t *testing.T) {
 	}
 }
 
-func TestApplyYAMLPreservesResourceVersionAndRedactsSecret(t *testing.T) {
+func TestApplyYAMLPreservesResourceVersionAndReturnsSecretData(t *testing.T) {
 	client, dynamicClient := newFakeYAMLClient()
 	var captured *unstructured.Unstructured
 	var dryRun bool
@@ -148,21 +148,8 @@ func TestApplyYAMLPreservesResourceVersionAndRedactsSecret(t *testing.T) {
 	if !dryRun || captured == nil {
 		t.Fatalf("dryRun = %v captured = %#v", dryRun, captured)
 	}
-	if !strings.Contains(result.YAML, "<redacted>") || strings.Contains(result.YAML, "c2Vuc2l0aXZl") {
-		t.Fatalf("applied secret wasn't redacted: %s", result.YAML)
-	}
-}
-
-func TestRedactSecretHandlesStringData(t *testing.T) {
-	obj := &unstructured.Unstructured{Object: map[string]any{
-		"stringData": map[string]any{"user": "admin"},
-		"data":       map[string]any{"password": "cGFzcw=="},
-	}}
-	redactSecret(obj)
-	data := obj.Object["data"].(map[string]any)
-	stringData := obj.Object["stringData"].(map[string]any)
-	if data["password"] != "<redacted>" || stringData["user"] != "<redacted>" {
-		t.Fatalf("redactSecret() = %#v", obj.Object)
+	if !strings.Contains(result.YAML, "c2Vuc2l0aXZl") || strings.Contains(result.YAML, "<redacted>") {
+		t.Fatalf("applied secret data wasn't returned: %s", result.YAML)
 	}
 }
 

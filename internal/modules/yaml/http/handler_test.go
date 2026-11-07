@@ -131,7 +131,7 @@ func TestYAMLGetValidatesResourceType(t *testing.T) {
 		t.Fatalf("status = %d calls = %d", response.Code, server.repo.getCalls)
 	}
 	response = yamlRequest(server.router, http.MethodGet, "/api/v1/yaml?type=configmap&namespace=prod&name=app", "", map[string]string{"Cookie": server.cookie.String()})
-	if response.Code != http.StatusOK || server.repo.getCalls != 1 {
+	if response.Code != http.StatusOK || server.repo.getCalls != 1 || response.Header().Get("Cache-Control") != "no-store" {
 		t.Fatalf("status = %d calls = %d body = %s", response.Code, server.repo.getCalls, response.Body.String())
 	}
 }
@@ -142,6 +142,9 @@ func TestYAMLApplyDryRunAndCommit(t *testing.T) {
 	response := yamlRequest(server.router, http.MethodPost, "/api/v1/yaml/apply", dryRunBody, server.authHeaders())
 	if response.Code != http.StatusOK {
 		t.Fatalf("dry-run status = %d, body = %s", response.Code, response.Body.String())
+	}
+	if response.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("dry-run cache-control = %q", response.Header().Get("Cache-Control"))
 	}
 	if server.repo.applyCalls != 1 || !server.repo.lastApply.DryRun {
 		t.Fatalf("dry-run calls = %d request = %#v", server.repo.applyCalls, server.repo.lastApply)

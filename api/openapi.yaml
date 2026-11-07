@@ -1447,7 +1447,7 @@ paths:
   /api/v1/yaml:
     get:
       tags: [yaml]
-      summary: Read redacted YAML for an allow-listed resource
+      summary: Read YAML for an allow-listed resource
       parameters:
         - name: type
           in: query
@@ -1490,7 +1490,7 @@ paths:
                 dryRun: { type: boolean }
       responses:
         "200":
-          description: Applied YAML, with Secret data redacted
+          description: Applied YAML returned by the API Server
           content:
             application/json:
               schema: { $ref: "#/components/schemas/YAMLResource" }
