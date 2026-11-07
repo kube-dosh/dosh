@@ -3,8 +3,8 @@ nameOverride: dosh
 replicaCount: 2
 
 image:
-  repository: 192.168.122.10:5000/dosh/dosh
-  tag: "0.1.6"
+  repository: ghcr.io/kube-dosh/dosh
+  tag: "0.1.7"
   # 生产发布优先设置 sha256 digest；设置后忽略 tag。
   digest: ""
   pullPolicy: IfNotPresent

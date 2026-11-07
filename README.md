@@ -113,23 +113,23 @@ kubectl -n dosh create secret tls dosh-tls \
 
 ### 3. 安装 Dosh
 
-默认 Chart 使用 NodePort `32626`、2 副本和跨节点反亲和。将镜像地址替换为实际仓库：
+默认 Chart 从 GHCR 拉取镜像，使用 NodePort `32626`、2 副本和跨节点反亲和：
 
 ```bash
-helm upgrade --install dosh ./deploy/helm/dosh \
+helm upgrade --install dosh oci://ghcr.io/kube-dosh/charts/dosh \
   --namespace dosh \
-  --set image.repository=registry.example.com/dosh/dosh \
-  --set image.tag=0.1.6 \
+  --create-namespace \
+  --version 0.1.9 \
   --set runtime.clusterName=my-cluster
 ```
 
 HTTP 试用部署可以使用完整命令：
 
 ```bash
-helm upgrade --install dosh ./deploy/helm/dosh \
+helm upgrade --install dosh oci://ghcr.io/kube-dosh/charts/dosh \
   --namespace dosh \
-  --set image.repository=registry.example.com/dosh/dosh \
-  --set image.tag=0.1.6 \
+  --create-namespace \
+  --version 0.1.9 \
   --set runtime.clusterName=my-cluster \
   --set tls.enabled=false \
   --set auth.cookieSecure=false
@@ -172,14 +172,14 @@ kubectl -n dosh create token dosh-admin --duration=1h
 make web-install
 make build
 
-make image TAG=0.1.6
-make push  TAG=0.1.6
+make image TAG=0.1.7
+make push  TAG=0.1.7
 ```
 
-默认镜像名为 `dosh/dosh:0.1.6`。需要推送到其他仓库时，通过 `IMAGE` 覆盖：
+默认镜像名为 `ghcr.io/kube-dosh/dosh:0.1.7`。需要推送到其他仓库时，通过 `IMAGE` 覆盖：
 
 ```bash
-IMAGE=registry.example.com/dosh/dosh make image TAG=0.1.6
+IMAGE=registry.example.com/dosh/dosh make image TAG=0.1.7
 ```
 
 `make build` 会先构建前端并生成 `web/dist`，随后将静态资源嵌入 `bin/dosh`。运行镜像只包含该二进制。
@@ -191,7 +191,7 @@ IMAGE=registry.example.com/dosh/dosh make image TAG=0.1.6
 | 配置项 | 默认值 | 说明 |
 |---|---|---|
 | `replicaCount` | `2` | Dosh 副本数 |
-| `image.repository` / `image.tag` | 内部镜像 | 部署前替换为实际镜像；生产建议固定 digest |
+| `image.repository` / `image.tag` | `ghcr.io/kube-dosh/dosh` / `0.1.7` | 公共镜像；生产建议固定 digest |
 | `service.type` / `service.port` | `NodePort` / `32626` | 对外服务类型和容器端口 |
 | `service.nodePort` | `32626` | NodePort 端口 |
 | `tls.enabled` | `true` | 是否启用 HTTPS |
@@ -279,9 +279,13 @@ scripts/                 构建、验证和发布辅助脚本
 - [EARS 实施计划](docs/ears-implementation-plan.md)：需求、验收标准和实施步骤
 - [集群管理路线图](docs/cluster-management-roadmap.md)：后续能力规划
 - [商用化 TODO](docs/commercialization-todo.md)：外部依赖和商业化门禁
-- [Codeberg 发布流水线](docs/codeberg-release.md)：标签发布、双架构产物、容器镜像和 Helm Chart
+- [GitHub 发布流水线](docs/github-release.md)：标签发布、双架构产物、GHCR 镜像和 Helm OCI Chart
 - [OpenAPI 契约](api/openapi.yaml)：REST API 定义
 
 ---
 
 如果你正在寻找一个轻量、贴近 Kubernetes 权限模型、适合内网和移动端日常运维的控制台，Dosh 就是为此而构建的。
+
+## License
+
+Apache License 2.0，详见 [LICENSE](LICENSE)。

@@ -1,7 +1,10 @@
 openapi: 3.1.0
 info:
   title: Dosh Kubernetes Operations API
-  version: 0.1.6
+  version: 0.1.7
+  license:
+    name: Apache-2.0
+    url: https://www.apache.org/licenses/LICENSE-2.0.html
   description: |
     Same-origin API consumed by the Dosh embedded React console. Session cookies
     are HttpOnly and every mutating request must include the session CSRF token.

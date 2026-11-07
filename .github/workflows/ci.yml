@@ -207,7 +207,7 @@ jobs:
       - name: Install actionlint
         run: go install github.com/rhysd/actionlint/cmd/actionlint@${ACTIONLINT_VERSION}
       - name: Lint workflows
-        run: '"$(go env GOPATH)/bin/actionlint" .github/workflows/ci.yml'
+        run: '"$(go env GOPATH)/bin/actionlint" .github/workflows/*.yml'
       - name: Playwright isolation policy
         run: make playwright-check
       - name: E2E image binding policy

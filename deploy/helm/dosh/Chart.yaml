@@ -2,6 +2,9 @@ apiVersion: v2
 name: dosh
 description: Lightweight Kubernetes operations console with a Go BFF and embedded React UI
 type: application
-version: 0.1.8
-appVersion: "0.1.6"
+version: 0.1.9
+appVersion: "0.1.7"
+home: https://github.com/kube-dosh/dosh
+sources:
+  - https://github.com/kube-dosh/dosh
 kubeVersion: ">=1.30.0-0"

@@ -11,7 +11,7 @@
 | NodePort | `32626` |
 | 容器端口 | `32626` |
 | 当前生产版本 | App `0.1.2` / Chart `dosh-0.1.4`（revision 12，2/2 Ready） |
-| 当前源码版本 | App `0.1.6` / Chart `dosh-0.1.8`（Codeberg 发布流水线修复，生产未升级） |
+| 当前源码版本 | App `0.1.7` / Chart `dosh-0.1.9`（GitHub 发布流水线，生产未升级） |
 | 当前源码状态 | 资源管理操作闭环，并支持多文档 YAML 创建、快捷入口、Secret YAML 原始数据展示与分权编辑、create/update/patch 分权、集群网络配置和移动端表格优化；写操作保留 Dry Run、RBAC、CSRF 与审计 |
 | 当前 Preview 候选 | `192.168.122.10:5000/dosh/dosh:0.1.5-rc-secret-yaml-20261107T111925Z@sha256:86736b4d4cacb1e8654184d5eaec99e77baf939dcdb36b25afb0f178e70370a9`；源码提交 `9ebf259` |
 | 当前 Preview Release | `dosh-preview/dosh-preview` revision 22、1/1 Ready、NodePort `32630`；前有 NGINX 与 Cloudflare strict SSL；生产未改动 |

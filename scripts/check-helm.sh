@@ -124,7 +124,7 @@ require "$OUT/dosh-local.yaml" 'resources: \["ingresses", "ingressclasses"\]' 'l
 require "$OUT/dosh-local.yaml" 'resources: \["resourcequotas", "limitranges"\]' 'local namespace quota and limit read RBAC'
 require "$OUT/dosh-local.yaml" 'value: "2097152"' 'integer max request body'
 reject "$OUT/dosh-local.yaml" 'name: DOSH_OIDC_ISSUER' 'local OIDC env'
-require "$OUT/dosh-digest.yaml" 'image: "192.168.122.10:5000/dosh/dosh@sha256:1111111111111111111111111111111111111111111111111111111111111111"' 'digest-pinned image'
+require "$OUT/dosh-digest.yaml" 'image: "ghcr.io/kube-dosh/dosh@sha256:1111111111111111111111111111111111111111111111111111111111111111"' 'digest-pinned image'
 
 require "$OUT/dosh-token.yaml" 'value: "token"' 'token auth mode value'
 require "$OUT/dosh-token.yaml" 'name: DOSH_TLS_RELOAD_INTERVAL' 'TLS hot reload interval env'

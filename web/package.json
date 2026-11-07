@@ -1,7 +1,12 @@
 {
   "name": "dosh-web",
   "private": true,
-  "version": "0.1.6",
+  "version": "0.1.7",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kube-dosh/dosh.git"
+  },
   "type": "module",
   "scripts": {
     "dev": "vite --host 0.0.0.0 --port 5173",
