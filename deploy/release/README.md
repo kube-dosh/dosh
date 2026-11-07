@@ -50,9 +50,13 @@ Exit codes are intentionally distinct:
 - `1`: the manifest is structurally invalid or evidence cannot be verified.
 - `2`: the manifest is valid, but the release is blocked by pending or expired gates.
 
-CI runs `make release-gate-schema-check`, which uses `--allow-blocked` to validate schema, candidate
-identity and evidence formats without pretending that pending external gates are approved. A
-production decision must run `make release-gate-check` and require exit code `0`.
+CI runs `make release-gate-schema-check`, which uses `--allow-blocked --skip-bindings` to validate the
+schema, candidate fields and evidence formats without pretending that pending external gates are
+approved. `--skip-bindings` is intentional for pull-request and branch CI: bindings name an immutable
+candidate digest that does not exist until the release build. It still validates binding path/hash
+pairing and digest syntax, but does not compare the checked-in binding contents with the current source
+tree. A production decision must run `make release-gate-check`, which performs full binding validation,
+and require exit code `0`.
 
 ## Gate Report
 

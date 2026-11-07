@@ -171,6 +171,7 @@ type validator struct {
 	now          time.Time
 	evidenceRoot string
 	bindingRoot  string
+	skipBindings bool
 	errors       []string
 	blockers     []string
 }
@@ -206,7 +207,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 func printUsage(w io.Writer) {
 	fmt.Fprint(w, `Usage:
   releasegate init --output <file> --tag <tag> --digest <sha256> --app-version <version> --chart-version <version> [--force]
-  releasegate validate --file <file> [--now <RFC3339>] [--evidence-root <dir>] [--binding-root <dir>] [--allow-blocked]
+  releasegate validate --file <file> [--now <RFC3339>] [--evidence-root <dir>] [--binding-root <dir>] [--allow-blocked] [--skip-bindings]
   releasegate report --file <file> [--output <report.md>] [--now <RFC3339>] [--evidence-root <dir>]
                      [--binding-root <dir>] [--allow-blocked] [--force]
   releasegate plan --file <gate-file> --baseline <baseline.json> --ticket <change-ticket>
@@ -293,6 +294,7 @@ func runValidate(args []string, stdout, stderr io.Writer) int {
 	evidenceRoot := flags.String("evidence-root", "", "base directory for relative evidence paths")
 	bindingRoot := flags.String("binding-root", ".", "base directory for source and documentation binding files")
 	allowBlocked := flags.Bool("allow-blocked", false, "return success for a valid manifest even when release gates are pending or expired")
+	skipBindings := flags.Bool("skip-bindings", false, "validate candidate structure without reading source or documentation bindings")
 	if err := flags.Parse(args); err != nil {
 		return 1
 	}
@@ -309,7 +311,7 @@ func runValidate(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "error: %v\n", err)
 		return 1
 	}
-	validation := validateManifestWithRoots(manifest, now, *evidenceRoot, *bindingRoot)
+	validation := validateManifestWithOptions(manifest, now, *evidenceRoot, *bindingRoot, *skipBindings)
 	printValidation(stdout, manifest, validation)
 	if len(validation.errors) > 0 {
 		return 1
@@ -686,7 +688,11 @@ func validateManifest(manifest Manifest, now time.Time, evidenceRoot string) val
 }
 
 func validateManifestWithRoots(manifest Manifest, now time.Time, evidenceRoot, bindingRoot string) validator {
-	v := validator{now: now.UTC(), evidenceRoot: evidenceRoot, bindingRoot: bindingRoot}
+	return validateManifestWithOptions(manifest, now, evidenceRoot, bindingRoot, false)
+}
+
+func validateManifestWithOptions(manifest Manifest, now time.Time, evidenceRoot, bindingRoot string, skipBindings bool) validator {
+	v := validator{now: now.UTC(), evidenceRoot: evidenceRoot, bindingRoot: bindingRoot, skipBindings: skipBindings}
 	if manifest.Schema != schemaVersion {
 		v.addError("schema", "got %q, want %q", manifest.Schema, schemaVersion)
 	}
@@ -742,7 +748,9 @@ func (v *validator) validateCandidate(candidate Candidate) {
 			v.addError(field, "must be empty or sha256:<64 lowercase hex>")
 		}
 	}
-	v.validateCandidateBindings(candidate)
+	if !v.skipBindings {
+		v.validateCandidateBindings(candidate)
+	}
 }
 
 func (v *validator) validateCandidateBindings(candidate Candidate) {

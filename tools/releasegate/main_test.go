@@ -632,6 +632,31 @@ func TestCandidateBindingPathAndHashMustBePaired(t *testing.T) {
 	}
 }
 
+func TestSkipBindingsKeepsSchemaValidation(t *testing.T) {
+	now := time.Date(2026, 11, 4, 8, 0, 0, 0, time.UTC)
+	manifest := validManifest(now)
+	manifest.Candidate.SourceBindingPath = "bindings/missing-source.txt"
+	manifest.Candidate.SourceBindingSHA256 = testDigest
+	manifest.Candidate.DocumentationBindingPath = "bindings/missing-docs.txt"
+	manifest.Candidate.DocumentationBindingSHA256 = testDigest
+
+	validation := validateManifestWithRoots(manifest, now, "", t.TempDir())
+	if len(validation.errors) != 2 || !strings.Contains(strings.Join(validation.errors, "\n"), "read candidate.sourceBindingPath") {
+		t.Fatalf("binding errors=%v", validation.errors)
+	}
+
+	validation = validateManifestWithOptions(manifest, now, "", t.TempDir(), true)
+	if len(validation.errors) != 0 || len(validation.blockers) != 0 {
+		t.Fatalf("schema-only errors=%v blockers=%v", validation.errors, validation.blockers)
+	}
+
+	manifest.Candidate.SourceBindingSHA256 = "sha256:short"
+	validation = validateManifestWithOptions(manifest, now, "", t.TempDir(), true)
+	if !strings.Contains(strings.Join(validation.errors, "\n"), "candidate.sourceBindingSha256") {
+		t.Fatalf("schema errors=%v", validation.errors)
+	}
+}
+
 func writePlanFixture(t *testing.T, dir string, manifest Manifest, ready int32) (string, string) {
 	t.Helper()
 	gatePath := filepath.Join(dir, "gates.json")

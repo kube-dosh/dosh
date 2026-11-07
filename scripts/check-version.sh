@@ -43,10 +43,10 @@ while IFS= read -r lock_version; do
   fi
 done <<<"$lock_versions"
 
-if [[ -n "$app_version" && -z "$(rg -F "make image TAG=$app_version" README.md || true)" ]]; then
+if [[ -n "$app_version" ]] && ! grep -Fq -- "make image TAG=$app_version" README.md; then
   violation "README.md does not document make image TAG=$app_version"
 fi
-if [[ -n "$app_version" && -z "$(rg -F "dosh/dosh:$app_version" README.md || true)" ]]; then
+if [[ -n "$app_version" ]] && ! grep -Fq -- "dosh/dosh:$app_version" README.md; then
   violation "README.md does not document image dosh/dosh:$app_version"
 fi
 

@@ -107,7 +107,7 @@ release-gate-check:
 	@bash scripts/release-gate.sh validate --file "$(GATE_FILE)" --evidence-root /var/lib/dosh --binding-root .
 
 release-gate-schema-check:
-	@bash scripts/release-gate.sh validate --file "$(GATE_FILE)" --binding-root . --allow-blocked
+	@bash scripts/release-gate.sh validate --file "$(GATE_FILE)" --binding-root . --allow-blocked --skip-bindings
 
 release-baseline:
 	@test -n "$(BASELINE_OUT)" || { echo "error: BASELINE_OUT is required" >&2; exit 2; }

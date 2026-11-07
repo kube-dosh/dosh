@@ -27,8 +27,8 @@ jobs:
   backend:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
@@ -48,8 +48,8 @@ jobs:
   frontend:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
@@ -79,14 +79,14 @@ jobs:
       image: mcr.microsoft.com/playwright:v1.64.1-noble
       options: --shm-size=1g --memory=4g --memory-swap=4g --cpus=2 --pids-limit=2048 --ulimit core=0
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - run: npm ci
         working-directory: web
       - run: npx playwright test --project=${{ matrix.project }} --workers=1 --retries=0
         working-directory: web
         env:
           CI: "1"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: playwright-e2e-${{ matrix.project }}
@@ -102,14 +102,14 @@ jobs:
       image: mcr.microsoft.com/playwright:v1.64.1-noble
       options: --shm-size=1g --memory=4g --memory-swap=4g --cpus=2 --pids-limit=2048 --ulimit core=0
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - run: npm ci
         working-directory: web
       - run: npx playwright test --config=playwright.performance.config.ts --workers=1 --retries=0
         working-directory: web
         env:
           CI: "1"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: playwright-performance
@@ -121,12 +121,12 @@ jobs:
   helm:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
-      - uses: azure/setup-helm@v4.3.0
+      - uses: azure/setup-helm@v5
         with:
           version: ${{ env.HELM_VERSION }}
       - name: Lint and render auth/network modes
@@ -143,7 +143,7 @@ jobs:
         run: |
           go install "github.com/yannh/kubeconform/cmd/kubeconform@${KUBECONFORM_VERSION}"
           "$(go env GOPATH)/bin/kubeconform" -strict -summary artifacts/dosh-plain.yaml
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: helm-rendered
           path: |
@@ -156,12 +156,12 @@ jobs:
   security:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
@@ -189,7 +189,7 @@ jobs:
             -v /var/run/docker.sock:/var/run/docker.sock \
             -v "${RUNNER_TEMP}/trivy-cache:/root/.cache/trivy" \
             "${TRIVY_IMAGE}" image --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 --format table dosh:ci | tee security/trivy-results.txt
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: security-reports
@@ -199,8 +199,8 @@ jobs:
   policy:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
