@@ -1,6 +1,13 @@
-import { defineConfig, devices } from "@playwright/test";
+import { defineConfig, devices, type ReporterDescription } from "@playwright/test";
 
 const allowWebKit = Boolean(process.env.CI) || process.env.DOSH_PLAYWRIGHT_ALLOW_WEBKIT === "1";
+const reporters: ReporterDescription[] = [
+  ["list"],
+  ["html", { outputFolder: "playwright-report", open: "never" }],
+];
+if (process.env.GITHUB_ACTIONS) {
+  reporters.splice(1, 0, ["github"]);
+}
 
 export default defineConfig({
   testDir: "./e2e",
@@ -9,10 +16,7 @@ export default defineConfig({
   forbidOnly: Boolean(process.env.CI),
   retries: 0,
   workers: 1,
-  reporter: [
-    ["list"],
-    ["html", { outputFolder: "playwright-report", open: "never" }],
-  ],
+  reporter: reporters,
   outputDir: "test-results",
   use: {
     baseURL: "http://127.0.0.1:5173",
