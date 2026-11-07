@@ -29,7 +29,8 @@ git push origin v0.1.7
 2. 安装前端依赖并生成 `web/dist`。
 3. 交叉编译 Linux `amd64` 和 `arm64` 静态二进制。
 4. 使用 Buildx 构建并推送 `linux/amd64`、`linux/arm64` 多架构镜像。
-5. 执行 `helm lint`、打包 Chart，并推送到 GHCR OCI Registry。
+5. 执行 `helm lint`、打包 Chart，并推送到 GHCR OCI Registry；遇到 GHCR 短暂一致性导致的
+   `failed to perform "Tag" ... not found` 时会以 10s/20s 退避重试，最多 3 次。
 6. 创建或更新 GitHub Release，上传二进制、压缩包、Chart 和 SHA256 校验和。
 
 工作流使用仓库自动生成的 `GITHUB_TOKEN`，需要以下权限：

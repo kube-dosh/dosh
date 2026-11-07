@@ -191,7 +191,7 @@ The chart archive is also attached to this release.
 EOF
 
   printf '%s' "$token" | helm registry login "$registry" --username "$actor" --password-stdin >/dev/null
-  helm push "$chart_path" "$chart_repo" >/dev/null
+  push_chart_with_retry "$chart_path" "$chart_repo"
 
   export GH_TOKEN="$token"
   if gh release view "$tag" >/dev/null 2>&1; then
@@ -214,6 +214,33 @@ EOF
     --clobber
 
   printf 'release published: %s\nimage: %s\nchart: %s (%s)\n' "$tag" "$image_ref" "$chart_path" "${chart_repo}/dosh:${chart_version}"
+}
+
+push_chart_with_retry() {
+  local chart_path=$1
+  local chart_repo=$2
+  local chart_name
+  local attempt delay
+
+  chart_name=$(basename "$chart_path" .tgz)
+  chart_name=${chart_name%-*}
+  if helm show chart "${chart_repo}/${chart_name}" --version "$chart_version" >/dev/null 2>&1; then
+    printf 'release: Helm chart already published: %s/%s:%s\n' "$chart_repo" "$chart_name" "$chart_version" >&2
+    return 0
+  fi
+
+  for attempt in 1 2 3; do
+    if helm push "$chart_path" "$chart_repo" >/dev/null; then
+      return 0
+    fi
+    if (( attempt == 3 )); then
+      printf 'release: helm push failed after %d attempts\n' "$attempt" >&2
+      return 1
+    fi
+    delay=$((attempt * 10))
+    printf 'release: helm push attempt %d failed; retrying in %ds\n' "$attempt" "$delay" >&2
+    sleep "$delay"
+  done
 }
 
 case "$stage" in
