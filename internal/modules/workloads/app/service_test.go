@@ -97,6 +97,10 @@ func (f *fakeRepository) GetPod(_ context.Context, namespace, name string) (doma
 	f.lastNamespace, f.lastName = namespace, name
 	return f.podDetail, f.podErr
 }
+func (f *fakeRepository) DeletePod(_ context.Context, namespace, name string) error {
+	f.lastNamespace, f.lastName = namespace, name
+	return nil
+}
 func (f *fakeRepository) StreamPodLogs(_ context.Context, _ string, _ string, _ string, _ bool, tailLines int64, _ bool, limitBytes int64) (io.ReadCloser, error) {
 	f.tailLines = tailLines
 	f.limitBytes = limitBytes

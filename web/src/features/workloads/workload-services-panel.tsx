@@ -17,6 +17,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useCapabilities } from "@/features/auth/use-session";
 import { ServiceFormDialog } from "@/features/workloads/service-form-dialog";
+import { resourceCapabilities } from "@/lib/capabilities";
 import { formatAge } from "@/lib/utils";
 
 function associatedService(service: ServiceSummary, workloadSelector: Record<string, string>): boolean {
@@ -40,9 +41,10 @@ export function WorkloadServicesPanel({ namespace, workloadName, workloadSelecto
     refetchInterval: 20_000,
   });
   const capabilities = useCapabilities(namespace).data;
-  const canCreate = Boolean(capabilities?.createService);
-  const canUpdate = Boolean(capabilities?.updateService);
-  const canDelete = Boolean(capabilities?.deleteService);
+  const serviceCaps = resourceCapabilities(capabilities, "services");
+  const canCreate = serviceCaps.create;
+  const canUpdate = serviceCaps.update;
+  const canDelete = serviceCaps.delete;
 
   const refresh = async () => {
     await queryClient.invalidateQueries({ queryKey: ["services"] });
@@ -86,9 +88,9 @@ export function WorkloadServicesPanel({ namespace, workloadName, workloadSelecto
               <CardHeader className="gap-2">
                 <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
                   <CardTitle className="flex min-w-0 items-center gap-2"><Network className="h-4 w-4 shrink-0 text-muted-foreground" /><Link to="/network/services/$namespace/$name" params={{ namespace: service.namespace, name: service.name }} search={{}} className="truncate text-primary hover:underline">{service.name}</Link></CardTitle>
-                  <div className="flex flex-wrap items-center gap-1.5"><Badge variant="secondary">{service.type}</Badge><Badge variant={service.endpointCount > 0 ? "default" : "outline"}>{service.endpointCount} 就绪 Endpoint</Badge></div>
+                  <div className="flex flex-wrap items-center gap-1.5"><Badge variant={service.headless ? "outline" : "secondary"}>{service.headless ? "Headless" : service.type}</Badge><Badge variant={service.endpointCount > 0 ? "default" : "outline"}>{service.endpointCount} 就绪 Endpoint</Badge></div>
                 </div>
-                <p className="text-xs text-muted-foreground">ClusterIP <span className="font-mono text-foreground">{service.clusterIP || "—"}</span> · 创建于 {formatAge(service.createdAt)}</p>
+                <p className="text-xs text-muted-foreground">ClusterIP <span className="font-mono text-foreground">{service.headless ? "None（Headless）" : service.clusterIP || "—"}</span> · 创建于 {formatAge(service.createdAt)}</p>
               </CardHeader>
               <CardContent className="space-y-4">
                 <div className="space-y-2">
@@ -116,7 +118,7 @@ export function WorkloadServicesPanel({ namespace, workloadName, workloadSelecto
         <Card>
           <CardContent className="flex flex-col items-center gap-3 px-6 py-12 text-center">
             <Network className="h-7 w-7 text-muted-foreground" />
-            <div><p className="font-medium">尚未配置访问方式</p><p className="mt-1 text-sm text-muted-foreground">创建 Service 后，可通过 ClusterIP、NodePort 或 LoadBalancer 访问该工作负载。</p></div>
+            <div><p className="font-medium">尚未配置访问方式</p><p className="mt-1 text-sm text-muted-foreground">创建 Service 后，可通过 ClusterIP、Headless、NodePort 或 LoadBalancer 访问该工作负载。</p></div>
             {canCreate ? <Button size="sm" onClick={() => { setEditing(undefined); setFormOpen(true); }} disabled={!Object.keys(workloadSelector).length}><Plus className="h-4 w-4" />配置访问方式</Button> : null}
           </CardContent>
         </Card>

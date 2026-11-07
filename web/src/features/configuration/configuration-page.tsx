@@ -2,10 +2,10 @@ import { useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useNavigate, useSearch } from "@tanstack/react-router";
 import { createColumnHelper } from "@tanstack/react-table";
-import { Eye, FileCode2, Loader2, LockKeyhole, Settings2 } from "lucide-react";
+import { Eye, FileCode2, LockKeyhole, Pencil, Plus, Settings2, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/api/client";
-import type { ConfigMapSummary, SecretReveal, SecretSummary } from "@/api/types";
+import type { ConfigMapDetail, ConfigMapSummary, SecretReveal, SecretSummary } from "@/api/types";
 import { CopyButton } from "@/components/data/copy-button";
 import { DataTable } from "@/components/data/data-table";
 import { ErrorState, LoadingState } from "@/components/feedback/states";
@@ -13,6 +13,8 @@ import { DetailItem } from "@/components/data/detail-item";
 import { NamespaceSelect } from "@/components/layout/namespace-select";
 import { PageHeader } from "@/components/layout/page-header";
 import { SearchInput } from "@/components/layout/search-input";
+import { DeleteResourceDialog } from "@/components/resources/delete-resource-dialog";
+import { ResourceActionsMenu, type ResourceAction } from "@/components/resources/resource-actions-menu";
 import { YamlDialog } from "@/components/resources/yaml-dialog";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -20,18 +22,16 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useCapabilities } from "@/features/auth/use-session";
+import { ConfigMapFormDialog } from "@/features/configuration/config-map-form-dialog";
+import { SecretFormDialog } from "@/features/configuration/secret-form-dialog";
 import { ServerCertificatePanel } from "@/features/configuration/server-certificate-panel";
+import { resourceCapabilities } from "@/lib/capabilities";
 import { decodeSecretValue } from "@/lib/secret-value";
 import { formatAge } from "@/lib/utils";
 
 const configMapColumn = createColumnHelper<ConfigMapSummary>();
 const secretColumn = createColumnHelper<SecretSummary>();
-
-function SecretRevealAction({ secret, pending, onReveal }: { secret: SecretSummary; pending: boolean; onReveal: (secret: SecretSummary) => void }) {
-  const capabilities = useCapabilities(secret.namespace).data;
-  if (!capabilities?.revealSecrets) return <span className="text-xs text-muted-foreground">无权限</span>;
-  return <Button variant="outline" size="sm" onClick={() => onReveal(secret)} disabled={pending}>{pending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Eye className="h-3.5 w-3.5" />}查看明文</Button>;
-}
+type YamlTarget = { type: "configmap" | "secret"; namespace: string; name: string };
 
 function SecretValueBlock({ name, encoded }: { name: string; encoded: string }) {
   const decoded = decodeSecretValue(encoded);
@@ -59,32 +59,65 @@ export function ConfigurationPage() {
     void navigate({ to: "/configuration", search: { ...search, ...patch }, replace: true });
   };
   const [configMap, setConfigMap] = useState<ConfigMapSummary | null>(null);
-  const [yamlTarget, setYamlTarget] = useState<ConfigMapSummary | null>(null);
+  const [configMapFormOpen, setConfigMapFormOpen] = useState(false);
+  const [editingConfigMap, setEditingConfigMap] = useState<ConfigMapDetail>();
+  const [deletingConfigMap, setDeletingConfigMap] = useState<ConfigMapSummary>();
+  const [secretFormOpen, setSecretFormOpen] = useState(false);
+  const [editingSecret, setEditingSecret] = useState<SecretReveal>();
+  const [deletingSecret, setDeletingSecret] = useState<SecretSummary>();
+  const [yamlTarget, setYamlTarget] = useState<YamlTarget>();
   const [revealResult, setRevealResult] = useState<SecretReveal | null>(null);
   const configMaps = useQuery({ queryKey: ["configmaps", namespace, q], queryFn: () => api.configmaps({ namespace, q }), enabled: tab !== "certificate" });
   const secrets = useQuery({ queryKey: ["secrets", namespace, q], queryFn: () => api.secrets({ namespace, q }), enabled: tab !== "certificate" });
-  const reveal = useMutation({
-    mutationFn: (target: SecretSummary) => api.revealSecret(target.namespace, target.name),
-    onSuccess: (data) => setRevealResult(data),
-    onError: (error) => toast.error(error.message),
-  });
+  const capabilities = useCapabilities(namespace || undefined).data;
+  const configMapCaps = resourceCapabilities(capabilities, "configmaps");
+  const secretCaps = resourceCapabilities(capabilities, "secrets");
+  const reveal = useMutation({ mutationFn: (target: SecretSummary) => api.revealSecret(target.namespace, target.name), onSuccess: (data) => setRevealResult(data), onError: (error) => toast.error(error.message) });
+  const refreshConfigMaps = async () => { await configMaps.refetch(); };
+  const refreshSecrets = async () => { await secrets.refetch(); };
+  const openConfigMapEdit = async (item: ConfigMapSummary) => {
+    try { setEditingConfigMap(await api.configmap(item.namespace, item.name)); setConfigMapFormOpen(true); } catch (error) { toast.error(error instanceof Error ? error.message : "加载 ConfigMap 失败"); }
+  };
+  const openSecretEdit = async (item: SecretSummary) => {
+    try { setEditingSecret(await api.revealSecret(item.namespace, item.name)); setSecretFormOpen(true); } catch (error) { toast.error(error instanceof Error ? error.message : "加载 Secret 失败"); }
+  };
+  const configMapActions = (item: ConfigMapSummary): ResourceAction[] => [
+    { label: "查看数据", icon: <Eye className="h-4 w-4" />, onSelect: () => setConfigMap(item) },
+    { label: "编辑 ConfigMap", icon: <Pencil className="h-4 w-4" />, onSelect: () => void openConfigMapEdit(item), disabled: !configMapCaps.update },
+    { label: "查看 YAML", icon: <FileCode2 className="h-4 w-4" />, onSelect: () => setYamlTarget({ type: "configmap", namespace: item.namespace, name: item.name }) },
+    { label: "删除 ConfigMap", icon: <Trash2 className="h-4 w-4" />, onSelect: () => setDeletingConfigMap(item), destructive: true, disabled: !configMapCaps.delete, separatorBefore: true },
+  ];
+  const secretActions = (item: SecretSummary): ResourceAction[] => [
+    { label: "查看明文", icon: <Eye className="h-4 w-4" />, onSelect: () => reveal.mutate(item), disabled: !capabilities?.revealSecrets },
+    { label: "编辑 Secret", icon: <Pencil className="h-4 w-4" />, onSelect: () => void openSecretEdit(item), disabled: !secretCaps.update || !capabilities?.revealSecrets },
+    { label: "查看 YAML", icon: <FileCode2 className="h-4 w-4" />, onSelect: () => setYamlTarget({ type: "secret", namespace: item.namespace, name: item.name }) },
+    { label: "删除 Secret", icon: <Trash2 className="h-4 w-4" />, onSelect: () => setDeletingSecret(item), destructive: true, disabled: !secretCaps.delete, separatorBefore: true },
+  ];
   const error = tab === "certificate" ? null : configMaps.error || secrets.error;
   if (error) return <ErrorState error={error} onRetry={() => { void configMaps.refetch(); void secrets.refetch(); }} />;
   return (
     <>
-      <PageHeader title="配置与密钥" breadcrumb="配置 / ConfigMap、Secret 与服务端证书" description="查看配置项、密钥元数据和服务端 TLS 证书状态。Secret 明文查看与服务端证书重载均需要授权并记录审计。" />
-      {tab === "certificate" ? null : <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center"><SearchInput value={q} onChange={(value) => updateSearch({ q: value || undefined })} placeholder="搜索名称或键" /><NamespaceSelect value={namespace} onChange={(value) => updateSearch({ namespace: value || undefined })} /></div>}
+      <PageHeader
+        title="配置中心"
+        breadcrumb="配置 / 配置中心"
+        description="管理 ConfigMap、Secret 与服务端证书。"
+        actions={tab === "configmaps" ? (
+          <Button onClick={() => { setEditingConfigMap(undefined); setConfigMapFormOpen(true); }} disabled={!namespace || !configMapCaps.create} title={!namespace ? "请先选择命名空间" : undefined}><Plus className="h-4 w-4" />创建 ConfigMap</Button>
+        ) : tab === "secrets" ? (
+          <Button onClick={() => { setEditingSecret(undefined); setSecretFormOpen(true); }} disabled={!namespace || !secretCaps.create} title={!namespace ? "请先选择命名空间" : undefined}><Plus className="h-4 w-4" />创建 Secret</Button>
+        ) : null}
+      />
+      <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center"><SearchInput value={q} onChange={(value) => updateSearch({ q: value || undefined })} placeholder="搜索名称" /><NamespaceSelect value={namespace} onChange={(value) => updateSearch({ namespace: value || undefined })} /></div>
       <Tabs value={tab} onValueChange={(value) => updateSearch({ tab: value === "configmaps" ? undefined : value })}>
         <TabsList><TabsTrigger value="configmaps">ConfigMap ({configMaps.data?.meta.total ?? 0})</TabsTrigger><TabsTrigger value="secrets">Secret ({secrets.data?.meta.total ?? 0})</TabsTrigger><TabsTrigger value="certificate">服务端证书</TabsTrigger></TabsList>
         <TabsContent value="configmaps">
           <DataTable
             columns={[
-              configMapColumn.accessor("name", { header: "名称", cell: (info) => <button type="button" onClick={() => setConfigMap(info.row.original)} className="font-medium text-primary hover:underline">{info.getValue()}</button> }),
+              configMapColumn.accessor("name", { header: "名称", cell: (info) => <button type="button" className="font-medium text-primary hover:underline" onClick={() => setConfigMap(info.row.original)}>{info.getValue()}</button> }),
               configMapColumn.accessor("namespace", { header: "命名空间" }),
-              configMapColumn.accessor("keys", { header: "键", enableSorting: false, cell: (info) => <div className="flex max-w-md flex-wrap gap-1">{info.getValue().slice(0, 5).map((key: string) => <span key={key} className="max-w-full break-words rounded border bg-muted/30 px-1.5 py-0.5 font-mono text-[11px]">{key}</span>)}{info.getValue().length > 5 ? <span className="text-xs text-muted-foreground">+{info.getValue().length - 5}</span> : null}</div> }),
               configMapColumn.accessor("dataBytes", { header: "大小", cell: (info) => <span className="tabular-nums">{info.getValue()} B</span> }),
               configMapColumn.accessor("createdAt", { header: "年龄", cell: (info) => formatAge(info.getValue()) }),
-              configMapColumn.display({ id: "actions", header: "", cell: (info) => <Button variant="ghost" size="icon-sm" aria-label="查看 YAML" onClick={() => setYamlTarget(info.row.original)}><FileCode2 className="h-4 w-4" /></Button> }),
+              configMapColumn.display({ id: "actions", header: "操作", size: 56, cell: (info) => <ResourceActionsMenu resource={`ConfigMap ${info.row.original.namespace}/${info.row.original.name}`} actions={configMapActions(info.row.original)} /> }),
             ]}
             data={configMaps.data?.items ?? []}
             loading={configMaps.isLoading}
@@ -98,9 +131,8 @@ export function ConfigurationPage() {
               secretColumn.accessor("name", { header: "名称", cell: (info) => <span className="font-medium">{info.getValue()}</span> }),
               secretColumn.accessor("namespace", { header: "命名空间" }),
               secretColumn.accessor("type", { header: "类型", cell: (info) => <span className="font-mono text-xs">{info.getValue()}</span> }),
-              secretColumn.accessor("keys", { header: "键 / 大小", enableSorting: false, cell: (info) => <div className="flex max-w-md flex-wrap gap-1">{info.getValue().map((key: { key: string; size: number }) => <span key={key.key} className="max-w-full break-words rounded border bg-muted/30 px-1.5 py-0.5 font-mono text-[11px]">{key.key} · {key.size} B</span>)}</div> }),
               secretColumn.accessor("createdAt", { header: "年龄", cell: (info) => formatAge(info.getValue()) }),
-              secretColumn.display({ id: "reveal", header: "", cell: (info) => <SecretRevealAction secret={info.row.original} pending={reveal.isPending && reveal.variables?.namespace === info.row.original.namespace && reveal.variables?.name === info.row.original.name} onReveal={(target) => reveal.mutate(target)} /> }),
+              secretColumn.display({ id: "actions", header: "操作", size: 56, cell: (info) => <ResourceActionsMenu resource={`Secret ${info.row.original.namespace}/${info.row.original.name}`} actions={secretActions(info.row.original)} /> }),
             ]}
             data={secrets.data?.items ?? []}
             loading={secrets.isLoading}
@@ -111,7 +143,11 @@ export function ConfigurationPage() {
       </Tabs>
 
       <ConfigMapDialog item={configMap} onClose={() => setConfigMap(null)} />
-      <YamlDialog open={Boolean(yamlTarget)} onOpenChange={(open) => { if (!open) setYamlTarget(null); }} type="configmap" name={yamlTarget?.name || ""} namespace={yamlTarget?.namespace} />
+      <ConfigMapFormDialog open={configMapFormOpen} onOpenChange={(open) => { setConfigMapFormOpen(open); if (!open) setEditingConfigMap(undefined); }} namespace={editingConfigMap?.namespace || namespace} item={editingConfigMap} onSaved={refreshConfigMaps} />
+      <SecretFormDialog open={secretFormOpen} onOpenChange={(open) => { setSecretFormOpen(open); if (!open) setEditingSecret(undefined); }} namespace={editingSecret?.namespace || namespace} item={editingSecret} onSaved={refreshSecrets} />
+      <DeleteResourceDialog open={Boolean(deletingConfigMap)} onOpenChange={(open) => { if (!open) setDeletingConfigMap(undefined); }} resourceKind="ConfigMap" name={deletingConfigMap?.name ?? ""} description="引用该 ConfigMap 的工作负载可能无法重新加载配置。" onConfirm={async () => { if (!deletingConfigMap) return; await api.deleteConfigMap(deletingConfigMap.namespace, deletingConfigMap.name, deletingConfigMap.resourceVersion); await refreshConfigMaps(); }} />
+      <DeleteResourceDialog open={Boolean(deletingSecret)} onOpenChange={(open) => { if (!open) setDeletingSecret(undefined); }} resourceKind="Secret" name={deletingSecret?.name ?? ""} description="引用该 Secret 的工作负载可能无法拉取镜像、挂载证书或读取凭据。" onConfirm={async () => { if (!deletingSecret) return; await api.deleteSecret(deletingSecret.namespace, deletingSecret.name, deletingSecret.resourceVersion); await refreshSecrets(); }} />
+      <YamlDialog open={Boolean(yamlTarget)} onOpenChange={(open) => { if (!open) setYamlTarget(undefined); }} type={yamlTarget?.type ?? "configmap"} name={yamlTarget?.name ?? ""} namespace={yamlTarget?.namespace} readOnly={yamlTarget?.type === "secret"} />
 
       <Dialog open={Boolean(revealResult)} onOpenChange={(open) => { if (!open) setRevealResult(null); }}>
         <DialogContent className="max-w-3xl">

@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"dosh/internal/domain"
@@ -36,6 +37,10 @@ type nodesRepository struct {
 	lastDeleteNSName            string
 	lastDeleteNSResourceVersion string
 	deleteNSErr                 error
+	createNSCalls               int
+	lastCreateNS                domain.NamespaceCreateSpec
+	createdNamespace            domain.Namespace
+	createNSErr                 error
 }
 
 func (r *nodesRepository) ListNodes(context.Context, domain.ListQuery) ([]domain.NodeSummary, error) {
@@ -65,6 +70,11 @@ func (r *nodesRepository) ListPodsForNode(context.Context, string) ([]domain.Pod
 }
 func (r *nodesRepository) ListNamespaces(context.Context, domain.ListQuery) ([]domain.Namespace, error) {
 	return r.namespaces, r.nsErr
+}
+func (r *nodesRepository) CreateNamespace(_ context.Context, spec domain.NamespaceCreateSpec) (domain.Namespace, error) {
+	r.createNSCalls++
+	r.lastCreateNS = spec
+	return r.createdNamespace, r.createNSErr
 }
 func (r *nodesRepository) GetNamespace(context.Context, string) (domain.NamespaceDetail, error) {
 	return r.namespace, r.getNSErr
@@ -317,6 +327,59 @@ func TestNodesServiceDeletesNamespaceAndAudits(t *testing.T) {
 	}
 	if len(auditor.events) != 1 || auditor.events[0].Action != "delete-namespace" || auditor.events[0].Resource != "namespace" || auditor.events[0].Result != "success" {
 		t.Fatalf("audit = %#v", auditor.events)
+	}
+}
+
+func TestNodesServiceCreatesNamespaceAndAudits(t *testing.T) {
+	t.Parallel()
+	repo := &nodesRepository{createdNamespace: domain.Namespace{Name: "preview", Status: "Active", ResourceVersion: "7"}}
+	authorizer := &nodesAuthorizer{allow: true}
+	auditor := &nodesAuditor{}
+	service := New(repo, authorizer, auditor)
+
+	created, err := service.CreateNamespace(context.Background(), domain.Actor{Username: "admin"}, domain.NamespaceCreateSpec{
+		Name: " preview ", Labels: map[string]string{"team": "platform"}, Annotations: map[string]string{"owner": "ops"},
+	})
+	if err != nil || created.Name != "preview" {
+		t.Fatalf("CreateNamespace() = (%#v, %v)", created, err)
+	}
+	if repo.createNSCalls != 1 || repo.lastCreateNS.Name != "preview" || repo.lastCreateNS.Labels["team"] != "platform" || repo.lastCreateNS.Annotations["owner"] != "ops" {
+		t.Fatalf("create namespace call = %d %#v", repo.createNSCalls, repo.lastCreateNS)
+	}
+	if authorizer.access != (domain.Access{Verb: "create", Resource: "namespaces", Name: "preview"}) {
+		t.Fatalf("access = %#v", authorizer.access)
+	}
+	if len(auditor.events) != 1 || auditor.events[0].Action != "create-namespace" || auditor.events[0].Resource != "namespace" || auditor.events[0].Result != "success" {
+		t.Fatalf("audit = %#v", auditor.events)
+	}
+}
+
+func TestNodesServiceValidatesAndAuthorizesNamespaceCreation(t *testing.T) {
+	t.Parallel()
+	for _, name := range []string{"", "Bad_Name", "UPPER", "a" + strings.Repeat("b", 63)} {
+		repo := &nodesRepository{}
+		authorizer := &nodesAuthorizer{allow: true}
+		auditor := &nodesAuditor{}
+		service := New(repo, authorizer, auditor)
+		_, err := service.CreateNamespace(context.Background(), domain.Actor{Username: "admin"}, domain.NamespaceCreateSpec{Name: name})
+		var validation *domain.ValidationError
+		if !errors.As(err, &validation) || validation.Field != "name" {
+			t.Fatalf("CreateNamespace(%q) error = %v", name, err)
+		}
+		if authorizer.calls != 0 || repo.createNSCalls != 0 {
+			t.Fatalf("invalid namespace %q reached authorization/repository", name)
+		}
+	}
+
+	repo := &nodesRepository{}
+	authorizer := &nodesAuthorizer{}
+	auditor := &nodesAuditor{}
+	service := New(repo, authorizer, auditor)
+	if _, err := service.CreateNamespace(context.Background(), domain.Actor{Username: "viewer"}, domain.NamespaceCreateSpec{Name: "preview"}); !errors.Is(err, domain.ErrForbidden) {
+		t.Fatalf("CreateNamespace() error = %v", err)
+	}
+	if repo.createNSCalls != 0 || len(auditor.events) != 1 || auditor.events[0].Result != "denied" {
+		t.Fatalf("denied create = calls %d audit %#v", repo.createNSCalls, auditor.events)
 	}
 }
 

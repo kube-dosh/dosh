@@ -37,7 +37,11 @@ func (c *Client) ListServices(ctx context.Context, query domain.ListQuery) ([]do
 	for _, item := range items.Items {
 		summary := serviceSummary(item)
 		summary.EndpointCount = endpointCounts[serviceEndpointKey(item.Namespace, item.Name)]
-		if query.Search != "" && !matchesSearch([]string{summary.Name, summary.Namespace, summary.Type, summary.ClusterIP, summary.ExternalIP}, query.Search) {
+		searchFields := []string{summary.Name, summary.Namespace, summary.Type, summary.ClusterIP, summary.ExternalIP}
+		if summary.Headless {
+			searchFields = append(searchFields, "Headless")
+		}
+		if query.Search != "" && !matchesSearch(searchFields, query.Search) {
 			continue
 		}
 		out = append(out, summary)
@@ -102,6 +106,9 @@ func (c *Client) CreateService(ctx context.Context, spec domain.ServiceCreateSpe
 			Selector: cloneStringMap(spec.Selector),
 			Ports:    serviceWritePorts(spec.Ports, nil, spec.Type),
 		},
+	}
+	if spec.Headless {
+		item.Spec.ClusterIP = corev1.ClusterIPNone
 	}
 	created, err := c.clientset.CoreV1().Services(spec.Namespace).Create(ctx, item, metav1.CreateOptions{})
 	if err != nil {
@@ -258,7 +265,7 @@ func serviceSummary(item corev1.Service) domain.ServiceSummary {
 		externalIP = item.Spec.ExternalName
 	}
 	return domain.ServiceSummary{
-		Name: item.Name, Namespace: item.Namespace, ResourceVersion: item.ResourceVersion, Type: string(item.Spec.Type), ClusterIP: item.Spec.ClusterIP,
+		Name: item.Name, Namespace: item.Namespace, ResourceVersion: item.ResourceVersion, Type: string(item.Spec.Type), Headless: item.Spec.ClusterIP == corev1.ClusterIPNone, ClusterIP: item.Spec.ClusterIP,
 		ExternalIP: externalIP, Ports: ports, Selector: item.Spec.Selector, CreatedAt: item.CreationTimestamp.Time,
 	}
 }
@@ -330,6 +337,92 @@ func (c *Client) GetIngress(ctx context.Context, namespace, name string) (domain
 	return detail, nil
 }
 
+func (c *Client) CreateIngress(ctx context.Context, spec domain.IngressCreateSpec) (domain.IngressDetail, error) {
+	ctx, cancel := c.withTimeout(ctx)
+	defer cancel()
+	desired, err := ingressWriteSpec(spec.Class, spec.Paths, spec.TLS)
+	if err != nil {
+		return domain.IngressDetail{}, err
+	}
+	item := &networkingv1.Ingress{
+		ObjectMeta: metav1.ObjectMeta{Name: spec.Name, Namespace: spec.Namespace, Annotations: cloneStringMap(spec.Annotations)},
+		Spec:       desired,
+	}
+	if _, err := c.clientset.NetworkingV1().Ingresses(spec.Namespace).Create(ctx, item, metav1.CreateOptions{}); err != nil {
+		return domain.IngressDetail{}, mapKubeError(err)
+	}
+	return c.GetIngress(ctx, spec.Namespace, spec.Name)
+}
+
+func (c *Client) UpdateIngress(ctx context.Context, namespace, name string, update domain.IngressUpdateSpec) (domain.IngressDetail, error) {
+	ctx, cancel := c.withTimeout(ctx)
+	defer cancel()
+	item, err := c.clientset.NetworkingV1().Ingresses(namespace).Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		return domain.IngressDetail{}, mapKubeError(err)
+	}
+	if update.ResourceVersion != "" && item.ResourceVersion != update.ResourceVersion {
+		return domain.IngressDetail{}, fmt.Errorf("%w: expected %s, got %s", domain.ErrConflict, update.ResourceVersion, item.ResourceVersion)
+	}
+	desired, err := ingressWriteSpec(update.Class, update.Paths, update.TLS)
+	if err != nil {
+		return domain.IngressDetail{}, err
+	}
+	item.Spec = desired
+	if update.Annotations != nil {
+		item.Annotations = cloneStringMap(update.Annotations)
+	}
+	if _, err := c.clientset.NetworkingV1().Ingresses(namespace).Update(ctx, item, metav1.UpdateOptions{}); err != nil {
+		return domain.IngressDetail{}, mapKubeError(err)
+	}
+	return c.GetIngress(ctx, namespace, name)
+}
+
+func (c *Client) DeleteIngress(ctx context.Context, namespace, name, resourceVersion string) error {
+	ctx, cancel := c.withTimeout(ctx)
+	defer cancel()
+	options := metav1.DeleteOptions{}
+	if resourceVersion != "" {
+		options.Preconditions = &metav1.Preconditions{ResourceVersion: &resourceVersion}
+	}
+	return mapKubeError(c.clientset.NetworkingV1().Ingresses(namespace).Delete(ctx, name, options))
+}
+
+func ingressWriteSpec(class string, paths []domain.IngressPathInput, tlsEntries []domain.IngressTLS) (networkingv1.IngressSpec, error) {
+	spec := networkingv1.IngressSpec{TLS: make([]networkingv1.IngressTLS, 0, len(tlsEntries))}
+	if class != "" {
+		spec.IngressClassName = &class
+	}
+	ruleIndex := make(map[string]int)
+	for _, route := range paths {
+		pathType := networkingv1.PathType(route.PathType)
+		backendPort := networkingv1.ServiceBackendPort{}
+		if number, err := strconv.Atoi(route.Port); err == nil {
+			backendPort.Number = int32(number)
+		} else {
+			backendPort.Name = route.Port
+		}
+		httpPath := networkingv1.HTTPIngressPath{
+			Path:     route.Path,
+			PathType: &pathType,
+			Backend: networkingv1.IngressBackend{Service: &networkingv1.IngressServiceBackend{
+				Name: route.Service, Port: backendPort,
+			}},
+		}
+		index, ok := ruleIndex[route.Host]
+		if !ok {
+			spec.Rules = append(spec.Rules, networkingv1.IngressRule{Host: route.Host, IngressRuleValue: networkingv1.IngressRuleValue{HTTP: &networkingv1.HTTPIngressRuleValue{}}})
+			index = len(spec.Rules) - 1
+			ruleIndex[route.Host] = index
+		}
+		spec.Rules[index].HTTP.Paths = append(spec.Rules[index].HTTP.Paths, httpPath)
+	}
+	for _, entry := range tlsEntries {
+		spec.TLS = append(spec.TLS, networkingv1.IngressTLS{Hosts: append([]string(nil), entry.Hosts...), SecretName: entry.SecretName})
+	}
+	return spec, nil
+}
+
 func servicePortIndexes(services []corev1.Service) map[string]map[string]struct{} {
 	servicePorts := make(map[string]map[string]struct{}, len(services))
 	for _, item := range services {
@@ -367,7 +460,7 @@ func ingressSummary(item networkingv1.Ingress) domain.IngressSummary {
 		class = *item.Spec.IngressClassName
 	}
 	summary := domain.IngressSummary{
-		Name: item.Name, Namespace: item.Namespace, Class: class, CreatedAt: item.CreationTimestamp.Time,
+		Name: item.Name, Namespace: item.Namespace, ResourceVersion: item.ResourceVersion, Class: class, CreatedAt: item.CreationTimestamp.Time,
 		Paths: make([]domain.IngressPath, 0), TLSHosts: make([]string, 0),
 	}
 	for _, tls := range item.Spec.TLS {

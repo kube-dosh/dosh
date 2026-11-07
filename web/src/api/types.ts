@@ -20,6 +20,14 @@ export interface Capabilities {
   editYAML: boolean;
   nodeCordon: boolean;
   reloadCertificate: boolean;
+  resourceActions?: Record<string, ResourceCapabilities>;
+}
+
+export interface ResourceCapabilities {
+  create: boolean;
+  update: boolean;
+  delete: boolean;
+  scale: boolean;
 }
 
 export interface ServerCertificate {
@@ -215,6 +223,12 @@ export interface NamespaceItem {
   createdAt: string;
 }
 
+export interface NamespaceCreateInput {
+  name: string;
+  labels?: Record<string, string>;
+  annotations?: Record<string, string>;
+}
+
 export interface ResourceQuota {
   name: string;
   hard: Record<string, string>;
@@ -352,6 +366,7 @@ export interface ServiceSummary {
   namespace: string;
   resourceVersion?: string;
   type: string;
+  headless: boolean;
   clusterIP: string;
   externalIP: string;
   ports: ServicePort[];
@@ -371,12 +386,14 @@ export interface ServiceCreateInput {
   name: string;
   namespace: string;
   type: string;
+  headless?: boolean;
   selector: Record<string, string>;
   ports: ServicePortInput[];
 }
 
 export interface ServiceUpdateInput {
   type: string;
+  headless?: boolean;
   selector: Record<string, string>;
   ports: ServicePortInput[];
   resourceVersion?: string;
@@ -414,6 +431,7 @@ export interface IngressPath {
 export interface IngressSummary {
   name: string;
   namespace: string;
+  resourceVersion?: string;
   class: string;
   paths: IngressPath[];
   tlsHosts?: string[];
@@ -439,9 +457,35 @@ export interface IngressClassSummary {
   createdAt: string;
 }
 
+export interface IngressPathInput {
+  host?: string;
+  path: string;
+  pathType?: string;
+  service: string;
+  port: string;
+}
+
+export interface IngressCreateInput {
+  name: string;
+  namespace: string;
+  class?: string;
+  paths: IngressPathInput[];
+  tls?: IngressTLS[];
+  annotations?: Record<string, string>;
+}
+
+export interface IngressUpdateInput {
+  class?: string;
+  paths: IngressPathInput[];
+  tls?: IngressTLS[];
+  annotations?: Record<string, string>;
+  resourceVersion?: string;
+}
+
 export interface ConfigMapSummary {
   name: string;
   namespace: string;
+  resourceVersion?: string;
   keys: string[];
   dataBytes: number;
   createdAt: string;
@@ -449,6 +493,19 @@ export interface ConfigMapSummary {
 
 export interface ConfigMapDetail extends ConfigMapSummary {
   data: Record<string, string>;
+}
+
+export interface ConfigMapCreateInput {
+  name: string;
+  namespace: string;
+  data: Record<string, string>;
+  annotations?: Record<string, string>;
+}
+
+export interface ConfigMapUpdateInput {
+  data: Record<string, string>;
+  annotations?: Record<string, string>;
+  resourceVersion?: string;
 }
 
 export interface SecretKey {
@@ -459,6 +516,7 @@ export interface SecretKey {
 export interface SecretSummary {
   name: string;
   namespace: string;
+  resourceVersion?: string;
   type: string;
   keys: SecretKey[];
   createdAt: string;
@@ -466,6 +524,15 @@ export interface SecretSummary {
 
 export interface SecretReveal extends SecretSummary {
   data: Record<string, string>;
+}
+
+export interface SecretWriteInput {
+  name?: string;
+  namespace?: string;
+  type: string;
+  data: Record<string, string>;
+  annotations?: Record<string, string>;
+  resourceVersion?: string;
 }
 
 export interface StorageClass {
@@ -509,6 +576,7 @@ export interface PersistentVolumeDetail extends PersistentVolume {
 export interface PersistentVolumeClaim {
   name: string;
   namespace: string;
+  resourceVersion?: string;
   status: string;
   volumeName?: string;
   capacityBytes: number;
@@ -523,6 +591,24 @@ export interface PersistentVolumeClaimDetail extends PersistentVolumeClaim {
   volumeMode: string;
   requestedCapacityBytes: number;
   conditions: Condition[];
+}
+
+export interface PersistentVolumeClaimCreateInput {
+  name: string;
+  namespace: string;
+  storageClass?: string;
+  accessModes: string[];
+  requestedCapacityBytes: number;
+  volumeMode?: string;
+  labels?: Record<string, string>;
+  annotations?: Record<string, string>;
+}
+
+export interface PersistentVolumeClaimUpdateInput {
+  requestedCapacityBytes: number;
+  labels?: Record<string, string>;
+  annotations?: Record<string, string>;
+  resourceVersion?: string;
 }
 
 export interface YAMLResource {

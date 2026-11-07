@@ -1,6 +1,7 @@
-import { useQuery } from "@tanstack/react-query";
+import { useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useParams, useSearch } from "@tanstack/react-router";
-import { Database, FileCode2, HardDrive } from "lucide-react";
+import { Database, FileCode2, HardDrive, Pencil, Trash2 } from "lucide-react";
 import type { ReactNode } from "react";
 import { api } from "@/api/client";
 import type { Condition, PersistentVolumeClaimDetail, PersistentVolumeDetail, StorageClassDetail } from "@/api/types";
@@ -9,11 +10,16 @@ import { ErrorState, LoadingState } from "@/components/feedback/states";
 import { StatusBadge } from "@/components/feedback/status-badge";
 import { PageHeader } from "@/components/layout/page-header";
 import { MetadataCard } from "@/components/resources/metadata-card";
+import { DeleteResourceDialog } from "@/components/resources/delete-resource-dialog";
 import { YamlPanel } from "@/components/resources/yaml-dialog";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ResourceEvents } from "@/features/events/resource-events";
+import { useCapabilities } from "@/features/auth/use-session";
+import { PersistentVolumeClaimFormDialog } from "@/features/storage/persistent-volume-claim-form-dialog";
+import { resourceCapabilities } from "@/lib/capabilities";
 import { formatDate, formatMemory } from "@/lib/utils";
 
 const storageTabs = ["overview", "events", "yaml"] as const;
@@ -225,8 +231,14 @@ export function PersistentVolumeClaimDetailPage() {
   const params = useParams({ strict: false }) as { namespace: string; name: string };
   const search = useSearch({ from: "/app/storage/claims/$namespace/$name" });
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
+  const [resizeOpen, setResizeOpen] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
   const tab = isStorageTab(search.tab) ? search.tab : "overview";
+  const capabilities = useCapabilities(params.namespace).data;
+  const claimCaps = resourceCapabilities(capabilities, "persistentvolumeclaims");
   const query = useQuery({ queryKey: ["persistentvolumeclaim", params.namespace, params.name], queryFn: () => api.persistentvolumeclaim(params.namespace, params.name), refetchInterval: 20_000 });
+  const storageClasses = useQuery({ queryKey: ["storageclasses"], queryFn: () => api.storageclasses(), enabled: resizeOpen });
   if (query.isLoading) return <LoadingState label="正在加载 PersistentVolumeClaim 详情" className="min-h-[60vh]" />;
   if (query.isError) return <ErrorState error={query.error} onRetry={() => void query.refetch()} />;
   const item = query.data!;
@@ -236,6 +248,10 @@ export function PersistentVolumeClaimDetailPage() {
         breadcrumb={<><Link to="/storage" search={{ ...search, tab: "claims" }} className="text-primary underline underline-offset-2">存储</Link> / PersistentVolumeClaim / {item.namespace} / {item.name}</>}
         title={<span className="flex items-center gap-3"><Database className="h-5 w-5 text-muted-foreground" />{item.name}</span>}
         description={<span className="flex flex-wrap items-center gap-2"><StatusBadge status={item.status} /><span>{formatMemory(item.requestedCapacityBytes)}</span><span>·</span><span>{item.storageClass || "无 StorageClass"}</span></span>}
+        actions={<div className="flex items-center gap-2">
+          {claimCaps.update ? <Button variant="outline" size="sm" onClick={() => setResizeOpen(true)}><Pencil className="h-4 w-4" />扩容</Button> : null}
+          {claimCaps.delete ? <Button variant="destructive" size="sm" onClick={() => setDeleteOpen(true)}><Trash2 className="h-4 w-4" />删除</Button> : null}
+        </div>}
       />
       <StorageTabs
         tab={tab}
@@ -247,6 +263,29 @@ export function PersistentVolumeClaimDetailPage() {
         yaml={<YamlPanel type="persistentvolumeclaim" name={item.name} namespace={item.namespace} height="64vh" />}
       />
       {tab === "overview" ? <div className="mt-4"><PersistentVolumeClaimOverview item={item} /></div> : null}
+      <PersistentVolumeClaimFormDialog
+        open={resizeOpen}
+        onOpenChange={setResizeOpen}
+        namespace={item.namespace}
+        item={item}
+        storageClasses={storageClasses.data?.items ?? []}
+        onSaved={async () => {
+          await query.refetch();
+          await queryClient.invalidateQueries({ queryKey: ["persistentvolumeclaims"] });
+        }}
+      />
+      <DeleteResourceDialog
+        open={deleteOpen}
+        onOpenChange={setDeleteOpen}
+        resourceKind="PersistentVolumeClaim"
+        name={item.name}
+        description="删除 PVC 后，绑定 PV 是否保留取决于回收策略；正在挂载该卷的工作负载可能中断。"
+        onConfirm={async () => {
+          await api.deletePersistentVolumeClaim(item.namespace, item.name, item.resourceVersion);
+          await queryClient.invalidateQueries({ queryKey: ["persistentvolumeclaims"] });
+          await navigate({ to: "/storage", search: { ...search, tab: "claims" } });
+        }}
+      />
     </>
   );
 }

@@ -24,6 +24,7 @@ type Repository interface {
 	DeleteWorkload(ctx context.Context, kind, namespace, name string, propagation domain.DeletionPropagation) error
 	ListPods(ctx context.Context, query domain.ListQuery) ([]domain.PodSummary, error)
 	GetPod(ctx context.Context, namespace, name string) (domain.PodDetail, error)
+	DeletePod(ctx context.Context, namespace, name string) error
 	StreamPodLogs(ctx context.Context, namespace, name, container string, follow bool, tailLines int64, timestamps bool, limitBytes int64) (io.ReadCloser, error)
 }
 
@@ -134,6 +135,17 @@ func (s *Service) ListPods(ctx context.Context, query domain.ListQuery) ([]domai
 
 func (s *Service) GetPod(ctx context.Context, namespace, name string) (domain.PodDetail, error) {
 	return s.repository.GetPod(ctx, namespace, name)
+}
+
+func (s *Service) DeletePod(ctx context.Context, actor domain.Actor, namespace, name string) error {
+	access := domain.Access{Verb: "delete", Resource: "pods", Namespace: namespace, Name: name}
+	if err := s.authorizer.Require(ctx, actor, access); err != nil {
+		s.audit(ctx, actor, "delete-pod", "pod", namespace, name, err)
+		return err
+	}
+	err := s.repository.DeletePod(ctx, namespace, name)
+	s.audit(ctx, actor, "delete-pod", "pod", namespace, name, err)
+	return err
 }
 
 func (s *Service) StreamLogs(ctx context.Context, namespace, name, container string, follow bool, tailLines int64, timestamps bool) (io.ReadCloser, error) {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 
 	"dosh/internal/domain"
@@ -17,9 +18,12 @@ type Repository interface {
 	SetNodeTaints(ctx context.Context, name string, update domain.NodeTaintUpdate) (domain.NodeDetail, error)
 	ListPodsForNode(ctx context.Context, node string) ([]domain.PodSummary, error)
 	ListNamespaces(ctx context.Context, query domain.ListQuery) ([]domain.Namespace, error)
+	CreateNamespace(ctx context.Context, spec domain.NamespaceCreateSpec) (domain.Namespace, error)
 	GetNamespace(ctx context.Context, name string) (domain.NamespaceDetail, error)
 	DeleteNamespace(ctx context.Context, name, resourceVersion string) error
 }
+
+var namespaceNamePattern = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`)
 
 type Service struct {
 	repository Repository
@@ -113,6 +117,23 @@ func (s *Service) audit(ctx context.Context, actor domain.Actor, action, name st
 
 func (s *Service) ListNamespaces(ctx context.Context, query domain.ListQuery) ([]domain.Namespace, error) {
 	return s.repository.ListNamespaces(ctx, query)
+}
+
+func (s *Service) CreateNamespace(ctx context.Context, actor domain.Actor, spec domain.NamespaceCreateSpec) (domain.Namespace, error) {
+	spec.Name = strings.TrimSpace(spec.Name)
+	if spec.Name == "" || len(spec.Name) > 63 || !namespaceNamePattern.MatchString(spec.Name) {
+		err := &domain.ValidationError{Field: "name", Message: "namespace name must be a valid DNS-1123 label of at most 63 characters"}
+		s.auditNamespace(ctx, actor, "create-namespace", spec.Name, err)
+		return domain.Namespace{}, err
+	}
+	access := domain.Access{Verb: "create", Resource: "namespaces", Name: spec.Name}
+	if err := s.authorizer.Require(ctx, actor, access); err != nil {
+		s.auditNamespace(ctx, actor, "create-namespace", spec.Name, err)
+		return domain.Namespace{}, err
+	}
+	created, err := s.repository.CreateNamespace(ctx, spec)
+	s.auditNamespace(ctx, actor, "create-namespace", spec.Name, err)
+	return created, err
 }
 
 func (s *Service) GetNamespace(ctx context.Context, name string) (domain.NamespaceDetail, error) {

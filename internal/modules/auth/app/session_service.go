@@ -51,7 +51,44 @@ func (s *SessionService) Capabilities(ctx context.Context, actor domain.Actor, n
 		EditYAML:          s.allowed(ctx, actor, domain.Access{Verb: "patch", Resource: "configmaps", Namespace: namespace}),
 		NodeCordon:        s.allowed(ctx, actor, domain.Access{Verb: "update", Resource: "nodes"}),
 		ReloadCertificate: s.allowed(ctx, actor, domain.Access{Verb: "update", APIGroup: "dosh.io", Resource: "server-certificates"}),
+		ResourceActions:   s.resourceActions(ctx, actor, namespace),
 	}
+}
+
+func (s *SessionService) resourceActions(ctx context.Context, actor domain.Actor, namespace string) map[string]domain.ResourceCapabilities {
+	actions := make(map[string]domain.ResourceCapabilities)
+	add := func(resource, apiGroup string, namespaced bool, create, update, delete bool) {
+		scope := ""
+		if namespaced {
+			scope = namespace
+		}
+		actions[resource] = domain.ResourceCapabilities{
+			Create: create && s.allowed(ctx, actor, domain.Access{Verb: "create", APIGroup: apiGroup, Resource: resource, Namespace: scope}),
+			Update: update && s.allowed(ctx, actor, domain.Access{Verb: "update", APIGroup: apiGroup, Resource: resource, Namespace: scope}),
+			Delete: delete && s.allowed(ctx, actor, domain.Access{Verb: "delete", APIGroup: apiGroup, Resource: resource, Namespace: scope}),
+		}
+	}
+	add("pods", "", true, false, true, true)
+	add("deployments", "apps", true, true, true, true)
+	add("statefulsets", "apps", true, false, true, true)
+	add("daemonsets", "apps", true, false, true, true)
+	add("jobs", "batch", true, false, true, true)
+	add("cronjobs", "batch", true, false, true, true)
+	add("services", "", true, true, true, true)
+	add("ingresses", "networking.k8s.io", true, true, true, true)
+	add("configmaps", "", true, true, true, true)
+	add("secrets", "", true, true, true, true)
+	add("persistentvolumeclaims", "", true, true, true, true)
+	add("persistentvolumes", "", false, false, false, false)
+	add("storageclasses", "storage.k8s.io", false, false, false, false)
+	add("nodes", "", false, false, true, false)
+	add("namespaces", "", false, true, false, true)
+	for _, resource := range []string{"deployments", "statefulsets"} {
+		caps := actions[resource]
+		caps.Scale = s.allowed(ctx, actor, domain.Access{Verb: "update", APIGroup: "apps", Resource: resource, Subresource: "scale", Namespace: namespace})
+		actions[resource] = caps
+	}
+	return actions
 }
 
 func (s *SessionService) allowed(ctx context.Context, actor domain.Actor, access domain.Access) bool {

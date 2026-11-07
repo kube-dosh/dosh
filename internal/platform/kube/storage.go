@@ -2,12 +2,14 @@ package kube
 
 import (
 	"context"
+	"fmt"
 	"sort"
 
 	"dosh/internal/domain"
 
 	corev1 "k8s.io/api/core/v1"
 	storagev1 "k8s.io/api/storage/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -156,7 +158,8 @@ func (c *Client) ListPersistentVolumeClaims(ctx context.Context, query domain.Li
 
 func persistentVolumeClaimSummary(item corev1.PersistentVolumeClaim) domain.PersistentVolumeClaim {
 	return domain.PersistentVolumeClaim{
-		Name: item.Name, Namespace: item.Namespace, Status: string(item.Status.Phase), VolumeName: item.Spec.VolumeName,
+		Name: item.Name, Namespace: item.Namespace, ResourceVersion: item.ResourceVersion,
+		Status: string(item.Status.Phase), VolumeName: item.Spec.VolumeName,
 		CapacityBytes: item.Status.Capacity.Storage().Value(), AccessModes: accessModes(item.Spec.AccessModes),
 		StorageClass: valueOrEmpty(item.Spec.StorageClassName), CreatedAt: item.CreationTimestamp.Time,
 	}
@@ -170,6 +173,70 @@ func (c *Client) GetPersistentVolumeClaim(ctx context.Context, namespace, name s
 		return domain.PersistentVolumeClaimDetail{}, mapKubeError(err)
 	}
 	return persistentVolumeClaimDetail(*item), nil
+}
+
+func (c *Client) CreatePersistentVolumeClaim(ctx context.Context, spec domain.PersistentVolumeClaimCreateSpec) (domain.PersistentVolumeClaimDetail, error) {
+	ctx, cancel := c.withTimeout(ctx)
+	defer cancel()
+	item := &corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{
+		Name: spec.Name, Namespace: spec.Namespace, Labels: cloneStringMap(spec.Labels), Annotations: cloneStringMap(spec.Annotations),
+	}}
+	applyPVCSpec(&item.Spec, spec.StorageClass, spec.AccessModes, spec.RequestedCapacityBytes, spec.VolumeMode)
+	if _, err := c.clientset.CoreV1().PersistentVolumeClaims(spec.Namespace).Create(ctx, item, metav1.CreateOptions{}); err != nil {
+		return domain.PersistentVolumeClaimDetail{}, mapKubeError(err)
+	}
+	return c.GetPersistentVolumeClaim(ctx, spec.Namespace, spec.Name)
+}
+
+func (c *Client) UpdatePersistentVolumeClaim(ctx context.Context, namespace, name string, update domain.PersistentVolumeClaimUpdateSpec) (domain.PersistentVolumeClaimDetail, error) {
+	ctx, cancel := c.withTimeout(ctx)
+	defer cancel()
+	item, err := c.clientset.CoreV1().PersistentVolumeClaims(namespace).Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		return domain.PersistentVolumeClaimDetail{}, mapKubeError(err)
+	}
+	if update.ResourceVersion != "" && item.ResourceVersion != update.ResourceVersion {
+		return domain.PersistentVolumeClaimDetail{}, fmt.Errorf("%w: expected %s, got %s", domain.ErrConflict, update.ResourceVersion, item.ResourceVersion)
+	}
+	current := item.Spec.Resources.Requests.Storage().Value()
+	if update.RequestedCapacityBytes < current {
+		return domain.PersistentVolumeClaimDetail{}, fmt.Errorf("%w: PVC capacity cannot be reduced from %d to %d bytes", domain.ErrInvalid, current, update.RequestedCapacityBytes)
+	}
+	item.Spec.Resources.Requests[corev1.ResourceStorage] = *resource.NewQuantity(update.RequestedCapacityBytes, resource.BinarySI)
+	if update.Labels != nil {
+		item.Labels = cloneStringMap(update.Labels)
+	}
+	if update.Annotations != nil {
+		item.Annotations = cloneStringMap(update.Annotations)
+	}
+	if _, err := c.clientset.CoreV1().PersistentVolumeClaims(namespace).Update(ctx, item, metav1.UpdateOptions{}); err != nil {
+		return domain.PersistentVolumeClaimDetail{}, mapKubeError(err)
+	}
+	return c.GetPersistentVolumeClaim(ctx, namespace, name)
+}
+
+func (c *Client) DeletePersistentVolumeClaim(ctx context.Context, namespace, name, resourceVersion string) error {
+	ctx, cancel := c.withTimeout(ctx)
+	defer cancel()
+	options := metav1.DeleteOptions{}
+	if resourceVersion != "" {
+		options.Preconditions = &metav1.Preconditions{ResourceVersion: &resourceVersion}
+	}
+	return mapKubeError(c.clientset.CoreV1().PersistentVolumeClaims(namespace).Delete(ctx, name, options))
+}
+
+func applyPVCSpec(spec *corev1.PersistentVolumeClaimSpec, storageClass string, accessModes []string, requestedBytes int64, volumeMode string) {
+	for _, mode := range accessModes {
+		spec.AccessModes = append(spec.AccessModes, corev1.PersistentVolumeAccessMode(mode))
+	}
+	if storageClass != "" {
+		spec.StorageClassName = &storageClass
+	}
+	spec.Resources = corev1.VolumeResourceRequirements{Requests: corev1.ResourceList{
+		corev1.ResourceStorage: *resource.NewQuantity(requestedBytes, resource.BinarySI),
+	}}
+	mode := corev1.PersistentVolumeMode(volumeMode)
+	spec.VolumeMode = &mode
 }
 
 func persistentVolumeClaimDetail(item corev1.PersistentVolumeClaim) domain.PersistentVolumeClaimDetail {

@@ -7,20 +7,23 @@ import { CheckCircle2, FileCode2, Loader2, Pencil, RotateCcw, Save } from "lucid
 import { toast } from "sonner";
 import { api } from "@/api/client";
 import { useCapabilities } from "@/features/auth/use-session";
+import { yamlResourceCapabilities } from "@/lib/capabilities";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { ErrorState, LoadingState } from "@/components/feedback/states";
 import { useTheme } from "@/lib/theme";
 
-export function YamlPanel({ type, name, namespace, height = "58vh" }: {
+export function YamlPanel({ type, name, namespace, height = "58vh", readOnly = false }: {
   type: string;
   name: string;
   namespace?: string;
   height?: string;
+  readOnly?: boolean;
 }) {
   const queryClient = useQueryClient();
   const { theme } = useTheme();
   const capabilities = useCapabilities(namespace).data;
+  const canEdit = !readOnly && type.toLowerCase() !== "secret" && yamlResourceCapabilities(capabilities, type).update;
   const [editing, setEditing] = useState(false);
   const [value, setValue] = useState("");
   const query = useQuery({
@@ -47,7 +50,7 @@ export function YamlPanel({ type, name, namespace, height = "58vh" }: {
     <div className="space-y-3">
       <div className="flex flex-wrap items-center gap-3">
         <p className="text-sm text-muted-foreground">{type}{namespace ? ` · ${namespace}` : ""} · 敏感数据已脱敏</p>
-        {capabilities?.editYAML ? (
+        {canEdit ? (
           <Button variant="outline" size="sm" className="ml-auto" onClick={() => setEditing((current) => !current)}>
             {editing ? <RotateCcw className="h-3.5 w-3.5" /> : <Pencil className="h-3.5 w-3.5" />}{editing ? "取消编辑" : "编辑"}
           </Button>
@@ -66,12 +69,13 @@ export function YamlPanel({ type, name, namespace, height = "58vh" }: {
   );
 }
 
-export function YamlDialog({ open, onOpenChange, type, name, namespace }: {
+export function YamlDialog({ open, onOpenChange, type, name, namespace, readOnly = false }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   type: string;
   name: string;
   namespace?: string;
+  readOnly?: boolean;
 }) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -80,11 +84,11 @@ export function YamlDialog({ open, onOpenChange, type, name, namespace }: {
           <div className="flex items-start justify-between gap-4 pr-6">
             <div>
               <DialogTitle className="flex items-center gap-2"><FileCode2 className="h-5 w-5 text-primary" />{name}</DialogTitle>
-              <DialogDescription>{type}{namespace ? ` · ${namespace}` : ""} · 只读 YAML 视图，敏感数据已脱敏</DialogDescription>
+              <DialogDescription>{type}{namespace ? ` · ${namespace}` : ""} · {readOnly || type.toLowerCase() === "secret" ? "只读 YAML 视图，敏感数据已脱敏" : "可编辑 YAML，敏感数据已脱敏"}</DialogDescription>
             </div>
           </div>
         </DialogHeader>
-        {open ? <YamlPanel type={type} name={name} namespace={namespace} /> : null}
+        {open ? <YamlPanel type={type} name={name} namespace={namespace} readOnly={readOnly} /> : null}
       </DialogContent>
     </Dialog>
   );

@@ -1,7 +1,8 @@
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link, useNavigate, useParams, useSearch } from "@tanstack/react-router";
 import { createColumnHelper } from "@tanstack/react-table";
-import { FileCode2, Network } from "lucide-react";
+import { FileCode2, Network, Pencil, Trash2 } from "lucide-react";
 import { api } from "@/api/client";
 import type { ServiceEndpoint } from "@/api/types";
 import { DataTable } from "@/components/data/data-table";
@@ -9,15 +10,21 @@ import { DetailItem } from "@/components/data/detail-item";
 import { ErrorState, LoadingState } from "@/components/feedback/states";
 import { StatusBadge } from "@/components/feedback/status-badge";
 import { PageHeader } from "@/components/layout/page-header";
+import { DeleteResourceDialog } from "@/components/resources/delete-resource-dialog";
 import { YamlPanel } from "@/components/resources/yaml-dialog";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ResourceEvents } from "@/features/events/resource-events";
+import { useCapabilities } from "@/features/auth/use-session";
 import { NetworkMetadataCard } from "@/features/network/network-detail-shared";
+import { ServiceFormDialog } from "@/features/workloads/service-form-dialog";
+import { resourceCapabilities } from "@/lib/capabilities";
 import { formatDate } from "@/lib/utils";
 
 const endpointColumn = createColumnHelper<ServiceEndpoint>();
+const EMPTY_SELECTOR: Record<string, string> = {};
 const serviceTabs = ["overview", "endpoints", "events", "yaml"] as const;
 type ServiceTab = (typeof serviceTabs)[number];
 
@@ -29,6 +36,8 @@ export function ServiceDetailPage() {
   const params = useParams({ strict: false }) as { namespace: string; name: string };
   const search = useSearch({ from: "/app/network/services/$namespace/$name" });
   const navigate = useNavigate();
+  const [editOpen, setEditOpen] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
   const tab = isServiceTab(search.tab) ? search.tab : "overview";
   const changeTab = (value: string) => {
     if (!isServiceTab(value)) return;
@@ -44,6 +53,8 @@ export function ServiceDetailPage() {
     queryFn: () => api.service(params.namespace, params.name),
     refetchInterval: 20_000,
   });
+  const capabilities = useCapabilities(params.namespace).data;
+  const serviceCaps = resourceCapabilities(capabilities, "services");
   if (query.isLoading) return <LoadingState label="正在加载 Service 详情" className="min-h-[60vh]" />;
   if (query.isError) return <ErrorState error={query.error} onRetry={() => void query.refetch()} />;
   const service = query.data!;
@@ -52,8 +63,11 @@ export function ServiceDetailPage() {
       <PageHeader
         breadcrumb={<><Link to="/network" search={{ q: search.q, namespace: search.namespace, tab: "services" }} className="text-primary underline underline-offset-2">服务与路由</Link> / {service.namespace} / {service.name}</>}
         title={<span className="flex items-center gap-3"><Network className="h-5 w-5 text-muted-foreground" />{service.name}</span>}
-        description={<span className="flex flex-wrap items-center gap-2"><Badge variant="secondary">{service.type}</Badge><StatusBadge status={service.endpointCount > 0 ? "Ready" : "NoReadyEndpoints"} /><span>{service.endpointCount} 个就绪 Endpoint</span><span>·</span><span>{service.namespace}</span></span>}
-        actions={<span className="text-xs text-muted-foreground"><FileCode2 className="mr-1 inline h-3.5 w-3.5" />YAML 可在下方标签查看</span>}
+        description={<span className="flex flex-wrap items-center gap-2"><Badge variant={service.headless ? "outline" : "secondary"}>{service.headless ? "Headless" : service.type}</Badge><StatusBadge status={service.endpointCount > 0 ? "Ready" : "NoReadyEndpoints"} /><span>{service.endpointCount} 个就绪 Endpoint</span><span>·</span><span>{service.namespace}</span></span>}
+        actions={<div className="flex items-center gap-2">
+          {serviceCaps.update ? <Button variant="outline" size="sm" onClick={() => setEditOpen(true)}><Pencil className="h-4 w-4" />编辑</Button> : null}
+          {serviceCaps.delete ? <Button variant="destructive" size="sm" onClick={() => setDeleteOpen(true)}><Trash2 className="h-4 w-4" />删除</Button> : null}
+        </div>}
       />
       <Tabs value={tab} onValueChange={changeTab}>
         <TabsList>
@@ -69,8 +83,8 @@ export function ServiceDetailPage() {
               <CardContent><dl className="grid gap-5 sm:grid-cols-2">
                 <DetailItem label="名称" value={service.name} mono />
                 <DetailItem label="命名空间" value={service.namespace} />
-                <DetailItem label="类型" value={service.type} />
-                <DetailItem label="ClusterIP" value={service.clusterIP} mono />
+                <DetailItem label="类型" value={service.headless ? "ClusterIP (Headless)" : service.type} />
+                <DetailItem label="ClusterIP" value={service.headless ? "None（Headless）" : service.clusterIP} mono />
                 <DetailItem label="外部地址" value={service.externalIP || "—"} mono />
                 <DetailItem label="ExternalName" value={service.externalName || "—"} mono />
                 <DetailItem label="会话保持" value={service.sessionAffinity || "None"} />
@@ -78,7 +92,9 @@ export function ServiceDetailPage() {
                 <DetailItem label="IP 族策略" value={service.ipFamilyPolicy || "—"} />
                 <DetailItem label="LoadBalancer Class" value={service.loadBalancerClass || "—"} />
                 <DetailItem label="创建时间" value={formatDate(service.createdAt)} />
-              </dl></CardContent>
+              </dl>
+                {service.headless ? <p className="mt-4 rounded-md border bg-muted/30 px-3 py-2 text-xs leading-5 text-muted-foreground">Headless Service 不分配 ClusterIP，也不经过 kube-proxy 负载均衡；DNS 直接返回匹配 Pod 的地址。它适合 StatefulSet、数据库等点对点发现，不适合直接作为外部入口。</p> : null}
+              </CardContent>
             </Card>
             <Card>
               <CardHeader><CardTitle>端口与 Selector</CardTitle></CardHeader>
@@ -122,6 +138,27 @@ export function ServiceDetailPage() {
         <TabsContent value="events"><ResourceEvents namespace={service.namespace} objectKind="Service" objectName={service.name} /></TabsContent>
         <TabsContent value="yaml"><YamlPanel type="service" name={service.name} namespace={service.namespace} height="64vh" /></TabsContent>
       </Tabs>
+      <ServiceFormDialog
+        open={editOpen}
+        onOpenChange={setEditOpen}
+        namespace={service.namespace}
+        workloadName=""
+        workloadSelector={EMPTY_SELECTOR}
+        contextLabel="编辑 Service 的访问类型、Selector 与端口"
+        service={service}
+        onSaved={async () => { await query.refetch(); }}
+      />
+      <DeleteResourceDialog
+        open={deleteOpen}
+        onOpenChange={setDeleteOpen}
+        resourceKind="Service"
+        name={service.name}
+        description="删除后 EndpointSlice 与访问入口将被移除，已有 Pod 不会受影响。"
+        onConfirm={async () => {
+          await api.deleteService(service.namespace, service.name, service.resourceVersion);
+          await navigate({ to: "/network", search: { ...search, tab: "services" } });
+        }}
+      />
     </>
   );
 }

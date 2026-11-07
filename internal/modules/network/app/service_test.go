@@ -9,22 +9,30 @@ import (
 )
 
 type networkRepository struct {
-	services       []domain.ServiceSummary
-	service        domain.ServiceDetail
-	ingresses      []domain.IngressSummary
-	ingress        domain.IngressDetail
-	ingressClasses []domain.IngressClassSummary
-	err            error
-	createCalls    int
-	updateCalls    int
-	deleteCalls    int
-	lastCreate     domain.ServiceCreateSpec
-	lastUpdate     domain.ServiceUpdateSpec
-	lastUpdateNS   string
-	lastUpdateName string
-	lastDeleteNS   string
-	lastDeleteName string
-	lastDeleteRV   string
+	services              []domain.ServiceSummary
+	service               domain.ServiceDetail
+	ingresses             []domain.IngressSummary
+	ingress               domain.IngressDetail
+	ingressClasses        []domain.IngressClassSummary
+	err                   error
+	createCalls           int
+	updateCalls           int
+	deleteCalls           int
+	lastCreate            domain.ServiceCreateSpec
+	lastUpdate            domain.ServiceUpdateSpec
+	lastUpdateNS          string
+	lastUpdateName        string
+	lastDeleteNS          string
+	lastDeleteName        string
+	lastDeleteRV          string
+	ingressCreateCalls    int
+	ingressUpdateCalls    int
+	ingressDeleteCalls    int
+	lastIngressCreate     domain.IngressCreateSpec
+	lastIngressUpdate     domain.IngressUpdateSpec
+	lastIngressUpdateNS   string
+	lastIngressUpdateName string
+	lastIngressDeleteRV   string
 }
 
 func (r *networkRepository) ListServices(context.Context, domain.ListQuery) ([]domain.ServiceSummary, error) {
@@ -57,6 +65,23 @@ func (r *networkRepository) ListIngresses(context.Context, domain.ListQuery) ([]
 }
 func (r *networkRepository) GetIngress(context.Context, string, string) (domain.IngressDetail, error) {
 	return r.ingress, r.err
+}
+func (r *networkRepository) CreateIngress(_ context.Context, spec domain.IngressCreateSpec) (domain.IngressDetail, error) {
+	r.ingressCreateCalls++
+	r.lastIngressCreate = spec
+	return r.ingress, r.err
+}
+func (r *networkRepository) UpdateIngress(_ context.Context, namespace, name string, update domain.IngressUpdateSpec) (domain.IngressDetail, error) {
+	r.ingressUpdateCalls++
+	r.lastIngressUpdateNS = namespace
+	r.lastIngressUpdateName = name
+	r.lastIngressUpdate = update
+	return r.ingress, r.err
+}
+func (r *networkRepository) DeleteIngress(_ context.Context, _, _ string, resourceVersion string) error {
+	r.ingressDeleteCalls++
+	r.lastIngressDeleteRV = resourceVersion
+	return r.err
 }
 
 func (r *networkRepository) ListIngressClasses(context.Context, domain.ListQuery) ([]domain.IngressClassSummary, error) {
@@ -226,6 +251,62 @@ func TestNetworkServiceRejectsInvalidServiceBeforeRepositoryWrite(t *testing.T) 
 	}
 }
 
+func TestNetworkServiceNormalizesAndLocksHeadlessMode(t *testing.T) {
+	t.Parallel()
+	repo := &networkRepository{}
+	service := New(repo, &networkCaptureAuthorizer{}, &networkCaptureAuditor{})
+	actor := domain.Actor{Username: "admin"}
+
+	if _, err := service.CreateService(context.Background(), actor, domain.ServiceCreateSpec{
+		Name: "db", Namespace: "prod", Headless: true, Selector: map[string]string{"app": "db"},
+		Ports: []domain.ServicePortInput{{Name: "http", Port: 80}},
+	}); err != nil {
+		t.Fatalf("CreateService() headless error = %v", err)
+	}
+	if repo.lastCreate.Type != "ClusterIP" || !repo.lastCreate.Headless {
+		t.Fatalf("headless create spec = %#v", repo.lastCreate)
+	}
+
+	if _, err := service.CreateService(context.Background(), actor, domain.ServiceCreateSpec{
+		Name: "db-node", Namespace: "prod", Type: "NodePort", Headless: true, Selector: map[string]string{"app": "db"},
+		Ports: []domain.ServicePortInput{{Name: "http", Port: 80}},
+	}); err == nil {
+		t.Fatal("CreateService() accepted Headless NodePort")
+	} else {
+		var validation *domain.ValidationError
+		if !errors.As(err, &validation) || validation.Field != "headless" {
+			t.Fatalf("headless type validation = %#v", err)
+		}
+	}
+
+	repo.service = domain.ServiceDetail{ServiceSummary: domain.ServiceSummary{Name: "api", Namespace: "prod"}}
+	if _, err := service.UpdateService(context.Background(), actor, "prod", "api", domain.ServiceUpdateSpec{
+		Type: "ClusterIP", Headless: true, Selector: map[string]string{"app": "web"},
+		Ports: []domain.ServicePortInput{{Port: 80}},
+	}); err == nil {
+		t.Fatal("UpdateService() changed headless mode")
+	} else {
+		var validation *domain.ValidationError
+		if !errors.As(err, &validation) || validation.Field != "headless" {
+			t.Fatalf("headless immutability validation = %#v", err)
+		}
+	}
+	if repo.updateCalls != 0 {
+		t.Fatalf("repository update called for immutable headless change: %d", repo.updateCalls)
+	}
+
+	repo.service.Headless = true
+	if _, err := service.UpdateService(context.Background(), actor, "prod", "api", domain.ServiceUpdateSpec{
+		Type: "ClusterIP", Headless: true, Selector: map[string]string{"app": "web"},
+		Ports: []domain.ServicePortInput{{Port: 80}},
+	}); err != nil {
+		t.Fatalf("UpdateService() matching headless mode error = %v", err)
+	}
+	if repo.updateCalls != 1 {
+		t.Fatalf("repository update calls = %d, want 1", repo.updateCalls)
+	}
+}
+
 func TestNetworkServiceUpdatesAndDeletesWithResourceVersion(t *testing.T) {
 	t.Parallel()
 	repo := &networkRepository{service: domain.ServiceDetail{ServiceSummary: domain.ServiceSummary{Name: "api", Namespace: "prod"}}}
@@ -246,5 +327,52 @@ func TestNetworkServiceUpdatesAndDeletesWithResourceVersion(t *testing.T) {
 	}
 	if len(auditor.events) != 2 || auditor.events[0].Action != "update-service" || auditor.events[1].Action != "delete-service" {
 		t.Fatalf("audit = %#v", auditor.events)
+	}
+}
+
+func TestNetworkIngressWritesValidateAuthAndResourceVersions(t *testing.T) {
+	t.Parallel()
+	repo := &networkRepository{ingress: domain.IngressDetail{IngressSummary: domain.IngressSummary{Name: "web", Namespace: "prod"}}}
+	auditor := &networkCaptureAuditor{}
+	service := New(repo, &networkCaptureAuthorizer{}, auditor)
+	actor := domain.Actor{Username: "admin"}
+	create := domain.IngressCreateSpec{
+		Name: "web", Namespace: "prod", Class: "nginx",
+		Paths: []domain.IngressPathInput{{Host: "app.example.test", Path: "/", PathType: "Prefix", Service: "web", Port: "80"}},
+		TLS:   []domain.IngressTLS{{Hosts: []string{"app.example.test"}, SecretName: "web-tls"}},
+	}
+	if _, err := service.CreateIngress(context.Background(), actor, create); err != nil {
+		t.Fatalf("CreateIngress() error = %v", err)
+	}
+	if repo.ingressCreateCalls != 1 || repo.lastIngressCreate.Name != "web" || repo.lastIngressCreate.TLS[0].SecretName != "web-tls" {
+		t.Fatalf("create ingress call = %d spec = %#v", repo.ingressCreateCalls, repo.lastIngressCreate)
+	}
+	update := domain.IngressUpdateSpec{
+		Class: "nginx", Paths: []domain.IngressPathInput{{Path: "/", PathType: "Prefix", Service: "web", Port: "8080"}}, ResourceVersion: "31",
+	}
+	if _, err := service.UpdateIngress(context.Background(), actor, "prod", "web", update); err != nil {
+		t.Fatalf("UpdateIngress() error = %v", err)
+	}
+	if repo.ingressUpdateCalls != 1 || repo.lastIngressUpdateNS != "prod" || repo.lastIngressUpdateName != "web" || repo.lastIngressUpdate.ResourceVersion != "31" {
+		t.Fatalf("update ingress call = %d %s/%s spec = %#v", repo.ingressUpdateCalls, repo.lastIngressUpdateNS, repo.lastIngressUpdateName, repo.lastIngressUpdate)
+	}
+	if err := service.DeleteIngress(context.Background(), actor, "prod", "web", "32"); err != nil {
+		t.Fatalf("DeleteIngress() error = %v", err)
+	}
+	if repo.ingressDeleteCalls != 1 || repo.lastIngressDeleteRV != "32" {
+		t.Fatalf("delete ingress calls = %d rv = %q", repo.ingressDeleteCalls, repo.lastIngressDeleteRV)
+	}
+	if len(auditor.events) != 3 || auditor.events[0].Action != "create-ingress" || auditor.events[1].Action != "update-ingress" || auditor.events[2].Action != "delete-ingress" {
+		t.Fatalf("audit = %#v", auditor.events)
+	}
+
+	before := repo.ingressCreateCalls
+	if _, err := service.CreateIngress(context.Background(), actor, domain.IngressCreateSpec{
+		Name: "invalid", Namespace: "prod", Paths: []domain.IngressPathInput{{Host: "bad_host", Path: "/", Service: "web", Port: "80"}},
+	}); err == nil {
+		t.Fatal("CreateIngress() accepted invalid host")
+	}
+	if repo.ingressCreateCalls != before {
+		t.Fatalf("invalid ingress reached repository: %d -> %d", before, repo.ingressCreateCalls)
 	}
 }

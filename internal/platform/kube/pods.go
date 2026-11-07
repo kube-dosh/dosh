@@ -97,6 +97,12 @@ func (c *Client) GetPod(ctx context.Context, namespace, name string) (domain.Pod
 	return detail, nil
 }
 
+func (c *Client) DeletePod(ctx context.Context, namespace, name string) error {
+	ctx, cancel := c.withTimeout(ctx)
+	defer cancel()
+	return mapKubeError(c.clientset.CoreV1().Pods(namespace).Delete(ctx, name, metav1.DeleteOptions{}))
+}
+
 func (c *Client) StreamPodLogs(ctx context.Context, namespace, name, container string, follow bool, tailLines int64, timestamps bool, limitBytes int64) (io.ReadCloser, error) {
 	options := &corev1.PodLogOptions{
 		Container:  container,

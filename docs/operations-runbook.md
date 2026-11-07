@@ -12,9 +12,9 @@
 | 容器端口 | `32626` |
 | 当前生产版本 | App `0.1.2` / Chart `dosh-0.1.4`（revision 12，2/2 Ready） |
 | 当前源码版本 | App `0.1.5` / Chart `dosh-0.1.7`（Token/HTTP/HTTPS 候选，生产未升级） |
-| 当前源码状态 | v2.49：工作负载实例节点跳转、访问方式 Service 增删改、命名空间 Foreground 级联删除；默认 TokenReview 登录，HTTP/HTTPS 双模式 |
-| 当前 Preview 候选 | `192.168.122.10:5000/dosh/dosh:0.1.5-rc-workload-services-final-20261106T151734Z@sha256:60fa40aa3720446acf120bafce9e44dc754f2e757121c1c59545a2134d9dacb3` |
-| 当前 Preview Release | `dosh-preview/dosh-preview` revision 16、1/1 Ready、NodePort `32630`；前有 NGINX 与 Cloudflare strict SSL；生产未改动 |
+| 当前源码状态 | 资源管理操作闭环：工作负载、Pod、命名空间、Service/Ingress、ConfigMap/Secret、PVC 列表与详情均提供资源级 RBAC 控制的写操作；PV、StorageClass、事件、审计保持只读 |
+| 当前 Preview 候选 | `192.168.122.10:5000/dosh/dosh:0.1.5-rc-resource-actions-20261107T034120Z@sha256:cacde218267aae6a6f45c48761d041587e2d9b14b698d6e0eae74a4c6c244146` |
+| 当前 Preview Release | `dosh-preview/dosh-preview` revision 17、1/1 Ready、NodePort `32630`；前有 NGINX 与 Cloudflare strict SSL；生产未改动 |
 | 历史隔离 Token Release | `dosh-token-e2e/dosh-token-e2e` revision 10（rollback 到 revision 8 配置）、1/1 Ready、NodePort `32628`；HTTPS 自签证书；历史证据不继承给 v2.49 |
 | 历史源码绑定 | `deploy/release/bindings/source-binding-v247-token.txt`；218 个源文件，binary SHA-256 `b01911f428ac8732fc80b6ef02ce7edb610c4178454a48791d9fd9d73ebc0511`；仅绑定 v2.47 |
 | 历史证据归档 | `/var/lib/dosh/evidence/c114113009dd/20261105T014514Z-v247-final-token-r1`；23 文件，manifest SHA-256 `734cbdbc10b15e4d48f56665eed24e5e170ec68622ce8a5390b0a92114570005`；不继承给 v2.49 |
@@ -201,11 +201,13 @@ PUT  /api/v1/services/{namespace}/{name}
 DELETE /api/v1/services/{namespace}/{name}?resourceVersion=<当前版本>
 ```
 
-创建请求包含 `name`、`namespace`、`type`、`selector` 和 1–10 个 `ports`。支持 `ClusterIP`、
-`NodePort`、`LoadBalancer` 与 `TCP`、`UDP`、`SCTP`；`targetPort` 可填数字或命名端口。NodePort 和
+创建请求包含 `name`、`namespace`、`type`、`headless`、`selector` 和 1–10 个 `ports`。支持
+`ClusterIP`、`NodePort`、`LoadBalancer` 与 `TCP`、`UDP`、`SCTP`；`targetPort` 可填数字或命名端口。
+`headless=true` 时 `type` 必须为 `ClusterIP`，Dosh 会写入 `clusterIP: None`，由 DNS 直接返回匹配
+Pod 地址，不经过 kube-proxy 负载均衡；Headless 入口不适合直接作为外部访问入口。NodePort 和
 LoadBalancer 不要求手工指定节点端口，由 Kubernetes 自动分配；更新时按 `protocol/port` 保留已有
-NodePort。多端口必须为每个端口命名，同一 `protocol/port` 不可重复。更新和删除携带
-`resourceVersion`，旧版本返回 409，避免覆盖并发修改。
+NodePort。多端口必须为每个端口命名，同一 `protocol/port` 不可重复。Service 创建后 Headless 模式
+不可切换。更新和删除携带 `resourceVersion`，旧版本返回 409，避免覆盖并发修改。
 
 ```bash
 kubectl -n <namespace> get service <name> -o wide

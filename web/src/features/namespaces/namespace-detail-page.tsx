@@ -18,6 +18,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ResourceEvents } from "@/features/events/resource-events";
 import { useCapabilities } from "@/features/auth/use-session";
 import { NamespaceDeleteDialog } from "@/features/namespaces/namespace-delete-dialog";
+import { resourceCapabilities } from "@/lib/capabilities";
 import { formatDate } from "@/lib/utils";
 
 const namespaceTabs = ["overview", "quotas", "limits", "events", "yaml"] as const;
@@ -108,8 +109,9 @@ export function NamespaceDetailPage() {
   const tab = isNamespaceTab(search.tab) ? search.tab : "overview";
   const query = useQuery({ queryKey: ["namespace", params.name], queryFn: () => api.namespace(params.name), refetchInterval: 20_000 });
   const capabilities = useCapabilities().data;
+  const namespaceCaps = resourceCapabilities(capabilities, "namespaces");
   const protectedNamespace = params.name === "default" || params.name.startsWith("kube-");
-  const canDelete = Boolean(capabilities?.deleteNamespace) && !protectedNamespace;
+  const canDelete = (namespaceCaps.delete || Boolean(capabilities?.deleteNamespace)) && !protectedNamespace;
   if (query.isLoading) return <LoadingState label="正在加载命名空间详情" className="min-h-[60vh]" />;
   if (query.isError) return <ErrorState error={query.error} onRetry={() => void query.refetch()} />;
   const namespace = query.data!;

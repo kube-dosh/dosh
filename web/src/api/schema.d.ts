@@ -614,7 +614,36 @@ export interface paths {
             };
         };
         put?: never;
-        post?: never;
+        /** Create a namespace */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["NamespaceCreate"];
+                };
+            };
+            responses: {
+                /** @description Namespace created */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Namespace"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+                409: components["responses"]["Conflict"];
+                503: components["responses"]["DependencyUnavailable"];
+            };
+        };
         delete?: never;
         options?: never;
         head?: never;
@@ -1195,7 +1224,35 @@ export interface paths {
         };
         put?: never;
         post?: never;
-        delete?: never;
+        /** Delete a Pod */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    namespace: components["parameters"]["NamespacePath"];
+                    name: components["parameters"]["Name"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Pod deletion accepted */
+                202: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["OperationStatus"];
+                    };
+                };
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+                404: components["responses"]["NotFound"];
+                409: components["responses"]["Conflict"];
+                503: components["responses"]["DependencyUnavailable"];
+            };
+        };
         options?: never;
         head?: never;
         patch?: never;
@@ -1444,9 +1501,11 @@ export interface paths {
         put?: never;
         /**
          * Create a Service
-         * @description Creates a ClusterIP, NodePort or LoadBalancer Service. Kubernetes allocates
-         *     NodePorts automatically. Selector labels associate the resulting EndpointSlice
-         *     addresses with a workload's pods.
+         * @description Creates a ClusterIP, Headless, NodePort or LoadBalancer Service. A Headless
+         *     Service uses type ClusterIP with headless=true (clusterIP: None), so DNS
+         *     returns the selected Pod addresses directly without kube-proxy load balancing.
+         *     Kubernetes allocates NodePorts automatically. Selector labels associate the
+         *     resulting EndpointSlice addresses with a workload's pods.
          */
         post: {
             parameters: {
@@ -1516,7 +1575,11 @@ export interface paths {
                 404: components["responses"]["NotFound"];
             };
         };
-        /** Update Service type, selector and ports */
+        /**
+         * Update Service type, selector and ports
+         * @description The Headless mode is immutable after creation because Kubernetes does not
+         *     allow changing an allocated clusterIP to None or the reverse.
+         */
         put: {
             parameters: {
                 query?: never;
@@ -1627,7 +1690,36 @@ export interface paths {
             };
         };
         put?: never;
-        post?: never;
+        /** Create an Ingress */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["IngressCreate"];
+                };
+            };
+            responses: {
+                /** @description Created Ingress detail */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["IngressDetail"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+                409: components["responses"]["Conflict"];
+                503: components["responses"]["DependencyUnavailable"];
+            };
+        };
         delete?: never;
         options?: never;
         head?: never;
@@ -1667,9 +1759,73 @@ export interface paths {
                 404: components["responses"]["NotFound"];
             };
         };
-        put?: never;
+        /** Update Ingress class, routes and TLS configuration */
+        put: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    namespace: components["parameters"]["NamespacePath"];
+                    name: components["parameters"]["Name"];
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["IngressUpdate"];
+                };
+            };
+            responses: {
+                /** @description Updated Ingress detail */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["IngressDetail"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+                404: components["responses"]["NotFound"];
+                409: components["responses"]["Conflict"];
+                503: components["responses"]["DependencyUnavailable"];
+            };
+        };
         post?: never;
-        delete?: never;
+        /** Delete an Ingress */
+        delete: {
+            parameters: {
+                query?: {
+                    resourceVersion?: string;
+                };
+                header?: never;
+                path: {
+                    namespace: components["parameters"]["NamespacePath"];
+                    name: components["parameters"]["Name"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Ingress deletion accepted */
+                202: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["OperationStatus"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+                404: components["responses"]["NotFound"];
+                409: components["responses"]["Conflict"];
+                503: components["responses"]["DependencyUnavailable"];
+            };
+        };
         options?: never;
         head?: never;
         patch?: never;
@@ -1838,7 +1994,36 @@ export interface paths {
             };
         };
         put?: never;
-        post?: never;
+        /** Create a ConfigMap */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["ConfigMapCreate"];
+                };
+            };
+            responses: {
+                /** @description Created ConfigMap detail */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ConfigMapDetail"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+                409: components["responses"]["Conflict"];
+                503: components["responses"]["DependencyUnavailable"];
+            };
+        };
         delete?: never;
         options?: never;
         head?: never;
@@ -1877,9 +2062,73 @@ export interface paths {
                 404: components["responses"]["NotFound"];
             };
         };
-        put?: never;
+        /** Update ConfigMap data */
+        put: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    namespace: components["parameters"]["NamespacePath"];
+                    name: components["parameters"]["Name"];
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["ConfigMapUpdate"];
+                };
+            };
+            responses: {
+                /** @description Updated ConfigMap detail */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ConfigMapDetail"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+                404: components["responses"]["NotFound"];
+                409: components["responses"]["Conflict"];
+                503: components["responses"]["DependencyUnavailable"];
+            };
+        };
         post?: never;
-        delete?: never;
+        /** Delete a ConfigMap */
+        delete: {
+            parameters: {
+                query?: {
+                    resourceVersion?: string;
+                };
+                header?: never;
+                path: {
+                    namespace: components["parameters"]["NamespacePath"];
+                    name: components["parameters"]["Name"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description ConfigMap deletion accepted */
+                202: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["OperationStatus"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+                404: components["responses"]["NotFound"];
+                409: components["responses"]["Conflict"];
+                503: components["responses"]["DependencyUnavailable"];
+            };
+        };
         options?: never;
         head?: never;
         patch?: never;
@@ -1924,8 +2173,117 @@ export interface paths {
             };
         };
         put?: never;
-        post?: never;
+        /** Create a Secret with base64-encoded values */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["SecretWrite"];
+                };
+            };
+            responses: {
+                /** @description Created Secret metadata */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["SecretSummary"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+                409: components["responses"]["Conflict"];
+                503: components["responses"]["DependencyUnavailable"];
+            };
+        };
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/secrets/{namespace}/{name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Update Secret type and base64-encoded values */
+        put: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    namespace: components["parameters"]["NamespacePath"];
+                    name: components["parameters"]["Name"];
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["SecretWrite"];
+                };
+            };
+            responses: {
+                /** @description Updated Secret metadata */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["SecretSummary"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+                404: components["responses"]["NotFound"];
+                409: components["responses"]["Conflict"];
+                503: components["responses"]["DependencyUnavailable"];
+            };
+        };
+        post?: never;
+        /** Delete a Secret */
+        delete: {
+            parameters: {
+                query?: {
+                    resourceVersion?: string;
+                };
+                header?: never;
+                path: {
+                    namespace: components["parameters"]["NamespacePath"];
+                    name: components["parameters"]["Name"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Secret deletion accepted */
+                202: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["OperationStatus"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+                404: components["responses"]["NotFound"];
+                409: components["responses"]["Conflict"];
+                503: components["responses"]["DependencyUnavailable"];
+            };
+        };
         options?: never;
         head?: never;
         patch?: never;
@@ -2191,7 +2549,36 @@ export interface paths {
             };
         };
         put?: never;
-        post?: never;
+        /** Create a PersistentVolumeClaim */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["PersistentVolumeClaimCreate"];
+                };
+            };
+            responses: {
+                /** @description Created PersistentVolumeClaim detail */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["PersistentVolumeClaimDetail"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+                409: components["responses"]["Conflict"];
+                503: components["responses"]["DependencyUnavailable"];
+            };
+        };
         delete?: never;
         options?: never;
         head?: never;
@@ -2231,9 +2618,76 @@ export interface paths {
                 404: components["responses"]["NotFound"];
             };
         };
-        put?: never;
+        /**
+         * Expand a PersistentVolumeClaim
+         * @description Capacity can only increase. The bound StorageClass and CSI driver must support expansion.
+         */
+        put: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    namespace: components["parameters"]["NamespacePath"];
+                    name: components["parameters"]["Name"];
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["PersistentVolumeClaimUpdate"];
+                };
+            };
+            responses: {
+                /** @description Updated PersistentVolumeClaim detail */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["PersistentVolumeClaimDetail"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+                404: components["responses"]["NotFound"];
+                409: components["responses"]["Conflict"];
+                503: components["responses"]["DependencyUnavailable"];
+            };
+        };
         post?: never;
-        delete?: never;
+        /** Delete a PersistentVolumeClaim */
+        delete: {
+            parameters: {
+                query?: {
+                    resourceVersion?: string;
+                };
+                header?: never;
+                path: {
+                    namespace: components["parameters"]["NamespacePath"];
+                    name: components["parameters"]["Name"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description PersistentVolumeClaim deletion accepted */
+                202: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["OperationStatus"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+                404: components["responses"]["NotFound"];
+                409: components["responses"]["Conflict"];
+                503: components["responses"]["DependencyUnavailable"];
+            };
+        };
         options?: never;
         head?: never;
         patch?: never;
@@ -2383,6 +2837,15 @@ export interface components {
             editYAML: boolean;
             nodeCordon: boolean;
             reloadCertificate: boolean;
+            resourceActions?: {
+                [key: string]: components["schemas"]["ResourceCapabilities"];
+            };
+        };
+        ResourceCapabilities: {
+            create: boolean;
+            update: boolean;
+            delete: boolean;
+            scale: boolean;
         };
         ServerCertificate: {
             /** @enum {string} */
@@ -2582,6 +3045,15 @@ export interface components {
             /** Format: date-time */
             createdAt: string;
         };
+        NamespaceCreate: {
+            name: string;
+            labels?: {
+                [key: string]: string;
+            };
+            annotations?: {
+                [key: string]: string;
+            };
+        };
         NamespaceDetail: components["schemas"]["Namespace"] & {
             resourceQuotas: components["schemas"]["ResourceQuota"][];
             limitRanges: components["schemas"]["LimitRange"][];
@@ -2726,6 +3198,8 @@ export interface components {
             namespace: string;
             resourceVersion?: string;
             type: string;
+            /** @description True when the Service has clusterIP None and DNS returns Pod addresses directly. */
+            headless: boolean;
             clusterIP: string;
             externalIP: string;
             ports: components["schemas"]["ServicePort"][];
@@ -2752,6 +3226,11 @@ export interface components {
             namespace: string;
             /** @enum {string} */
             type: "ClusterIP" | "NodePort" | "LoadBalancer";
+            /**
+             * @description Create a Headless Service with clusterIP None. Requires type ClusterIP.
+             * @default false
+             */
+            headless: boolean;
             selector: {
                 [key: string]: string;
             };
@@ -2760,6 +3239,11 @@ export interface components {
         ServiceUpdate: {
             /** @enum {string} */
             type: "ClusterIP" | "NodePort" | "LoadBalancer";
+            /**
+             * @description Must match the existing Service mode. Headless cannot be changed after creation.
+             * @default false
+             */
+            headless: boolean;
             selector: {
                 [key: string]: string;
             };
@@ -2803,6 +3287,7 @@ export interface components {
         IngressSummary: {
             name: string;
             namespace: string;
+            resourceVersion?: string;
             class: string;
             paths: components["schemas"]["IngressPath"][];
             tlsHosts?: string[];
@@ -2822,6 +3307,37 @@ export interface components {
             };
             defaultBackend?: components["schemas"]["IngressPath"];
             tls?: components["schemas"]["IngressTLS"][];
+        };
+        IngressPathInput: {
+            host?: string;
+            path: string;
+            /**
+             * @default Prefix
+             * @enum {string}
+             */
+            pathType: "Prefix" | "Exact" | "ImplementationSpecific";
+            service: string;
+            /** @description Backend Service port number or named port. */
+            port: string;
+        };
+        IngressCreate: {
+            name: string;
+            namespace: string;
+            class?: string;
+            paths: components["schemas"]["IngressPathInput"][];
+            tls?: components["schemas"]["IngressTLS"][];
+            annotations?: {
+                [key: string]: string;
+            };
+        };
+        IngressUpdate: {
+            class?: string;
+            paths: components["schemas"]["IngressPathInput"][];
+            tls?: components["schemas"]["IngressTLS"][];
+            annotations?: {
+                [key: string]: string;
+            };
+            resourceVersion?: string;
         };
         ServiceList: {
             items: components["schemas"]["ServiceSummary"][];
@@ -2845,6 +3361,7 @@ export interface components {
         ConfigMapSummary: {
             name: string;
             namespace: string;
+            resourceVersion?: string;
             keys: string[];
             dataBytes: number;
             /** Format: date-time */
@@ -2855,6 +3372,25 @@ export interface components {
                 [key: string]: string;
             };
         };
+        ConfigMapCreate: {
+            name: string;
+            namespace: string;
+            data: {
+                [key: string]: string;
+            };
+            annotations?: {
+                [key: string]: string;
+            };
+        };
+        ConfigMapUpdate: {
+            data: {
+                [key: string]: string;
+            };
+            annotations?: {
+                [key: string]: string;
+            };
+            resourceVersion?: string;
+        };
         SecretKey: {
             key: string;
             size: number;
@@ -2862,6 +3398,7 @@ export interface components {
         SecretSummary: {
             name: string;
             namespace: string;
+            resourceVersion?: string;
             type: string;
             keys: components["schemas"]["SecretKey"][];
             /** Format: date-time */
@@ -2871,6 +3408,19 @@ export interface components {
             data: {
                 [key: string]: string;
             };
+        };
+        SecretWrite: {
+            name?: string;
+            namespace?: string;
+            /** @default Opaque */
+            type: string;
+            data: {
+                [key: string]: string;
+            };
+            annotations?: {
+                [key: string]: string;
+            };
+            resourceVersion?: string;
         };
         ConfigMapList: {
             items: components["schemas"]["ConfigMapSummary"][];
@@ -2930,6 +3480,7 @@ export interface components {
         PersistentVolumeClaim: {
             name: string;
             namespace: string;
+            resourceVersion?: string;
             status: string;
             volumeName?: string;
             /** Format: int64 */
@@ -2950,6 +3501,36 @@ export interface components {
             /** Format: int64 */
             requestedCapacityBytes: number;
             conditions: components["schemas"]["Condition"][];
+        };
+        PersistentVolumeClaimCreate: {
+            name: string;
+            namespace: string;
+            storageClass?: string;
+            accessModes: ("ReadWriteOnce" | "ReadOnlyMany" | "ReadWriteMany" | "ReadWriteOncePod")[];
+            /** Format: int64 */
+            requestedCapacityBytes: number;
+            /**
+             * @default Filesystem
+             * @enum {string}
+             */
+            volumeMode: "Filesystem" | "Block";
+            labels?: {
+                [key: string]: string;
+            };
+            annotations?: {
+                [key: string]: string;
+            };
+        };
+        PersistentVolumeClaimUpdate: {
+            /** Format: int64 */
+            requestedCapacityBytes: number;
+            labels?: {
+                [key: string]: string;
+            };
+            annotations?: {
+                [key: string]: string;
+            };
+            resourceVersion?: string;
         };
         /** @enum {string} */
         ResourceType: "node" | "namespace" | "pod" | "deployment" | "statefulset" | "daemonset" | "job" | "cronjob" | "service" | "ingress" | "configmap" | "secret" | "storageclass" | "persistentvolume" | "persistentvolumeclaim";

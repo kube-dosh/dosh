@@ -3,17 +3,22 @@ import type {
   AuthConfig,
   Capabilities,
   ConfigMapDetail,
+  ConfigMapCreateInput,
   ConfigMapSummary,
+  ConfigMapUpdateInput,
   CronJobSuspendInput,
   DeploymentCreateInput,
   DeploymentPreview,
   EventItem,
   IngressDetail,
+  IngressCreateInput,
   IngressClassSummary,
   IngressSummary,
+  IngressUpdateInput,
   ListParams,
   ListResponse,
   NamespaceItem,
+  NamespaceCreateInput,
   NamespaceDetail,
   NodeDetail,
   NodeLabelUpdate,
@@ -22,13 +27,16 @@ import type {
   Overview,
   PersistentVolume,
   PersistentVolumeClaim,
+  PersistentVolumeClaimCreateInput,
   PersistentVolumeClaimDetail,
+  PersistentVolumeClaimUpdateInput,
   PersistentVolumeDetail,
   PodDetail,
   PodSummary,
   Problem,
   SecretReveal,
   SecretSummary,
+  SecretWriteInput,
   ServiceCreateInput,
   ServiceDetail,
   ServiceSummary,
@@ -242,6 +250,8 @@ export const api = {
   setNodeTaints: async (name: string, input: NodeTaintUpdate) =>
     normalizeNodeDetail(await request<NodeDetail>(`/api/v1/nodes/${encodeURIComponent(name)}/taints`, { method: "PUT", body: JSON.stringify(input) })),
   namespaces: (params?: ListParams) => request<ListResponse<NamespaceItem>>(`/api/v1/namespaces${query(params)}`),
+  createNamespace: (input: NamespaceCreateInput) =>
+    request<NamespaceItem>("/api/v1/namespaces", { method: "POST", body: JSON.stringify(input) }),
   namespace: async (name: string) => normalizeNamespaceDetail(await request<NamespaceDetail>(`/api/v1/namespaces/${encodeURIComponent(name)}`)),
   deleteNamespace: (name: string, resourceVersion?: string) =>
     request<{ status: string }>(`/api/v1/namespaces/${encodeURIComponent(name)}${resourceVersion ? `?resourceVersion=${encodeURIComponent(resourceVersion)}` : ""}`, {
@@ -277,6 +287,8 @@ export const api = {
     }),
   pods: (params?: ListParams) => request<ListResponse<PodSummary>>(`/api/v1/pods${query(params)}`),
   pod: async (namespace: string, name: string) => normalizePodDetail(await request<PodDetail>(`/api/v1/pods/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}`)),
+  deletePod: (namespace: string, name: string) =>
+    request<{ status: string }>(`/api/v1/pods/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}`, { method: "DELETE" }),
   events: (params?: ListParams) => request<ListResponse<EventItem>>(`/api/v1/events${query(params)}`),
   services: (params?: ListParams) => request<ListResponse<ServiceSummary>>(`/api/v1/services${query(params)}`),
   service: async (namespace: string, name: string) => normalizeServiceDetail(await request<ServiceDetail>(`/api/v1/services/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}`)),
@@ -294,14 +306,39 @@ export const api = {
     }),
   ingresses: (params?: ListParams) => request<ListResponse<IngressSummary>>(`/api/v1/ingresses${query(params)}`),
   ingress: async (namespace: string, name: string) => normalizeIngressDetail(await request<IngressDetail>(`/api/v1/ingresses/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}`)),
+  createIngress: async (input: IngressCreateInput) => normalizeIngressDetail(await request<IngressDetail>("/api/v1/ingresses", {
+    method: "POST",
+    body: JSON.stringify(input),
+  })),
+  updateIngress: async (namespace: string, name: string, input: IngressUpdateInput) => normalizeIngressDetail(await request<IngressDetail>(`/api/v1/ingresses/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}`, {
+    method: "PUT",
+    body: JSON.stringify(input),
+  })),
+  deleteIngress: (namespace: string, name: string, resourceVersion?: string) =>
+    request<{ status: string }>(`/api/v1/ingresses/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}${resourceVersion ? `?resourceVersion=${encodeURIComponent(resourceVersion)}` : ""}`, { method: "DELETE" }),
   ingressClasses: (params?: ListParams) => request<ListResponse<IngressClassSummary>>(`/api/v1/ingressclasses${query(params)}`),
   configmaps: (params?: ListParams) => request<ListResponse<ConfigMapSummary>>(`/api/v1/configmaps${query(params)}`),
   configmap: async (namespace: string, name: string) => normalizeConfigMapDetail(await request<ConfigMapDetail>(`/api/v1/configmaps/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}`)),
+  createConfigMap: async (input: ConfigMapCreateInput) => normalizeConfigMapDetail(await request<ConfigMapDetail>("/api/v1/configmaps", {
+    method: "POST",
+    body: JSON.stringify(input),
+  })),
+  updateConfigMap: async (namespace: string, name: string, input: ConfigMapUpdateInput) => normalizeConfigMapDetail(await request<ConfigMapDetail>(`/api/v1/configmaps/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}`, {
+    method: "PUT",
+    body: JSON.stringify(input),
+  })),
+  deleteConfigMap: (namespace: string, name: string, resourceVersion?: string) =>
+    request<{ status: string }>(`/api/v1/configmaps/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}${resourceVersion ? `?resourceVersion=${encodeURIComponent(resourceVersion)}` : ""}`, { method: "DELETE" }),
   serverCertificate: () => request<ServerCertificate>("/api/v1/certificate"),
   reloadServerCertificate: () => request<ServerCertificate>("/api/v1/certificate/reload", { method: "POST" }),
   secrets: (params?: ListParams) => request<ListResponse<SecretSummary>>(`/api/v1/secrets${query(params)}`),
   revealSecret: async (namespace: string, name: string) =>
     normalizeSecretReveal(await request<SecretReveal>(`/api/v1/secrets/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}/reveal`, { method: "POST" })),
+  createSecret: (input: SecretWriteInput) => request<SecretSummary>("/api/v1/secrets", { method: "POST", body: JSON.stringify(input) }),
+  updateSecret: (namespace: string, name: string, input: SecretWriteInput) =>
+    request<SecretSummary>(`/api/v1/secrets/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}`, { method: "PUT", body: JSON.stringify(input) }),
+  deleteSecret: (namespace: string, name: string, resourceVersion?: string) =>
+    request<{ status: string }>(`/api/v1/secrets/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}${resourceVersion ? `?resourceVersion=${encodeURIComponent(resourceVersion)}` : ""}`, { method: "DELETE" }),
   storageclasses: (params?: ListParams) => request<ListResponse<StorageClass>>(`/api/v1/storageclasses${query(params)}`),
   storageclass: async (name: string) => normalizeStorageClassDetail(await request<StorageClassDetail>(`/api/v1/storageclasses/${encodeURIComponent(name)}`)),
   persistentvolumes: (params?: ListParams) => request<ListResponse<PersistentVolume>>(`/api/v1/persistentvolumes${query(params)}`),
@@ -310,6 +347,12 @@ export const api = {
     request<ListResponse<PersistentVolumeClaim>>(`/api/v1/persistentvolumeclaims${query(params)}`),
   persistentvolumeclaim: async (namespace: string, name: string) =>
     normalizePersistentVolumeClaimDetail(await request<PersistentVolumeClaimDetail>(`/api/v1/persistentvolumeclaims/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}`)),
+  createPersistentVolumeClaim: async (input: PersistentVolumeClaimCreateInput) =>
+    normalizePersistentVolumeClaimDetail(await request<PersistentVolumeClaimDetail>("/api/v1/persistentvolumeclaims", { method: "POST", body: JSON.stringify(input) })),
+  updatePersistentVolumeClaim: async (namespace: string, name: string, input: PersistentVolumeClaimUpdateInput) =>
+    normalizePersistentVolumeClaimDetail(await request<PersistentVolumeClaimDetail>(`/api/v1/persistentvolumeclaims/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}`, { method: "PUT", body: JSON.stringify(input) })),
+  deletePersistentVolumeClaim: (namespace: string, name: string, resourceVersion?: string) =>
+    request<{ status: string }>(`/api/v1/persistentvolumeclaims/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}${resourceVersion ? `?resourceVersion=${encodeURIComponent(resourceVersion)}` : ""}`, { method: "DELETE" }),
   yaml: (type: string, name: string, namespace?: string) =>
     request<YAMLResource>(`/api/v1/yaml?${new URLSearchParams({ type, name, ...(namespace ? { namespace } : {}) }).toString()}`),
   applyYAML: (yaml: string, resourceVersion?: string, dryRun = false) =>

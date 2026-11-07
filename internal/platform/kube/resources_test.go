@@ -288,6 +288,20 @@ func TestNamespacesSearchAndNotFound(t *testing.T) {
 	}
 }
 
+func TestCreateNamespacePersistsMetadata(t *testing.T) {
+	client, clientset := newFakeKubeClient()
+	created, err := client.CreateNamespace(context.Background(), domain.NamespaceCreateSpec{
+		Name: "preview", Labels: map[string]string{"team": "platform"}, Annotations: map[string]string{"owner": "ops"},
+	})
+	if err != nil || created.Name != "preview" || created.Labels["team"] != "platform" || created.Annotations["owner"] != "ops" {
+		t.Fatalf("CreateNamespace() = (%#v, %v)", created, err)
+	}
+	stored, err := clientset.CoreV1().Namespaces().Get(context.Background(), "preview", metav1.GetOptions{})
+	if err != nil || stored.Labels["team"] != "platform" || stored.Annotations["owner"] != "ops" {
+		t.Fatalf("stored namespace = %#v, err = %v", stored, err)
+	}
+}
+
 func TestDeleteNamespaceUsesForegroundCascadeAndChecksResourceVersion(t *testing.T) {
 	namespace := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "preview", ResourceVersion: "5"}}
 	client, clientset := newFakeKubeClient(namespace)
@@ -473,6 +487,41 @@ func TestStorageDetailConversionsAndNotFound(t *testing.T) {
 	}
 	if _, err := client.GetPersistentVolumeClaim(context.Background(), "prod", "missing"); !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("GetPersistentVolumeClaim() missing error = %v", err)
+	}
+}
+
+func TestPersistentVolumeClaimWritesCheckConflictAndForbidShrink(t *testing.T) {
+	storageClass := "standard"
+	claim := &corev1.PersistentVolumeClaim{
+		ObjectMeta: metav1.ObjectMeta{Name: "data", Namespace: "prod", ResourceVersion: "10"},
+		Spec: corev1.PersistentVolumeClaimSpec{
+			StorageClassName: &storageClass,
+			AccessModes:      []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce},
+			Resources: corev1.VolumeResourceRequirements{Requests: corev1.ResourceList{
+				corev1.ResourceStorage: resourceQuantity("1Gi"),
+			}},
+		},
+	}
+	client, clientset := newFakeKubeClient(claim)
+	updated, err := client.UpdatePersistentVolumeClaim(context.Background(), "prod", "data", domain.PersistentVolumeClaimUpdateSpec{
+		RequestedCapacityBytes: 2 << 30, ResourceVersion: "10", Labels: map[string]string{"team": "platform"},
+	})
+	if err != nil || updated.RequestedCapacityBytes != 2<<30 || updated.Labels["team"] != "platform" {
+		t.Fatalf("UpdatePersistentVolumeClaim() = (%#v, %v)", updated, err)
+	}
+	stored, err := clientset.CoreV1().PersistentVolumeClaims("prod").Get(context.Background(), "data", metav1.GetOptions{})
+	if err != nil || stored.Spec.Resources.Requests.Storage().Value() != 2<<30 || stored.Labels["team"] != "platform" {
+		t.Fatalf("stored PVC = %#v, err = %v", stored, err)
+	}
+	if _, err := client.UpdatePersistentVolumeClaim(context.Background(), "prod", "data", domain.PersistentVolumeClaimUpdateSpec{
+		RequestedCapacityBytes: 1 << 30, ResourceVersion: "10",
+	}); !errors.Is(err, domain.ErrInvalid) {
+		t.Fatalf("shrink error = %v, want ErrInvalid", err)
+	}
+	if _, err := client.UpdatePersistentVolumeClaim(context.Background(), "prod", "data", domain.PersistentVolumeClaimUpdateSpec{
+		RequestedCapacityBytes: 3 << 30, ResourceVersion: "stale",
+	}); !errors.Is(err, domain.ErrConflict) {
+		t.Fatalf("stale update error = %v, want ErrConflict", err)
 	}
 }
 

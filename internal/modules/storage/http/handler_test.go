@@ -48,10 +48,27 @@ func (r *httpStorageRepository) GetPersistentVolume(context.Context, string) (do
 func (r *httpStorageRepository) GetPersistentVolumeClaim(context.Context, string, string) (domain.PersistentVolumeClaimDetail, error) {
 	return r.claimDetail, r.detailErr
 }
+func (r *httpStorageRepository) CreatePersistentVolumeClaim(context.Context, domain.PersistentVolumeClaimCreateSpec) (domain.PersistentVolumeClaimDetail, error) {
+	return r.claimDetail, r.detailErr
+}
+func (r *httpStorageRepository) UpdatePersistentVolumeClaim(context.Context, string, string, domain.PersistentVolumeClaimUpdateSpec) (domain.PersistentVolumeClaimDetail, error) {
+	return r.claimDetail, r.detailErr
+}
+func (r *httpStorageRepository) DeletePersistentVolumeClaim(context.Context, string, string, string) error {
+	return r.detailErr
+}
+
+type storageHTTPAuthorizer struct{}
+
+func (storageHTTPAuthorizer) Require(context.Context, domain.Actor, domain.Access) error { return nil }
+
+type storageHTTPAuditor struct{}
+
+func (storageHTTPAuditor) Record(context.Context, domain.Actor, domain.AuditEvent) {}
 
 func storageTestRouter(repo *httpStorageRepository) http.Handler {
 	router := chi.NewRouter()
-	New(storageapp.New(repo)).Mount(router)
+	New(storageapp.New(repo, storageHTTPAuthorizer{}, storageHTTPAuditor{})).Mount(router)
 	return router
 }
 

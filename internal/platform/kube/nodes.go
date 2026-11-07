@@ -311,6 +311,21 @@ func (c *Client) ListNamespaces(ctx context.Context, query domain.ListQuery) ([]
 	return out, nil
 }
 
+func (c *Client) CreateNamespace(ctx context.Context, spec domain.NamespaceCreateSpec) (domain.Namespace, error) {
+	ctx, cancel := c.withTimeout(ctx)
+	defer cancel()
+	created, err := c.clientset.CoreV1().Namespaces().Create(ctx, &corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{Name: spec.Name, Labels: spec.Labels, Annotations: spec.Annotations},
+	}, metav1.CreateOptions{})
+	if err != nil {
+		return domain.Namespace{}, mapKubeError(err)
+	}
+	return domain.Namespace{
+		Name: created.Name, Status: string(created.Status.Phase), ResourceVersion: created.ResourceVersion,
+		Labels: created.Labels, Annotations: created.Annotations, CreatedAt: created.CreationTimestamp.Time,
+	}, nil
+}
+
 func (c *Client) GetNamespace(ctx context.Context, name string) (domain.NamespaceDetail, error) {
 	ctx, cancel := c.withTimeout(ctx)
 	defer cancel()

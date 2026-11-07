@@ -131,6 +131,28 @@ func (h *Handler) ListNamespaces(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	httpx.JSONList(w, items, meta)
 }
 
+type namespaceCreateRequest struct {
+	Name        string            `json:"name"`
+	Labels      map[string]string `json:"labels"`
+	Annotations map[string]string `json:"annotations"`
+}
+
+func (h *Handler) CreateNamespace(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	var request namespaceCreateRequest
+	if !httpx.DecodeJSON(w, r, &request) {
+		return
+	}
+	actor, _ := domain.ActorFromContext(r.Context())
+	item, err := h.service.CreateNamespace(r.Context(), actor, domain.NamespaceCreateSpec{
+		Name: request.Name, Labels: request.Labels, Annotations: request.Annotations,
+	})
+	if err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	httpx.JSON(w, stdhttp.StatusCreated, item)
+}
+
 func (h *Handler) GetNamespace(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	item, err := h.service.GetNamespace(r.Context(), chi.URLParam(r, "name"))
 	if err != nil {
@@ -157,6 +179,7 @@ func (h *Handler) Mount(r chi.Router) {
 	r.Put("/nodes/{name}/labels", h.SetLabels)
 	r.Put("/nodes/{name}/taints", h.SetTaints)
 	r.Get("/namespaces", h.ListNamespaces)
+	r.Post("/namespaces", h.CreateNamespace)
 	r.Get("/namespaces/{name}", h.GetNamespace)
 	r.Delete("/namespaces/{name}", h.DeleteNamespace)
 }

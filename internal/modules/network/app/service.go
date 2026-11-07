@@ -15,6 +15,9 @@ type Repository interface {
 	DeleteService(ctx context.Context, namespace, name, resourceVersion string) error
 	ListIngresses(ctx context.Context, query domain.ListQuery) ([]domain.IngressSummary, error)
 	GetIngress(ctx context.Context, namespace, name string) (domain.IngressDetail, error)
+	CreateIngress(ctx context.Context, spec domain.IngressCreateSpec) (domain.IngressDetail, error)
+	UpdateIngress(ctx context.Context, namespace, name string, update domain.IngressUpdateSpec) (domain.IngressDetail, error)
+	DeleteIngress(ctx context.Context, namespace, name, resourceVersion string) error
 	ListIngressClasses(ctx context.Context, query domain.ListQuery) ([]domain.IngressClassSummary, error)
 }
 
@@ -55,6 +58,16 @@ func (s *Service) UpdateService(ctx context.Context, actor domain.Actor, namespa
 		return domain.ServiceDetail{}, err
 	}
 	if err := s.authorize(ctx, actor, "update-service", namespace, name, "update"); err != nil {
+		return domain.ServiceDetail{}, err
+	}
+	current, err := s.repository.GetService(ctx, namespace, name)
+	if err != nil {
+		s.audit(ctx, actor, "update-service", namespace, name, err)
+		return domain.ServiceDetail{}, err
+	}
+	if current.Headless != update.Headless {
+		err := serviceValidationError("headless", "headless mode cannot be changed after Service creation")
+		s.audit(ctx, actor, "update-service", namespace, name, err)
 		return domain.ServiceDetail{}, err
 	}
 	detail, err := s.repository.UpdateService(ctx, namespace, name, update)

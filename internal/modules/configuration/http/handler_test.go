@@ -39,6 +39,15 @@ func (r *configurationRepo) ListConfigMaps(context.Context, domain.ListQuery) ([
 func (r *configurationRepo) GetConfigMap(context.Context, string, string) (domain.ConfigMapDetail, error) {
 	return domain.ConfigMapDetail{}, nil
 }
+func (r *configurationRepo) CreateConfigMap(context.Context, domain.ConfigMapCreateSpec) (domain.ConfigMapDetail, error) {
+	return domain.ConfigMapDetail{}, nil
+}
+func (r *configurationRepo) UpdateConfigMap(context.Context, string, string, domain.ConfigMapUpdateSpec) (domain.ConfigMapDetail, error) {
+	return domain.ConfigMapDetail{}, nil
+}
+func (r *configurationRepo) DeleteConfigMap(context.Context, string, string, string) error {
+	return nil
+}
 
 func (r *configurationRepo) ListSecrets(context.Context, domain.ListQuery) ([]domain.SecretSummary, error) {
 	return r.secrets, nil
@@ -52,6 +61,15 @@ func (r *configurationRepo) RevealSecret(_ context.Context, namespace, name stri
 	value := r.reveal
 	value.Namespace, value.Name = namespace, name
 	return value, nil
+}
+func (r *configurationRepo) CreateSecret(context.Context, domain.SecretWriteSpec) (domain.SecretSummary, error) {
+	return domain.SecretSummary{}, nil
+}
+func (r *configurationRepo) UpdateSecret(context.Context, string, string, domain.SecretWriteSpec) (domain.SecretSummary, error) {
+	return domain.SecretSummary{}, nil
+}
+func (r *configurationRepo) DeleteSecret(context.Context, string, string, string) error {
+	return nil
 }
 
 type configurationTestServer struct {

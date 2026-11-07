@@ -1,7 +1,8 @@
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link, useNavigate, useParams, useSearch } from "@tanstack/react-router";
 import { createColumnHelper } from "@tanstack/react-table";
-import { FileCode2, LockKeyhole, Route as RouteIcon } from "lucide-react";
+import { FileCode2, LockKeyhole, Pencil, Route as RouteIcon, Trash2 } from "lucide-react";
 import { api } from "@/api/client";
 import type { IngressPath } from "@/api/types";
 import { DataTable } from "@/components/data/data-table";
@@ -9,12 +10,17 @@ import { DetailItem } from "@/components/data/detail-item";
 import { ErrorState, LoadingState } from "@/components/feedback/states";
 import { StatusBadge } from "@/components/feedback/status-badge";
 import { PageHeader } from "@/components/layout/page-header";
+import { DeleteResourceDialog } from "@/components/resources/delete-resource-dialog";
 import { YamlPanel } from "@/components/resources/yaml-dialog";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ResourceEvents } from "@/features/events/resource-events";
+import { useCapabilities } from "@/features/auth/use-session";
+import { IngressFormDialog } from "@/features/network/ingress-form-dialog";
 import { NetworkMetadataCard } from "@/features/network/network-detail-shared";
+import { resourceCapabilities } from "@/lib/capabilities";
 import { formatDate } from "@/lib/utils";
 
 const routeColumn = createColumnHelper<IngressPath>();
@@ -29,6 +35,8 @@ export function IngressDetailPage() {
   const params = useParams({ strict: false }) as { namespace: string; name: string };
   const search = useSearch({ from: "/app/network/ingresses/$namespace/$name" });
   const navigate = useNavigate();
+  const [editOpen, setEditOpen] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
   const tab = isIngressTab(search.tab) ? search.tab : "overview";
   const changeTab = (value: string) => {
     if (!isIngressTab(value)) return;
@@ -44,6 +52,9 @@ export function IngressDetailPage() {
     queryFn: () => api.ingress(params.namespace, params.name),
     refetchInterval: 20_000,
   });
+  const ingressClasses = useQuery({ queryKey: ["ingressclasses"], queryFn: () => api.ingressClasses({}) });
+  const capabilities = useCapabilities(params.namespace).data;
+  const ingressCaps = resourceCapabilities(capabilities, "ingresses");
   if (query.isLoading) return <LoadingState label="正在加载 Ingress 详情" className="min-h-[60vh]" />;
   if (query.isError) return <ErrorState error={query.error} onRetry={() => void query.refetch()} />;
   const ingress = query.data!;
@@ -54,6 +65,10 @@ export function IngressDetailPage() {
         breadcrumb={<><Link to="/network" search={{ q: search.q, namespace: search.namespace, tab: "ingresses" }} className="text-primary underline underline-offset-2">服务与路由</Link> / {ingress.namespace} / {ingress.name}</>}
         title={<span className="flex items-center gap-3"><RouteIcon className="h-5 w-5 text-muted-foreground" />{ingress.name}</span>}
         description={<span className="flex flex-wrap items-center gap-2"><Badge variant="secondary">Class {ingress.class || "未指定"}</Badge><StatusBadge status={readyRoutes === ingress.paths.length && readyRoutes > 0 ? "Ready" : "NoReadyEndpoints"} /><span>{readyRoutes}/{ingress.paths.length} 条路由后端就绪</span><span>·</span><span>{ingress.namespace}</span></span>}
+        actions={<div className="flex items-center gap-2">
+          {ingressCaps.update ? <Button variant="outline" size="sm" onClick={() => setEditOpen(true)}><Pencil className="h-4 w-4" />编辑</Button> : null}
+          {ingressCaps.delete ? <Button variant="destructive" size="sm" onClick={() => setDeleteOpen(true)}><Trash2 className="h-4 w-4" />删除</Button> : null}
+        </div>}
       />
       <Tabs value={tab} onValueChange={changeTab}>
         <TabsList>
@@ -107,6 +122,25 @@ export function IngressDetailPage() {
         <TabsContent value="events"><ResourceEvents namespace={ingress.namespace} objectKind="Ingress" objectName={ingress.name} /></TabsContent>
         <TabsContent value="yaml"><YamlPanel type="ingress" name={ingress.name} namespace={ingress.namespace} height="64vh" /></TabsContent>
       </Tabs>
+      <IngressFormDialog
+        open={editOpen}
+        onOpenChange={setEditOpen}
+        namespace={ingress.namespace}
+        ingress={ingress}
+        ingressClasses={ingressClasses.data?.items ?? []}
+        onSaved={async () => { await query.refetch(); }}
+      />
+      <DeleteResourceDialog
+        open={deleteOpen}
+        onOpenChange={setDeleteOpen}
+        resourceKind="Ingress"
+        name={ingress.name}
+        description="删除后对应路由规则将立即失效，后端 Service 和 Pod 不会受影响。"
+        onConfirm={async () => {
+          await api.deleteIngress(ingress.namespace, ingress.name, ingress.resourceVersion);
+          await navigate({ to: "/network", search: { ...search, tab: "ingresses" } });
+        }}
+      />
     </>
   );
 }

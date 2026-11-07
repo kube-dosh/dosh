@@ -140,7 +140,7 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 	networkService := networkapp.New(kubeClient, authorizer, auditLogger)
 	configurationService := configurationapp.New(kubeClient, authorizer, auditLogger)
 	certificatesService := certificatesapp.New(certificateStore, authorizer, auditLogger)
-	storageService := storageapp.New(kubeClient)
+	storageService := storageapp.New(kubeClient, authorizer, auditLogger)
 	yamlService := yamlapp.New(kubeClient, authorizer, auditLogger)
 	auditHistoryService := audithistoryapp.New(auditLogger, authorizer)
 

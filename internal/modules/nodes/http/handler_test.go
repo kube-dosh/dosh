@@ -42,6 +42,10 @@ type httpNodesRepository struct {
 	taintErr                    error
 	setTaintCalls               int
 	lastTaintUpdate             domain.NodeTaintUpdate
+	createNSCalls               int
+	lastCreateNS                domain.NamespaceCreateSpec
+	createdNamespace            domain.Namespace
+	createNSErr                 error
 	deleteNSCalls               int
 	lastDeleteNSName            string
 	lastDeleteNSResourceVersion string
@@ -87,6 +91,12 @@ func (r *httpNodesRepository) ListPodsForNode(_ context.Context, name string) ([
 func (r *httpNodesRepository) ListNamespaces(_ context.Context, query domain.ListQuery) ([]domain.Namespace, error) {
 	r.lastNSQuery = query
 	return r.namespaces, r.namespacesErr
+}
+
+func (r *httpNodesRepository) CreateNamespace(_ context.Context, spec domain.NamespaceCreateSpec) (domain.Namespace, error) {
+	r.createNSCalls++
+	r.lastCreateNS = spec
+	return r.createdNamespace, r.createNSErr
 }
 
 func (r *httpNodesRepository) GetNamespace(_ context.Context, name string) (domain.NamespaceDetail, error) {
@@ -182,6 +192,32 @@ func TestNodesRoutesReturnContracts(t *testing.T) {
 		!strings.Contains(response.Body.String(), `"requests.cpu":"2"`) ||
 		!strings.Contains(response.Body.String(), `"limitRanges"`) || repo.lastNSName != "prod" {
 		t.Fatalf("namespace detail status = %d name = %q body = %s", response.Code, repo.lastNSName, response.Body.String())
+	}
+}
+
+func TestNodesCreateNamespaceRouteReturnsCreatedResource(t *testing.T) {
+	repo := &httpNodesRepository{createdNamespace: domain.Namespace{Name: "preview", Status: "Active", ResourceVersion: "9"}}
+	response := nodesRequestJSON(nodesTestRouter(repo), http.MethodPost, "/namespaces", `{"name":"preview","labels":{"team":"platform"},"annotations":{"owner":"ops"}}`)
+	if response.Code != http.StatusCreated || !strings.Contains(response.Body.String(), `"name":"preview"`) || !strings.Contains(response.Body.String(), `"resourceVersion":"9"`) {
+		t.Fatalf("create namespace status = %d body = %s", response.Code, response.Body.String())
+	}
+	if repo.createNSCalls != 1 || repo.lastCreateNS.Name != "preview" || repo.lastCreateNS.Labels["team"] != "platform" || repo.lastCreateNS.Annotations["owner"] != "ops" {
+		t.Fatalf("create namespace call = %d spec = %#v", repo.createNSCalls, repo.lastCreateNS)
+	}
+}
+
+func TestNodesCreateNamespaceRouteValidatesAndMapsFailures(t *testing.T) {
+	repo := &httpNodesRepository{}
+	router := nodesTestRouter(repo)
+	response := nodesRequestJSON(router, http.MethodPost, "/namespaces", `{"name":"Bad_Name"}`)
+	if response.Code != http.StatusBadRequest || repo.createNSCalls != 0 {
+		t.Fatalf("invalid namespace status = %d calls = %d body = %s", response.Code, repo.createNSCalls, response.Body.String())
+	}
+
+	repo.createNSErr = domain.ErrConflict
+	response = nodesRequestJSON(router, http.MethodPost, "/namespaces", `{"name":"preview"}`)
+	if response.Code != http.StatusConflict {
+		t.Fatalf("namespace conflict status = %d body = %s", response.Code, response.Body.String())
 	}
 }
 

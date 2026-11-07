@@ -13,11 +13,20 @@ type Repository interface {
 	GetStorageClass(ctx context.Context, name string) (domain.StorageClassDetail, error)
 	GetPersistentVolume(ctx context.Context, name string) (domain.PersistentVolumeDetail, error)
 	GetPersistentVolumeClaim(ctx context.Context, namespace, name string) (domain.PersistentVolumeClaimDetail, error)
+	CreatePersistentVolumeClaim(ctx context.Context, spec domain.PersistentVolumeClaimCreateSpec) (domain.PersistentVolumeClaimDetail, error)
+	UpdatePersistentVolumeClaim(ctx context.Context, namespace, name string, update domain.PersistentVolumeClaimUpdateSpec) (domain.PersistentVolumeClaimDetail, error)
+	DeletePersistentVolumeClaim(ctx context.Context, namespace, name, resourceVersion string) error
 }
 
-type Service struct{ repository Repository }
+type Service struct {
+	repository Repository
+	authorizer domain.Authorizer
+	auditor    domain.Auditor
+}
 
-func New(repository Repository) *Service { return &Service{repository: repository} }
+func New(repository Repository, authorizer domain.Authorizer, auditor domain.Auditor) *Service {
+	return &Service{repository: repository, authorizer: authorizer, auditor: auditor}
+}
 
 func (s *Service) ListStorageClasses(ctx context.Context, query domain.ListQuery) ([]domain.StorageClass, error) {
 	return s.repository.ListStorageClasses(ctx, query)

@@ -12,7 +12,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Textarea } from "@/components/ui/textarea";
 
 const DNS_LABEL = /^[a-z0-9]([-a-z0-9]*[a-z0-9])?$/;
-const SERVICE_TYPES = ["ClusterIP", "NodePort", "LoadBalancer"] as const;
+const SERVICE_ACCESS_TYPES = ["ClusterIP", "Headless", "NodePort", "LoadBalancer"] as const;
 const PROTOCOLS = ["TCP", "UDP", "SCTP"] as const;
 
 type PortDraft = {
@@ -24,7 +24,7 @@ type PortDraft = {
 
 type FormState = {
   name: string;
-  type: string;
+  accessType: string;
   selector: string;
   ports: PortDraft[];
 };
@@ -34,9 +34,10 @@ function selectorText(selector?: Record<string, string>): string {
 }
 
 function initialForm(workloadName: string, selector: Record<string, string>, service?: ServiceSummary): FormState {
+  const accessType = service?.headless || service?.clusterIP === "None" ? "Headless" : service?.type || "ClusterIP";
   return {
     name: service?.name || workloadName,
-    type: service?.type || "ClusterIP",
+    accessType,
     selector: selectorText(service?.selector || selector),
     ports: service?.ports.length
       ? service.ports.map((port) => ({
@@ -86,16 +87,18 @@ function parsePorts(ports: PortDraft[]): ServicePortInput[] | null {
   return parsed;
 }
 
-export function ServiceFormDialog({ open, onOpenChange, namespace, workloadName, workloadSelector, service, onSaved }: {
+export function ServiceFormDialog({ open, onOpenChange, namespace, workloadName, workloadSelector, service, contextLabel, onSaved }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   namespace: string;
   workloadName: string;
   workloadSelector: Record<string, string>;
   service?: ServiceSummary;
+  contextLabel?: string;
   onSaved: () => Promise<void> | void;
 }) {
   const creating = !service;
+  const accessTypeOptions = creating || service?.headless ? SERVICE_ACCESS_TYPES : SERVICE_ACCESS_TYPES.filter((type) => type !== "Headless");
   const [form, setForm] = useState<FormState>(() => initialForm(workloadName, workloadSelector, service));
   const [formError, setFormError] = useState("");
 
@@ -114,11 +117,14 @@ export function ServiceFormDialog({ open, onOpenChange, namespace, workloadName,
       }
       if (!selector) throw new Error("请至少填写一个有效的 Selector 标签，格式为 key=value");
       if (!ports) throw new Error("请填写 1–10 个有效端口；多端口时每个端口都必须命名");
+      const headless = form.accessType === "Headless";
+      const type = headless ? "ClusterIP" : form.accessType;
       if (creating) {
-        return api.createService({ name: form.name, namespace, type: form.type, selector, ports });
+        return api.createService({ name: form.name, namespace, type, headless, selector, ports });
       }
       return api.updateService(namespace, service.name, {
-        type: form.type,
+        type,
+        headless,
         selector,
         ports,
         resourceVersion: service.resourceVersion,
@@ -154,9 +160,9 @@ export function ServiceFormDialog({ open, onOpenChange, namespace, workloadName,
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-2xl">
         <DialogHeader>
-          <DialogTitle>{creating ? "配置访问方式" : "编辑 Service"}</DialogTitle>
+          <DialogTitle>{creating ? (workloadName ? "配置访问方式" : "创建 Service") : "编辑 Service"}</DialogTitle>
           <DialogDescription>
-            {namespace} / {workloadName} · Selector 将 Service 关联到此工作负载的 Pod
+            {namespace}{workloadName ? ` / ${workloadName}` : ""} · {contextLabel || "Selector 将 Service 关联到目标 Pod"}
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-5">
@@ -168,13 +174,17 @@ export function ServiceFormDialog({ open, onOpenChange, namespace, workloadName,
             </div>
             <div className="space-y-2">
               <Label htmlFor="service-type">访问类型</Label>
-              <Select value={form.type} onValueChange={(value) => update({ type: value })}>
+              <Select value={form.accessType} onValueChange={(value) => update({ accessType: value })} disabled={Boolean(service?.headless)}>
                 <SelectTrigger id="service-type" aria-label="访问类型"><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  {SERVICE_TYPES.map((type) => <SelectItem key={type} value={type}>{type}</SelectItem>)}
+                  {accessTypeOptions.map((type) => <SelectItem key={type} value={type}>{type === "Headless" ? "Headless（无 ClusterIP）" : type}</SelectItem>)}
                 </SelectContent>
               </Select>
-              <p className="text-xs text-muted-foreground">NodePort / LoadBalancer 的节点端口由 Kubernetes 自动分配。</p>
+              <p className="text-xs text-muted-foreground">
+                {form.accessType === "Headless"
+                  ? "Headless 不分配 ClusterIP，DNS 直接返回匹配 Pod 的地址，适合有状态服务的点对点发现；创建后不可切换。"
+                  : "NodePort / LoadBalancer 的节点端口由 Kubernetes 自动分配。"}
+              </p>
             </div>
           </div>
 

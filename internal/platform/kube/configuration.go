@@ -3,6 +3,7 @@ package kube
 import (
 	"context"
 	"encoding/base64"
+	"fmt"
 	"sort"
 
 	"dosh/internal/domain"
@@ -51,7 +52,10 @@ func configMapSummary(item corev1.ConfigMap) domain.ConfigMapSummary {
 		bytes += len(value)
 	}
 	sort.Strings(keys)
-	return domain.ConfigMapSummary{Name: item.Name, Namespace: item.Namespace, Keys: keys, DataBytes: bytes, CreatedAt: item.CreationTimestamp.Time}
+	return domain.ConfigMapSummary{
+		Name: item.Name, Namespace: item.Namespace, ResourceVersion: item.ResourceVersion,
+		Keys: keys, DataBytes: bytes, CreatedAt: item.CreationTimestamp.Time,
+	}
 }
 
 func (c *Client) GetConfigMap(ctx context.Context, namespace, name string) (domain.ConfigMapDetail, error) {
@@ -66,6 +70,49 @@ func (c *Client) GetConfigMap(ctx context.Context, namespace, name string) (doma
 		data[key] = value
 	}
 	return domain.ConfigMapDetail{ConfigMapSummary: configMapSummary(*item), Data: data}, nil
+}
+
+func (c *Client) CreateConfigMap(ctx context.Context, spec domain.ConfigMapCreateSpec) (domain.ConfigMapDetail, error) {
+	ctx, cancel := c.withTimeout(ctx)
+	defer cancel()
+	item := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{Name: spec.Name, Namespace: spec.Namespace, Annotations: cloneStringMap(spec.Annotations)},
+		Data:       cloneStringMap(spec.Data),
+	}
+	if _, err := c.clientset.CoreV1().ConfigMaps(spec.Namespace).Create(ctx, item, metav1.CreateOptions{}); err != nil {
+		return domain.ConfigMapDetail{}, mapKubeError(err)
+	}
+	return c.GetConfigMap(ctx, spec.Namespace, spec.Name)
+}
+
+func (c *Client) UpdateConfigMap(ctx context.Context, namespace, name string, update domain.ConfigMapUpdateSpec) (domain.ConfigMapDetail, error) {
+	ctx, cancel := c.withTimeout(ctx)
+	defer cancel()
+	item, err := c.clientset.CoreV1().ConfigMaps(namespace).Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		return domain.ConfigMapDetail{}, mapKubeError(err)
+	}
+	if update.ResourceVersion != "" && item.ResourceVersion != update.ResourceVersion {
+		return domain.ConfigMapDetail{}, fmt.Errorf("%w: expected %s, got %s", domain.ErrConflict, update.ResourceVersion, item.ResourceVersion)
+	}
+	item.Data = cloneStringMap(update.Data)
+	if update.Annotations != nil {
+		item.Annotations = cloneStringMap(update.Annotations)
+	}
+	if _, err := c.clientset.CoreV1().ConfigMaps(namespace).Update(ctx, item, metav1.UpdateOptions{}); err != nil {
+		return domain.ConfigMapDetail{}, mapKubeError(err)
+	}
+	return c.GetConfigMap(ctx, namespace, name)
+}
+
+func (c *Client) DeleteConfigMap(ctx context.Context, namespace, name, resourceVersion string) error {
+	ctx, cancel := c.withTimeout(ctx)
+	defer cancel()
+	options := metav1.DeleteOptions{}
+	if resourceVersion != "" {
+		options.Preconditions = &metav1.Preconditions{ResourceVersion: &resourceVersion}
+	}
+	return mapKubeError(c.clientset.CoreV1().ConfigMaps(namespace).Delete(ctx, name, options))
 }
 
 func (c *Client) ListSecrets(ctx context.Context, query domain.ListQuery) ([]domain.SecretSummary, error) {
@@ -106,7 +153,10 @@ func secretSummary(item corev1.Secret) domain.SecretSummary {
 		keys = append(keys, domain.SecretKey{Key: key, Size: len(value)})
 	}
 	sort.Slice(keys, func(i, j int) bool { return keys[i].Key < keys[j].Key })
-	return domain.SecretSummary{Name: item.Name, Namespace: item.Namespace, Type: string(item.Type), Keys: keys, CreatedAt: item.CreationTimestamp.Time}
+	return domain.SecretSummary{
+		Name: item.Name, Namespace: item.Namespace, ResourceVersion: item.ResourceVersion,
+		Type: string(item.Type), Keys: keys, CreatedAt: item.CreationTimestamp.Time,
+	}
 }
 
 func (c *Client) RevealSecret(ctx context.Context, namespace, name string) (domain.SecretReveal, error) {
@@ -121,4 +171,71 @@ func (c *Client) RevealSecret(ctx context.Context, namespace, name string) (doma
 		data[key] = base64.StdEncoding.EncodeToString(value)
 	}
 	return domain.SecretReveal{SecretSummary: secretSummary(*item), Data: data}, nil
+}
+
+func (c *Client) CreateSecret(ctx context.Context, spec domain.SecretWriteSpec) (domain.SecretSummary, error) {
+	ctx, cancel := c.withTimeout(ctx)
+	defer cancel()
+	data, err := decodeSecretWriteData(spec.Data)
+	if err != nil {
+		return domain.SecretSummary{}, err
+	}
+	item := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: spec.Name, Namespace: spec.Namespace, Annotations: cloneStringMap(spec.Annotations)},
+		Type:       corev1.SecretType(spec.Type),
+		Data:       data,
+	}
+	created, err := c.clientset.CoreV1().Secrets(spec.Namespace).Create(ctx, item, metav1.CreateOptions{})
+	if err != nil {
+		return domain.SecretSummary{}, mapKubeError(err)
+	}
+	return secretSummary(*created), nil
+}
+
+func (c *Client) UpdateSecret(ctx context.Context, namespace, name string, update domain.SecretWriteSpec) (domain.SecretSummary, error) {
+	ctx, cancel := c.withTimeout(ctx)
+	defer cancel()
+	item, err := c.clientset.CoreV1().Secrets(namespace).Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		return domain.SecretSummary{}, mapKubeError(err)
+	}
+	if update.ResourceVersion != "" && item.ResourceVersion != update.ResourceVersion {
+		return domain.SecretSummary{}, fmt.Errorf("%w: expected %s, got %s", domain.ErrConflict, update.ResourceVersion, item.ResourceVersion)
+	}
+	data, err := decodeSecretWriteData(update.Data)
+	if err != nil {
+		return domain.SecretSummary{}, err
+	}
+	item.Type = corev1.SecretType(update.Type)
+	item.Data = data
+	if update.Annotations != nil {
+		item.Annotations = cloneStringMap(update.Annotations)
+	}
+	updated, err := c.clientset.CoreV1().Secrets(namespace).Update(ctx, item, metav1.UpdateOptions{})
+	if err != nil {
+		return domain.SecretSummary{}, mapKubeError(err)
+	}
+	return secretSummary(*updated), nil
+}
+
+func (c *Client) DeleteSecret(ctx context.Context, namespace, name, resourceVersion string) error {
+	ctx, cancel := c.withTimeout(ctx)
+	defer cancel()
+	options := metav1.DeleteOptions{}
+	if resourceVersion != "" {
+		options.Preconditions = &metav1.Preconditions{ResourceVersion: &resourceVersion}
+	}
+	return mapKubeError(c.clientset.CoreV1().Secrets(namespace).Delete(ctx, name, options))
+}
+
+func decodeSecretWriteData(encoded map[string]string) (map[string][]byte, error) {
+	out := make(map[string][]byte, len(encoded))
+	for key, value := range encoded {
+		decoded, err := base64.StdEncoding.DecodeString(value)
+		if err != nil {
+			return nil, fmt.Errorf("%w: Secret value %q must be valid Base64", domain.ErrInvalid, key)
+		}
+		out[key] = decoded
+	}
+	return out, nil
 }

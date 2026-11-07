@@ -13,7 +13,28 @@ const session: SessionResponse = {
   user: { username: "admin", admin: true, groups: ["dosh-admins"] },
   csrfToken: "test-csrf-token",
   expiresAt: "2099-01-01T00:00:00Z",
-  capabilities: { read: true, scale: true, restart: true, updateImage: true, suspendCronJob: true, delete: true, create: true, createService: true, updateService: true, deleteService: true, deleteNamespace: true, revealSecrets: true, editYAML: true, nodeCordon: true, reloadCertificate: true },
+  capabilities: {
+    read: true, scale: true, restart: true, updateImage: true, suspendCronJob: true, delete: true, create: true,
+    createService: true, updateService: true, deleteService: true, deleteNamespace: true, revealSecrets: true,
+    editYAML: true, nodeCordon: true, reloadCertificate: true,
+    resourceActions: {
+      pods: { create: false, update: true, delete: true, scale: false },
+      deployments: { create: true, update: true, delete: true, scale: true },
+      statefulsets: { create: false, update: true, delete: true, scale: true },
+      daemonsets: { create: false, update: true, delete: true, scale: false },
+      jobs: { create: false, update: true, delete: true, scale: false },
+      cronjobs: { create: false, update: true, delete: true, scale: false },
+      services: { create: true, update: true, delete: true, scale: false },
+      ingresses: { create: true, update: true, delete: true, scale: false },
+      configmaps: { create: true, update: true, delete: true, scale: false },
+      secrets: { create: true, update: true, delete: true, scale: false },
+      persistentvolumeclaims: { create: true, update: true, delete: true, scale: false },
+      persistentvolumes: { create: false, update: false, delete: false, scale: false },
+      storageclasses: { create: false, update: false, delete: false, scale: false },
+      nodes: { create: false, update: true, delete: false, scale: false },
+      namespaces: { create: true, update: false, delete: true, scale: false },
+    },
+  },
   authMode: "local",
 };
 
@@ -52,7 +73,7 @@ const pod: PodDetail = {
 };
 
 const serviceDetail: ServiceDetail = {
-  name: "web", namespace: "default", type: "ClusterIP", clusterIP: "10.96.0.10", externalIP: "",
+  name: "web", namespace: "default", type: "ClusterIP", headless: false, clusterIP: "10.96.0.10", externalIP: "",
   ports: [{ name: "http", protocol: "TCP", port: 80, targetPort: "8080" }], selector: { app: "web" },
   endpointCount: 1, createdAt: "2026-11-02T00:00:00Z", labels: { app: "web" }, annotations: { team: "platform" },
   sessionAffinity: "None", ipFamilies: ["IPv4"], ipFamilyPolicy: "SingleStack",
@@ -107,6 +128,7 @@ const server = setupServer(
   http.get("/api/v1/services/default/web", () => HttpResponse.json(serviceDetail)),
   http.get("/api/v1/services", () => HttpResponse.json({ items: [], meta: { total: 0 } })),
   http.get("/api/v1/ingresses/default/web", () => HttpResponse.json(ingressDetail)),
+  http.get("/api/v1/ingressclasses", () => HttpResponse.json({ items: [{ name: "nginx", controller: "k8s.io/ingress-nginx", default: true, createdAt: "2026-11-02T00:00:00Z" }], meta: { total: 1 } })),
   http.get("/api/v1/storageclasses/data-standard", () => HttpResponse.json(storageClassDetail)),
   http.get("/api/v1/persistentvolumes/pv-data", () => HttpResponse.json(persistentVolumeDetail)),
   http.get("/api/v1/persistentvolumeclaims/production/data-claim", () => HttpResponse.json(persistentVolumeClaimDetail)),
@@ -129,6 +151,17 @@ function renderRoute(path: string) {
   const router = createRouter({ routeTree, history, defaultPreload: false });
   render(<ThemeProvider><QueryClientProvider client={queryClient}><RouterProvider router={router} /><Toaster /></QueryClientProvider></ThemeProvider>);
   return router;
+}
+
+async function expectNodeLink() {
+  await waitFor(() => expect(screen.getByRole("link", { name: "worker-0001" })).toBeInTheDocument(), { timeout: 10000 });
+}
+
+function openResourceMenu(name: string) {
+  const trigger = screen.getByRole("button", { name: `操作 ${name}` });
+  fireEvent.pointerDown(trigger, { button: 0, ctrlKey: false, pointerType: "mouse" });
+  fireEvent.pointerUp(trigger, { button: 0, ctrlKey: false, pointerType: "mouse" });
+  fireEvent.click(trigger);
 }
 
 describe("dosh application", () => {
@@ -193,7 +226,7 @@ describe("dosh application", () => {
 
   it("renders node inventory", async () => {
     renderRoute("/nodes");
-    expect(await screen.findByRole("link", { name: "worker-0001" })).toBeInTheDocument();
+    await expectNodeLink();
     expect(screen.getByText("192.168.122.200")).toBeInTheDocument();
   });
 
@@ -211,6 +244,28 @@ describe("dosh application", () => {
     expect(await screen.findByRole("cell", { name: "production" })).toBeInTheDocument();
     expect(screen.queryByRole("cell", { name: "default" })).not.toBeInTheDocument();
     expect(screen.getByPlaceholderText("搜索命名空间")).toHaveValue("production");
+  });
+
+  it("creates a namespace from the namespace table", async () => {
+    let createBody: Record<string, unknown> | undefined;
+    let csrf: string | null = null;
+    server.use(http.post("/api/v1/namespaces", async ({ request }) => {
+      createBody = await request.json() as Record<string, unknown>;
+      csrf = request.headers.get("x-csrf-token");
+      return HttpResponse.json({ name: "preview", status: "Active", resourceVersion: "8", labels: { team: "platform" }, annotations: { owner: "ops" }, createdAt: "2026-11-02T00:00:00Z" }, { status: 201 });
+    }));
+    renderRoute("/namespaces");
+
+    fireEvent.click(await screen.findByRole("button", { name: "创建命名空间" }));
+    const dialog = await screen.findByRole("dialog", { name: "创建命名空间" });
+    fireEvent.change(within(dialog).getByLabelText("名称"), { target: { value: "preview" } });
+    fireEvent.change(within(dialog).getByLabelText("Labels"), { target: { value: "team=platform" } });
+    fireEvent.change(within(dialog).getByLabelText("Annotations"), { target: { value: "owner=ops" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "创建命名空间" }));
+
+    await waitFor(() => expect(createBody).toEqual({ name: "preview", labels: { team: "platform" }, annotations: { owner: "ops" } }));
+    expect(csrf).toBe("test-csrf-token");
+    expect(await screen.findByText("命名空间 preview 已创建")).toBeInTheDocument();
   });
 
   it("passes storage URL filters to every storage query", async () => {
@@ -262,7 +317,10 @@ describe("dosh application", () => {
     renderRoute("/configuration?tab=secrets");
 
     expect(await screen.findByRole("cell", { name: "app-secret" })).toBeInTheDocument();
-    fireEvent.click(await screen.findByRole("button", { name: "查看明文" }));
+    expect(screen.queryByText("token · 10 B")).not.toBeInTheDocument();
+    expect(screen.queryByText("blob · 3 B")).not.toBeInTheDocument();
+    openResourceMenu("Secret default/app-secret");
+    fireEvent.click(await screen.findByRole("menuitem", { name: "查看明文" }));
 
     expect(await screen.findByLabelText("token 值")).toHaveTextContent("token=abc");
     expect(screen.getByLabelText("token 值")).not.toHaveTextContent(encodedToken);
@@ -280,11 +338,111 @@ describe("dosh application", () => {
     );
     renderRoute("/configuration?tab=secrets");
 
-    fireEvent.click(await screen.findByRole("button", { name: "查看明文" }));
+    expect(await screen.findByRole("cell", { name: "long-secret" })).toBeInTheDocument();
+    openResourceMenu("Secret default/long-secret");
+    fireEvent.click(await screen.findByRole("menuitem", { name: "查看明文" }));
 
     const value = await screen.findByLabelText("payload 值");
     expect(value).toHaveClass("soft-wrap");
     expect(value).toHaveTextContent(longValue);
+  });
+
+  it("creates, edits and deletes a ConfigMap with resource versions", async () => {
+    const summary = { name: "settings", namespace: "default", resourceVersion: "51", keys: ["mode"], dataBytes: 4, createdAt: "2026-11-02T00:00:00Z" };
+    const detail = { ...summary, data: { mode: "safe" } };
+    let createBody: Record<string, unknown> | undefined;
+    let updateBody: Record<string, unknown> | undefined;
+    let deletedResourceVersion: string | null = null;
+    server.use(
+      http.get("/api/v1/configmaps", () => HttpResponse.json({ items: [summary], meta: { total: 1, page: 1, pageSize: 20, totalPages: 1, filters: {} } })),
+      http.get("/api/v1/configmaps/default/settings", () => HttpResponse.json(detail)),
+      http.post("/api/v1/configmaps", async ({ request }) => {
+        createBody = await request.json() as Record<string, unknown>;
+        return HttpResponse.json({ ...detail, name: "feature-flags" }, { status: 201 });
+      }),
+      http.put("/api/v1/configmaps/default/settings", async ({ request }) => {
+        updateBody = await request.json() as Record<string, unknown>;
+        return HttpResponse.json(detail);
+      }),
+      http.delete("/api/v1/configmaps/default/settings", ({ request }) => {
+        deletedResourceVersion = new URL(request.url).searchParams.get("resourceVersion");
+        return HttpResponse.json({ status: "deleting" }, { status: 202 });
+      }),
+    );
+    renderRoute("/configuration?namespace=default");
+
+    const createButton = await screen.findByRole("button", { name: "创建 ConfigMap" });
+    await waitFor(() => expect(createButton).toBeEnabled());
+    expect(screen.queryByText("mode")).not.toBeInTheDocument();
+    fireEvent.click(createButton);
+    let dialog = await screen.findByRole("dialog", { name: "创建 ConfigMap" });
+    fireEvent.change(within(dialog).getByLabelText("ConfigMap 名称"), { target: { value: "feature-flags" } });
+    fireEvent.change(within(dialog).getByLabelText("键"), { target: { value: "checkout" } });
+    fireEvent.change(within(dialog).getByLabelText("值"), { target: { value: "enabled" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "创建 ConfigMap" }));
+    await waitFor(() => expect(createBody).toEqual({ name: "feature-flags", namespace: "default", data: { checkout: "enabled" } }));
+
+    openResourceMenu("ConfigMap default/settings");
+    fireEvent.click(await screen.findByRole("menuitem", { name: "编辑 ConfigMap" }));
+    dialog = await screen.findByRole("dialog", { name: "编辑 ConfigMap" });
+    fireEvent.click(within(dialog).getByRole("button", { name: "保存修改" }));
+    await waitFor(() => expect(updateBody).toMatchObject({ data: { mode: "safe" }, resourceVersion: "51" }));
+
+    openResourceMenu("ConfigMap default/settings");
+    fireEvent.click(await screen.findByRole("menuitem", { name: "删除 ConfigMap" }));
+    dialog = await screen.findByRole("alertdialog", { name: "删除 ConfigMap settings？" });
+    fireEvent.change(within(dialog).getByLabelText("输入名称确认"), { target: { value: "settings" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "确认删除" }));
+    await waitFor(() => expect(deletedResourceVersion).toBe("51"));
+  });
+
+  it("creates, edits and deletes a Secret with resource versions", async () => {
+    const summary = { name: "api-token", namespace: "default", resourceVersion: "61", type: "Opaque", keys: [{ key: "password", size: 12 }], createdAt: "2026-11-02T00:00:00Z" };
+    const revealed = { ...summary, data: { password: btoa("old-secret") } };
+    let createBody: Record<string, unknown> | undefined;
+    let updateBody: Record<string, unknown> | undefined;
+    let deletedResourceVersion: string | null = null;
+    server.use(
+      http.get("/api/v1/secrets", () => HttpResponse.json({ items: [summary], meta: { total: 1, page: 1, pageSize: 20, totalPages: 1, filters: {} } })),
+      http.post("/api/v1/secrets/default/api-token/reveal", () => HttpResponse.json(revealed)),
+      http.post("/api/v1/secrets", async ({ request }) => {
+        createBody = await request.json() as Record<string, unknown>;
+        return HttpResponse.json({ ...summary, name: "service-token" }, { status: 201 });
+      }),
+      http.put("/api/v1/secrets/default/api-token", async ({ request }) => {
+        updateBody = await request.json() as Record<string, unknown>;
+        return HttpResponse.json(summary);
+      }),
+      http.delete("/api/v1/secrets/default/api-token", ({ request }) => {
+        deletedResourceVersion = new URL(request.url).searchParams.get("resourceVersion");
+        return HttpResponse.json({ status: "deleting" }, { status: 202 });
+      }),
+    );
+    renderRoute("/configuration?tab=secrets&namespace=default");
+
+    const createButton = await screen.findByRole("button", { name: "创建 Secret" });
+    await waitFor(() => expect(createButton).toBeEnabled());
+    fireEvent.click(createButton);
+    let dialog = await screen.findByRole("dialog", { name: "创建 Secret" });
+    fireEvent.change(within(dialog).getByLabelText("Secret 名称"), { target: { value: "service-token" } });
+    fireEvent.change(within(dialog).getByLabelText("键"), { target: { value: "token" } });
+    fireEvent.change(within(dialog).getByLabelText("Base64 值"), { target: { value: btoa("enabled") } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "创建 Secret" }));
+    await waitFor(() => expect(createBody).toEqual({ name: "service-token", namespace: "default", type: "Opaque", data: { token: btoa("enabled") } }));
+
+    openResourceMenu("Secret default/api-token");
+    fireEvent.click(await screen.findByRole("menuitem", { name: "编辑 Secret" }));
+    dialog = await screen.findByRole("dialog", { name: "编辑 Secret" });
+    fireEvent.change(within(dialog).getByLabelText("Base64 值"), { target: { value: btoa("new-secret") } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "保存修改" }));
+    await waitFor(() => expect(updateBody).toEqual({ type: "Opaque", data: { password: btoa("new-secret") }, resourceVersion: "61" }));
+
+    openResourceMenu("Secret default/api-token");
+    fireEvent.click(await screen.findByRole("menuitem", { name: "删除 Secret" }));
+    dialog = await screen.findByRole("alertdialog", { name: "删除 Secret api-token？" });
+    fireEvent.change(within(dialog).getByLabelText("输入名称确认"), { target: { value: "api-token" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "确认删除" }));
+    await waitFor(() => expect(deletedResourceVersion).toBe("61"));
   });
 
   it("shows server certificate metadata and reloads it", async () => {
@@ -333,7 +491,7 @@ describe("dosh application", () => {
     })));
     renderRoute("/nodes");
 
-    expect(await screen.findByRole("link", { name: "worker-0001" })).toBeInTheDocument();
+    await expectNodeLink();
     const currentCluster = await screen.findByLabelText("当前集群");
     expect(currentCluster).toHaveTextContent("commercial-test");
     expect(currentCluster).toHaveTextContent("/ 部分异常");
@@ -362,7 +520,7 @@ describe("dosh application", () => {
     )));
     renderRoute("/nodes");
 
-    expect(await screen.findByRole("link", { name: "worker-0001" })).toBeInTheDocument();
+    await expectNodeLink();
     const connection = await screen.findByRole("status", { name: "集群连接状态" });
     expect(connection).toHaveTextContent("集群状态不可用");
     expect(within(connection).getByRole("button", { name: "重试" })).toBeInTheDocument();
@@ -545,7 +703,7 @@ describe("dosh application", () => {
       }),
     );
     renderRoute("/workloads?namespace=default");
-    fireEvent.click(await screen.findByRole("button", { name: "创建 Deployment" }));
+    fireEvent.click(await screen.findByRole("button", { name: "创建 Deployment" }, { timeout: 5000 }));
     const dialog = await screen.findByRole("dialog");
     fireEvent.change(within(dialog).getByLabelText("Deployment 名称"), { target: { value: "web-api" } });
     fireEvent.click(within(dialog).getByRole("button", { name: "下一步" }));
@@ -559,12 +717,25 @@ describe("dosh application", () => {
   });
 
   it("hides deployment creation for read-only capabilities", async () => {
+    let capabilityRequests = 0;
+    const readOnlyCapabilities = {
+      ...session.capabilities,
+      create: false,
+      resourceActions: {
+        ...session.capabilities.resourceActions,
+        deployments: { ...session.capabilities.resourceActions!.deployments, create: false },
+      },
+    };
     server.use(
-      http.get("/api/v1/session", () => HttpResponse.json({ ...session, capabilities: { ...session.capabilities, create: false } })),
-      http.get("/api/v1/capabilities", () => HttpResponse.json({ ...session.capabilities, create: false })),
+      http.get("/api/v1/session", () => HttpResponse.json({ ...session, capabilities: readOnlyCapabilities })),
+      http.get("/api/v1/capabilities", () => {
+        capabilityRequests += 1;
+        return HttpResponse.json(readOnlyCapabilities);
+      }),
     );
     renderRoute("/workloads?namespace=default");
     expect(await screen.findByRole("link", { name: "web" })).toBeInTheDocument();
+    await waitFor(() => expect(capabilityRequests).toBeGreaterThan(0));
     await waitFor(() => expect(screen.queryByRole("button", { name: "创建 Deployment" })).not.toBeInTheDocument());
   });
 
@@ -581,6 +752,25 @@ describe("dosh application", () => {
     fireEvent.click(logsTab);
     await waitFor(() => expect(logsRequested).toBe(true));
     expect(await screen.findByText(/hello from dosh log stream/)).toBeInTheDocument();
+  });
+
+  it("deletes a Pod from its detail page", async () => {
+    let deleted = false;
+    server.use(
+      http.delete("/api/v1/pods/default/web-abcdef-12345", () => {
+        deleted = true;
+        return HttpResponse.json({ status: "deleting" }, { status: 202 });
+      }),
+    );
+    const router = renderRoute("/pods/default/web-abcdef-12345");
+
+    fireEvent.click(await screen.findByRole("button", { name: "删除" }, { timeout: 5000 }));
+    const dialog = await screen.findByRole("alertdialog", { name: "删除 Pod web-abcdef-12345？" });
+    fireEvent.change(within(dialog).getByLabelText("输入名称确认"), { target: { value: "web-abcdef-12345" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "确认删除" }));
+
+    await waitFor(() => expect(deleted).toBe(true));
+    await waitFor(() => expect(router.state.location.pathname).toBe("/pods"));
   });
 
   it("requests log timestamps when the viewer toggle is enabled", async () => {
@@ -638,7 +828,7 @@ describe("dosh application", () => {
 
   it("creates, edits and deletes a workload Service with resource versions", async () => {
     const services = [{
-      name: "web-api", namespace: "default", resourceVersion: "21", type: "ClusterIP", clusterIP: "10.96.0.21", externalIP: "",
+      name: "web-api", namespace: "default", resourceVersion: "21", type: "ClusterIP", headless: false, clusterIP: "10.96.0.21", externalIP: "",
       ports: [{ name: "http", protocol: "TCP", port: 80, targetPort: "8080" }], selector: { app: "web" }, endpointCount: 1,
       createdAt: "2026-11-02T00:00:00Z",
     }];
@@ -661,7 +851,7 @@ describe("dosh application", () => {
       http.post("/api/v1/services", async ({ request }) => {
         createBody = await request.json() as Record<string, unknown>;
         const created = {
-          name: String(createBody.name), namespace: "default", resourceVersion: "22", type: "NodePort", clusterIP: "10.96.0.22", externalIP: "",
+          name: String(createBody.name), namespace: "default", resourceVersion: "22", type: "NodePort", headless: false, clusterIP: "10.96.0.22", externalIP: "",
           ports: [{ name: "http", protocol: "TCP", port: 80, targetPort: "8080", nodePort: 31080 }], selector: { app: "web" }, endpointCount: 0,
           createdAt: "2026-11-02T00:00:00Z", labels: {}, annotations: {}, sessionAffinity: "None", ipFamilies: ["IPv4"], endpoints: [],
         };
@@ -720,7 +910,7 @@ describe("dosh application", () => {
       }),
     );
     const router = renderRoute("/namespaces/production");
-    fireEvent.click(await screen.findByRole("button", { name: "删除命名空间" }));
+    fireEvent.click(await screen.findByRole("button", { name: "删除命名空间" }, { timeout: 5000 }));
     const dialog = await screen.findByRole("alertdialog", { name: /删除命名空间 production/ });
     expect(within(dialog).getByRole("button", { name: "确认级联删除" })).toBeDisabled();
     fireEvent.change(within(dialog).getByLabelText("请输入命名空间名称确认"), { target: { value: "production" } });
@@ -784,6 +974,35 @@ describe("dosh application", () => {
     expect(await screen.findByText("该资源暂无事件")).toBeInTheDocument();
   });
 
+  it("edits and deletes a Service from its detail page", async () => {
+    let updateBody: Record<string, unknown> | undefined;
+    let deletedResourceVersion: string | null = null;
+    server.use(
+      http.get("/api/v1/services/default/web", () => HttpResponse.json({ ...serviceDetail, resourceVersion: "31" })),
+      http.put("/api/v1/services/default/web", async ({ request }) => {
+        updateBody = await request.json() as Record<string, unknown>;
+        return HttpResponse.json({ ...serviceDetail, resourceVersion: "31" });
+      }),
+      http.delete("/api/v1/services/default/web", ({ request }) => {
+        deletedResourceVersion = new URL(request.url).searchParams.get("resourceVersion");
+        return HttpResponse.json({ status: "deleting" }, { status: 202 });
+      }),
+    );
+    const router = renderRoute("/network/services/default/web");
+
+    fireEvent.click(await screen.findByRole("button", { name: "编辑" }, { timeout: 5000 }));
+    let dialog = await screen.findByRole("dialog", { name: "编辑 Service" });
+    fireEvent.click(within(dialog).getByRole("button", { name: "保存修改" }));
+    await waitFor(() => expect(updateBody).toMatchObject({ resourceVersion: "31", selector: { app: "web" } }));
+
+    fireEvent.click(await screen.findByRole("button", { name: "删除" }));
+    dialog = await screen.findByRole("alertdialog", { name: "删除 Service web？" });
+    fireEvent.change(within(dialog).getByLabelText("输入名称确认"), { target: { value: "web" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "确认删除" }));
+    await waitFor(() => expect(deletedResourceVersion).toBe("31"));
+    await waitFor(() => expect(router.state.location.pathname).toBe("/network"));
+  });
+
   it("restores Ingress detail tabs and shows TLS and backend status", async () => {
     const router = renderRoute("/network/ingresses/default/web?tab=routes");
     expect(await screen.findByRole("heading", { name: "web" })).toBeInTheDocument();
@@ -795,6 +1014,74 @@ describe("dosh application", () => {
     fireEvent.click(overviewTab);
     await waitFor(() => expect(router.state.location.search).not.toMatchObject({ tab: "routes" }));
     expect(screen.getByText("web-tls")).toBeInTheDocument();
+  });
+
+  it("exposes Service and Ingress management actions directly from the list", async () => {
+    let capabilityRequests = 0;
+    server.use(
+      http.get("/api/v1/capabilities", () => {
+        capabilityRequests += 1;
+        return HttpResponse.json(session.capabilities);
+      }),
+      http.get("/api/v1/services", () => HttpResponse.json({
+        items: [{
+          name: "web", namespace: "default", resourceVersion: "31", type: "ClusterIP", headless: false, clusterIP: "10.96.0.31",
+          externalIP: "", ports: [{ protocol: "TCP", port: 80, targetPort: "8080" }], selector: { app: "web" },
+          endpointCount: 2, createdAt: "2026-11-02T00:00:00Z",
+        }],
+        meta: { total: 1 },
+      })),
+      http.get("/api/v1/ingresses", () => HttpResponse.json({
+        items: [{ ...ingressDetail, resourceVersion: "41" }],
+        meta: { total: 1 },
+      })),
+    );
+    renderRoute("/network?namespace=default");
+
+    expect(await screen.findByRole("cell", { name: "web" })).toBeInTheDocument();
+    await waitFor(() => expect(capabilityRequests).toBeGreaterThan(0));
+    openResourceMenu("Service default/web");
+    expect(await screen.findByRole("menuitem", { name: "编辑 Service" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "删除 Service" })).toBeInTheDocument();
+    fireEvent.keyDown(screen.getByRole("menu"), { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("menu")).not.toBeInTheDocument());
+
+    const ingressTab = screen.getByRole("tab", { name: /Ingress/ });
+    fireEvent.mouseDown(ingressTab);
+    fireEvent.click(ingressTab);
+    await waitFor(() => expect(screen.getByRole("cell", { name: "web" })).toBeInTheDocument());
+    openResourceMenu("Ingress default/web");
+    expect(await screen.findByRole("menuitem", { name: "编辑 Ingress" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "删除 Ingress" })).toBeInTheDocument();
+  });
+
+  it("edits and deletes an Ingress from its detail page", async () => {
+    let updateBody: Record<string, unknown> | undefined;
+    let deletedResourceVersion: string | null = null;
+    server.use(
+      http.get("/api/v1/ingresses/default/web", () => HttpResponse.json({ ...ingressDetail, resourceVersion: "41" })),
+      http.put("/api/v1/ingresses/default/web", async ({ request }) => {
+        updateBody = await request.json() as Record<string, unknown>;
+        return HttpResponse.json({ ...ingressDetail, resourceVersion: "41" });
+      }),
+      http.delete("/api/v1/ingresses/default/web", ({ request }) => {
+        deletedResourceVersion = new URL(request.url).searchParams.get("resourceVersion");
+        return HttpResponse.json({ status: "deleting" }, { status: 202 });
+      }),
+    );
+    const router = renderRoute("/network/ingresses/default/web");
+
+    fireEvent.click(await screen.findByRole("button", { name: "编辑" }));
+    let dialog = await screen.findByRole("dialog", { name: "编辑 Ingress" });
+    fireEvent.click(within(dialog).getByRole("button", { name: "保存修改" }));
+    await waitFor(() => expect(updateBody).toMatchObject({ resourceVersion: "41", annotations: { "nginx.ingress.kubernetes.io/rewrite-target": "/" } }));
+
+    fireEvent.click(await screen.findByRole("button", { name: "删除" }));
+    dialog = await screen.findByRole("alertdialog", { name: "删除 Ingress web？" });
+    fireEvent.change(within(dialog).getByLabelText("输入名称确认"), { target: { value: "web" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "确认删除" }));
+    await waitFor(() => expect(deletedResourceVersion).toBe("41"));
+    await waitFor(() => expect(router.state.location.pathname).toBe("/network"));
   });
 
   it("shows StorageClass parameters and URL-driven event deep links", async () => {
@@ -827,6 +1114,36 @@ describe("dosh application", () => {
     expect(screen.getByText(/volume expansion in progress/)).toBeInTheDocument();
   });
 
+  it("expands and deletes a PersistentVolumeClaim from its detail page", async () => {
+    let updateBody: Record<string, unknown> | undefined;
+    let deleted = false;
+    server.use(
+      http.get("/api/v1/storageclasses", () => HttpResponse.json({ items: [storageClassDetail], meta: { total: 1 } })),
+      http.put("/api/v1/persistentvolumeclaims/production/data-claim", async ({ request }) => {
+        updateBody = await request.json() as Record<string, unknown>;
+        return HttpResponse.json(persistentVolumeClaimDetail);
+      }),
+      http.delete("/api/v1/persistentvolumeclaims/production/data-claim", () => {
+        deleted = true;
+        return HttpResponse.json({ status: "deleting" }, { status: 202 });
+      }),
+    );
+    const router = renderRoute("/storage/claims/production/data-claim");
+
+    fireEvent.click(await screen.findByRole("button", { name: "扩容" }, { timeout: 5000 }));
+    let dialog = await screen.findByRole("dialog", { name: "扩容 PersistentVolumeClaim" });
+    fireEvent.change(within(dialog).getByLabelText("申请容量"), { target: { value: "6" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "提交扩容" }));
+    await waitFor(() => expect(updateBody).toMatchObject({ requestedCapacityBytes: 6 * 1024 ** 3 }));
+
+    fireEvent.click(await screen.findByRole("button", { name: "删除" }));
+    dialog = await screen.findByRole("alertdialog", { name: "删除 PersistentVolumeClaim data-claim？" });
+    fireEvent.change(within(dialog).getByLabelText("输入名称确认"), { target: { value: "data-claim" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "确认删除" }));
+    await waitFor(() => expect(deleted).toBe(true));
+    await waitFor(() => expect(router.state.location.pathname).toBe("/storage"));
+  });
+
   it("confirms node cordon with CSRF and refreshes scheduling state", async () => {
     let cordoned = false;
     let schedulingRequest: Request | undefined;
@@ -840,7 +1157,7 @@ describe("dosh application", () => {
     );
     renderRoute("/nodes/worker-0001");
 
-    fireEvent.click(await screen.findByRole("button", { name: "停止调度" }));
+    fireEvent.click(await screen.findByRole("button", { name: "停止调度" }, { timeout: 5000 }));
     const dialog = await screen.findByRole("alertdialog");
     expect(dialog).toHaveTextContent("停止节点调度？");
     expect(schedulingRequest).toBeUndefined();

@@ -1,8 +1,8 @@
 import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useParams, useSearch } from "@tanstack/react-router";
 import { createColumnHelper } from "@tanstack/react-table";
-import { Box, FileCode2, ScrollText } from "lucide-react";
+import { Box, FileCode2, ScrollText, Trash2 } from "lucide-react";
 import { api } from "@/api/client";
 import type { ContainerInfo } from "@/api/types";
 import { DataTable } from "@/components/data/data-table";
@@ -10,12 +10,15 @@ import { DetailItem } from "@/components/data/detail-item";
 import { ErrorState, LoadingState } from "@/components/feedback/states";
 import { StatusBadge } from "@/components/feedback/status-badge";
 import { PageHeader } from "@/components/layout/page-header";
+import { DeleteResourceDialog } from "@/components/resources/delete-resource-dialog";
 import { YamlDialog, YamlPanel } from "@/components/resources/yaml-dialog";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ResourceEvents } from "@/features/events/resource-events";
+import { useCapabilities } from "@/features/auth/use-session";
 import { LogViewer } from "@/features/workloads/log-viewer";
+import { resourceCapabilities } from "@/lib/capabilities";
 import { formatCPU, formatDate, formatMemory } from "@/lib/utils";
 
 const column = createColumnHelper<ContainerInfo>();
@@ -30,7 +33,9 @@ export function PodDetailPage() {
   const params = useParams({ strict: false }) as { namespace: string; name: string };
   const search = useSearch({ from: "/app/pods/$namespace/$name" });
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const [yamlOpen, setYamlOpen] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
   const tab = isPodTab(search.tab) ? search.tab : "overview";
   const changeTab = (value: string) => {
     if (!isPodTab(value)) return;
@@ -41,6 +46,8 @@ export function PodDetailPage() {
       replace: true,
     });
   };
+  const capabilities = useCapabilities(params.namespace).data;
+  const podCaps = resourceCapabilities(capabilities, "pods");
   const query = useQuery({ queryKey: ["pod", params.namespace, params.name], queryFn: () => api.pod(params.namespace, params.name), refetchInterval: 20_000 });
   if (query.isLoading) return <LoadingState label="正在加载 Pod 详情" className="min-h-[60vh]" />;
   if (query.isError) return <ErrorState error={query.error} onRetry={() => void query.refetch()} />;
@@ -51,7 +58,10 @@ export function PodDetailPage() {
         title={pod.name}
         breadcrumb={<span>工作负载 / Pod / {pod.namespace}</span>}
         description={<span className="flex flex-wrap items-center gap-2"><StatusBadge status={pod.status} /><span>{pod.ready} 就绪</span><span>·</span><span>{pod.node}</span></span>}
-        actions={<Button variant="outline" size="sm" onClick={() => setYamlOpen(true)}><FileCode2 className="h-4 w-4" />YAML</Button>}
+        actions={<div className="flex items-center gap-2">
+          <Button variant="outline" size="sm" onClick={() => setYamlOpen(true)}><FileCode2 className="h-4 w-4" />YAML</Button>
+          {podCaps.delete ? <Button variant="destructive" size="sm" onClick={() => setDeleteOpen(true)}><Trash2 className="h-4 w-4" />删除</Button> : null}
+        </div>}
       />
       <Tabs value={tab} onValueChange={changeTab}>
         <TabsList><TabsTrigger value="overview">概览</TabsTrigger><TabsTrigger value="containers">实例 ({pod.containers.length})</TabsTrigger><TabsTrigger value="events">事件</TabsTrigger><TabsTrigger value="logs"><ScrollText className="h-3.5 w-3.5" />日志</TabsTrigger><TabsTrigger value="yaml"><FileCode2 className="h-3.5 w-3.5" />YAML</TabsTrigger></TabsList>
@@ -94,6 +104,19 @@ export function PodDetailPage() {
         <TabsContent value="yaml"><YamlPanel type="pod" name={pod.name} namespace={pod.namespace} height="64vh" /></TabsContent>
       </Tabs>
       <YamlDialog open={yamlOpen} onOpenChange={setYamlOpen} type="pod" name={pod.name} namespace={pod.namespace} />
+      <DeleteResourceDialog
+        open={deleteOpen}
+        onOpenChange={setDeleteOpen}
+        resourceKind="Pod"
+        name={pod.name}
+        description="Pod 将被删除；若由 Deployment/StatefulSet 等控制器管理，控制器会自动创建替代实例。"
+        onConfirm={async () => {
+          await api.deletePod(pod.namespace, pod.name);
+          await queryClient.invalidateQueries({ queryKey: ["pods"] });
+          await queryClient.invalidateQueries({ queryKey: ["workloads"] });
+          await navigate({ to: "/pods" });
+        }}
+      />
     </>
   );
 }

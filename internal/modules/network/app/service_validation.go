@@ -29,14 +29,14 @@ func normalizeServiceCreateSpec(spec *domain.ServiceCreateSpec) error {
 	if err := validateServiceIdentity(spec.Namespace, spec.Name); err != nil {
 		return err
 	}
-	return normalizeServiceSpec(&spec.Type, &spec.Selector, &spec.Ports)
+	return normalizeServiceSpec(&spec.Type, &spec.Headless, &spec.Selector, &spec.Ports)
 }
 
 func normalizeServiceUpdateSpec(namespace, name string, update *domain.ServiceUpdateSpec) error {
 	if err := validateServiceIdentity(namespace, name); err != nil {
 		return err
 	}
-	return normalizeServiceSpec(&update.Type, &update.Selector, &update.Ports)
+	return normalizeServiceSpec(&update.Type, &update.Headless, &update.Selector, &update.Ports)
 }
 
 func validateServiceIdentity(namespace, name string) error {
@@ -49,13 +49,16 @@ func validateServiceIdentity(namespace, name string) error {
 	return nil
 }
 
-func normalizeServiceSpec(serviceType *string, selector *map[string]string, ports *[]domain.ServicePortInput) error {
+func normalizeServiceSpec(serviceType *string, headless *bool, selector *map[string]string, ports *[]domain.ServicePortInput) error {
 	*serviceType = strings.TrimSpace(*serviceType)
 	if *serviceType == "" {
 		*serviceType = "ClusterIP"
 	}
 	if _, ok := serviceTypes[*serviceType]; !ok {
 		return serviceValidationError("type", "type must be ClusterIP, NodePort, or LoadBalancer")
+	}
+	if *headless && *serviceType != "ClusterIP" {
+		return serviceValidationError("headless", "headless Services must use the ClusterIP type")
 	}
 
 	normalizedSelector := make(map[string]string, len(*selector))

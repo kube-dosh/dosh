@@ -12,6 +12,7 @@ Dosh 是一套自研的 Kubernetes 运维控制台，后端使用 Go + chi + cli
 - 证书：HTTPS 证书文件/Secret 更新后自动热加载，提供只读证书状态和受审计的手动重载
 - 节点运维：按 `update nodes` 权限提供 Cordon/Uncordon、标签和污点管理；写操作带 resourceVersion 乐观锁、审计和危险操作确认
 - 工作负载访问方式：工作负载详情可直接查看关联 Service，并按 `services create/update/delete` 权限创建、编辑和删除 ClusterIP/NodePort/LoadBalancer；NodePort 由 Kubernetes 自动分配
+- 资源操作闭环：工作负载、Pod、命名空间、Service/Ingress、ConfigMap/Secret、PVC 在列表和详情提供基于资源级 RBAC 的创建、编辑、扩容、删除、详情和 YAML 操作；PV、StorageClass、事件和审计保持只读
 - 命名空间生命周期：按 `namespaces delete` 权限提供受确认保护的命名空间删除，使用 Foreground 级联清理命名空间内全部资源；`default` 与 `kube-*` 始终拒绝删除
 - 部署：2 副本、跨节点反亲和、PDB、非 root、只读根文件系统、distroless 运行镜像
 - 契约：`api/openapi.yaml` 为唯一 API 契约源
@@ -36,8 +37,8 @@ Browser
 ## 当前候选 v0.1.5
 
 - 源码版本：App/OpenAPI/npm `0.1.5`，Chart `0.1.7`；默认认证模式为 `token`。
-- 当前 Preview 镜像：`192.168.122.10:5000/dosh/dosh:0.1.5-rc-workload-services-final-20261106T151734Z`，
-  registry digest `sha256:60fa40aa3720446acf120bafce9e44dc754f2e757121c1c59545a2134d9dacb3`。
+- 当前 Preview 镜像：`192.168.122.10:5000/dosh/dosh:0.1.5-rc-resource-actions-20261107T034120Z`，
+  registry digest `sha256:cacde218267aae6a6f45c48761d041587e2d9b14b698d6e0eae74a4c6c244146`。
 - Token 登录链路：浏览器提交 Bearer Token → `TokenReview` 校验 → 加密 HttpOnly 会话 →
   业务请求使用 `Impersonate-User`/`Impersonate-Group` → `SubjectAccessReview` 判权。Token 不写入
   Cookie、浏览器存储、审计或日志；用户 Token 与 ServiceAccount Token 均受支持。
@@ -128,8 +129,9 @@ Browser
   min/max/default/defaultRequest，并支持事件与 YAML 深链；local 模式 ClusterRole 只增加这三类
   只读权限。
 - 工作负载实例列表的节点名称可跳转到节点详情。工作负载详情新增“访问方式”页签，按 Pod Selector
-  关联同命名空间 Service，并可在页面内创建、编辑和删除 Service；支持 ClusterIP、NodePort、
-  LoadBalancer 及 TCP/UDP/SCTP 端口，NodePort 由 Kubernetes 自动分配。
+  关联同命名空间 Service，并可在页面内创建、编辑和删除 Service；支持 ClusterIP、Headless、
+  NodePort、LoadBalancer 及 TCP/UDP/SCTP 端口，NodePort 由 Kubernetes 自动分配。Headless 使用
+  `clusterIP: None`，DNS 直接返回匹配 Pod 地址，适合 StatefulSet、数据库等点对点发现。
 - 命名空间列表和详情提供删除入口，要求输入名称确认，并以 Foreground 级联删除命名空间内资源；
   `default` 和 `kube-*` 在前后端双重保护。服务端写操作统一接入 RBAC、CSRF、resourceVersion 乐观锁和
   `create-service`、`update-service`、`delete-service`、`delete-namespace` 审计。

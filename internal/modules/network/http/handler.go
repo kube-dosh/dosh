@@ -107,6 +107,47 @@ func (h *Handler) Ingress(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	httpx.JSON(w, stdhttp.StatusOK, item)
 }
 
+func (h *Handler) CreateIngress(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	var request domain.IngressCreateSpec
+	if !httpx.DecodeJSON(w, r, &request) {
+		return
+	}
+	actor, _ := domain.ActorFromContext(r.Context())
+	item, err := h.service.CreateIngress(r.Context(), actor, request)
+	if err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	httpx.JSON(w, stdhttp.StatusCreated, item)
+}
+
+func (h *Handler) UpdateIngress(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	var request domain.IngressUpdateSpec
+	if !httpx.DecodeJSON(w, r, &request) {
+		return
+	}
+	actor, _ := domain.ActorFromContext(r.Context())
+	item, err := h.service.UpdateIngress(
+		r.Context(), actor, chi.URLParam(r, "namespace"), chi.URLParam(r, "name"), request,
+	)
+	if err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	httpx.JSON(w, stdhttp.StatusOK, item)
+}
+
+func (h *Handler) DeleteIngress(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	actor, _ := domain.ActorFromContext(r.Context())
+	if err := h.service.DeleteIngress(
+		r.Context(), actor, chi.URLParam(r, "namespace"), chi.URLParam(r, "name"), httpx.Query(r, "resourceVersion"),
+	); err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	httpx.JSON(w, stdhttp.StatusAccepted, map[string]string{"status": "deleting"})
+}
+
 func (h *Handler) IngressClasses(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	query := domain.ListQuery{Search: httpx.Query(r, "q")}
 	options, err := httpx.ParseListOptions(r, []string{"name"})
@@ -131,6 +172,9 @@ func (h *Handler) Mount(r chi.Router) {
 	r.Put("/services/{namespace}/{name}", h.UpdateService)
 	r.Delete("/services/{namespace}/{name}", h.DeleteService)
 	r.Get("/ingresses", h.Ingresses)
+	r.Post("/ingresses", h.CreateIngress)
 	r.Get("/ingresses/{namespace}/{name}", h.Ingress)
+	r.Put("/ingresses/{namespace}/{name}", h.UpdateIngress)
+	r.Delete("/ingresses/{namespace}/{name}", h.DeleteIngress)
 	r.Get("/ingressclasses", h.IngressClasses)
 }

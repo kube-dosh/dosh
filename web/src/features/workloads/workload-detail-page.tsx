@@ -24,6 +24,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useCapabilities } from "@/features/auth/use-session";
+import { workloadCapabilities } from "@/lib/capabilities";
 import { ResourceEvents } from "@/features/events/resource-events";
 import { PodLogs } from "@/features/workloads/pod-logs";
 import { WorkloadServicesPanel } from "@/features/workloads/workload-services-panel";
@@ -77,11 +78,12 @@ export function WorkloadDetailPage() {
     queryFn: () => api.workload(kind, params.namespace, params.name),
   });
   const capabilities = useCapabilities(params.namespace).data;
-  const canScale = Boolean(capabilities?.scale) && ["deployment", "statefulset"].includes(kind);
-  const canRestart = Boolean(capabilities?.restart) && !["job", "cronjob"].includes(kind);
-  const canUpdateImage = Boolean(capabilities?.updateImage) && ["deployment", "statefulset", "daemonset"].includes(kind);
-  const canSuspend = Boolean(capabilities?.suspendCronJob) && kind === "cronjob";
-  const canDelete = Boolean(capabilities?.delete);
+  const workloadCaps = workloadCapabilities(capabilities, kind);
+  const canScale = workloadCaps.scale && ["deployment", "statefulset"].includes(kind);
+  const canRestart = workloadCaps.update && !["job", "cronjob"].includes(kind);
+  const canUpdateImage = workloadCaps.update && ["deployment", "statefulset", "daemonset"].includes(kind);
+  const canSuspend = workloadCaps.update && kind === "cronjob";
+  const canDelete = workloadCaps.delete;
   const invalidate = async () => {
     await queryClient.invalidateQueries({ queryKey: ["workload", kind, params.namespace, params.name] });
     await queryClient.invalidateQueries({ queryKey: ["workloads"] });

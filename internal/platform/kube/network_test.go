@@ -146,7 +146,7 @@ func TestGetIngressMapsNotFound(t *testing.T) {
 }
 
 func TestCreateUpdateAndDeleteService(t *testing.T) {
-	client, _ := newFakeKubeClient()
+	client, clientset := newFakeKubeClient()
 	created, err := client.CreateService(context.Background(), domain.ServiceCreateSpec{
 		Name: "api", Namespace: "prod", Type: "ClusterIP",
 		Selector: map[string]string{"app": "api"},
@@ -157,6 +157,21 @@ func TestCreateUpdateAndDeleteService(t *testing.T) {
 	}
 	if created.Name != "api" || created.Namespace != "prod" || created.Type != "ClusterIP" || created.Selector["app"] != "api" || len(created.Ports) != 1 || created.Ports[0].TargetPort != "8080" {
 		t.Fatalf("created service = %#v", created)
+	}
+	headless, err := client.CreateService(context.Background(), domain.ServiceCreateSpec{
+		Name: "db", Namespace: "prod", Type: "ClusterIP", Headless: true,
+		Selector: map[string]string{"app": "db"},
+		Ports:    []domain.ServicePortInput{{Name: "http", Protocol: "TCP", Port: 80, TargetPort: "8080"}},
+	})
+	if err != nil {
+		t.Fatalf("CreateService() headless error = %v", err)
+	}
+	stored, err := clientset.CoreV1().Services("prod").Get(context.Background(), "db", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("headless service lookup error = %v", err)
+	}
+	if !headless.Headless || headless.ClusterIP != corev1.ClusterIPNone || stored.Spec.ClusterIP != corev1.ClusterIPNone {
+		t.Fatalf("headless service = %#v stored ClusterIP = %q", headless, stored.Spec.ClusterIP)
 	}
 
 	service := testService()

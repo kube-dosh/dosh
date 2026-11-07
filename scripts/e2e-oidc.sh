@@ -28,14 +28,18 @@ IMAGE_TAG=${DOSH_E2E_IMAGE_TAG:-0.1.4-oidc-e2e-$(date +%s)}
 IMAGE_DIGEST=${DOSH_E2E_IMAGE_DIGEST:-}
 SKIP_BUILD=${DOSH_E2E_SKIP_BUILD:-0}
 HOLD=${DOSH_E2E_HOLD:-0}
+KEEP_RESOURCES=${DOSH_E2E_KEEP_RESOURCES:-0}
 STATE_FILE=${DOSH_E2E_STATE_FILE:-}
 WORKDIR=$(mktemp -d)
 IDP_PID=""
 CORDON_NODE_ORIGINAL=""
+APP_NAMESPACE_CREATED=0
+TARGET_NAMESPACE_CREATED=0
 
 log() { printf '\n==> %s\n' "$*"; }
 die() { printf 'error: %s\n' "$*" >&2; exit 1; }
 cleanup() {
+  set +e
   if [[ -n "$CORDON_NODE_ORIGINAL" ]] && kubectl get node "$CORDON_NODE" >/dev/null 2>&1; then
     current=$(kubectl get node "$CORDON_NODE" -o jsonpath='{.spec.unschedulable}' 2>/dev/null || true)
     current=${current:-false}
@@ -47,6 +51,29 @@ cleanup() {
   if [[ -n "$IDP_PID" ]]; then
     kill "$IDP_PID" 2>/dev/null || true
     wait "$IDP_PID" 2>/dev/null || true
+  fi
+  if [[ "$KEEP_RESOURCES" != 1 ]]; then
+    if helm status "$RELEASE" -n "$NAMESPACE" >/dev/null 2>&1; then
+      helm uninstall "$RELEASE" -n "$NAMESPACE" --wait --timeout 2m >/dev/null 2>&1 || true
+    fi
+    kubectl delete clusterrolebinding "dosh-e2e-viewers${RBAC_SUFFIX}" "dosh-e2e-admins${RBAC_SUFFIX}" \
+      --ignore-not-found --wait=false >/dev/null 2>&1 || true
+    kubectl delete clusterrole "dosh-e2e-viewer${RBAC_SUFFIX}" \
+      --ignore-not-found --wait=false >/dev/null 2>&1 || true
+    if [[ "$TARGET_NAMESPACE_CREATED" == 1 ]]; then
+      kubectl delete namespace "$TARGET_NAMESPACE" --ignore-not-found --wait=false >/dev/null 2>&1 || true
+    else
+      kubectl -n "$TARGET_NAMESPACE" delete role "dosh-e2e-operator-write${RBAC_SUFFIX}" \
+        --ignore-not-found --wait=false >/dev/null 2>&1 || true
+      kubectl -n "$TARGET_NAMESPACE" delete rolebinding "dosh-e2e-operators${RBAC_SUFFIX}" \
+        --ignore-not-found --wait=false >/dev/null 2>&1 || true
+    fi
+    if [[ "$APP_NAMESPACE_CREATED" == 1 ]]; then
+      kubectl delete namespace "$NAMESPACE" --ignore-not-found --wait=false >/dev/null 2>&1 || true
+    fi
+  elif [[ "$IDP_PID" != "" ]]; then
+    printf 'E2E test resources retained (release=%s namespaces=%s,%s)\n' \
+      "$RELEASE" "$NAMESPACE" "$TARGET_NAMESPACE"
   fi
   if [[ ${DOSH_E2E_KEEP_WORKDIR:-0} != 1 ]]; then
     rm -rf "$WORKDIR"
@@ -137,6 +164,8 @@ curl -sf --cacert "$WORKDIR/ca.crt" "https://${IDP_HOST}:${IDP_PORT}/.well-known
 }
 
 log "Creating isolated secrets, namespaces and RBAC"
+kubectl get namespace "$NAMESPACE" >/dev/null 2>&1 || APP_NAMESPACE_CREATED=1
+kubectl get namespace "$TARGET_NAMESPACE" >/dev/null 2>&1 || TARGET_NAMESPACE_CREATED=1
 kubectl create namespace "$NAMESPACE" --dry-run=client -o yaml | kubectl apply -f - >/dev/null
 kubectl create namespace "$TARGET_NAMESPACE" --dry-run=client -o yaml | kubectl apply -f - >/dev/null
 kubectl -n "$TARGET_NAMESPACE" create secret generic e2e-secret \

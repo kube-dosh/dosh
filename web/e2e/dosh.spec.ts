@@ -45,6 +45,23 @@ const session: SessionResponse = {
     editYAML: true,
     nodeCordon: true,
     reloadCertificate: true,
+    resourceActions: {
+      pods: { create: false, update: true, delete: true, scale: false },
+      deployments: { create: true, update: true, delete: true, scale: true },
+      statefulsets: { create: false, update: true, delete: true, scale: true },
+      daemonsets: { create: false, update: true, delete: true, scale: false },
+      jobs: { create: false, update: true, delete: true, scale: false },
+      cronjobs: { create: false, update: true, delete: true, scale: false },
+      services: { create: true, update: true, delete: true, scale: false },
+      ingresses: { create: true, update: true, delete: true, scale: false },
+      configmaps: { create: true, update: true, delete: true, scale: false },
+      secrets: { create: true, update: true, delete: true, scale: false },
+      persistentvolumeclaims: { create: true, update: true, delete: true, scale: false },
+      persistentvolumes: { create: false, update: false, delete: false, scale: false },
+      storageclasses: { create: false, update: false, delete: false, scale: false },
+      nodes: { create: false, update: true, delete: false, scale: false },
+      namespaces: { create: true, update: false, delete: true, scale: false },
+    },
   },
 };
 
@@ -160,6 +177,7 @@ const serviceDetail: ServiceDetail = {
   name: "web",
   namespace: "default",
   type: "ClusterIP",
+  headless: false,
   clusterIP: "10.96.0.10",
   externalIP: "",
   ports: [{ name: "http", protocol: "TCP", port: 80, targetPort: "8080" }],
@@ -277,6 +295,10 @@ function json(route: Route, value: unknown, status = 200) {
 
 function list<T>(items: T[]): ListResponse<T> {
   return { items, meta: { total: items.length, page: 1, pageSize: Math.max(items.length, 1), totalPages: items.length ? 1 : 0, filters: {} } };
+}
+
+async function openResourceMenu(page: Page, resource: string) {
+  await page.getByRole("button", { name: `操作 ${resource}` }).click();
 }
 
 type NodeSchedulingRequest = { method: string; path: string; csrf: string | null };
@@ -445,14 +467,15 @@ async function installApiMocks(page: Page, options: { authenticated?: boolean; a
     }
     if (path === "/api/v1/services/default/web" && method === "GET") return json(route, services.find((item) => item.name === "web") ?? serviceDetail);
     if (path === "/api/v1/services" && method === "POST") {
-      const body = request.postDataJSON() as { name: string; namespace: string; type: string; selector: Record<string, string>; ports: Array<{ name?: string; protocol?: string; port: number; targetPort?: number }> };
+      const body = request.postDataJSON() as { name: string; namespace: string; type: string; headless?: boolean; selector: Record<string, string>; ports: Array<{ name?: string; protocol?: string; port: number; targetPort?: number }> };
       const created: ServiceDetail = {
         ...serviceDetail,
         name: body.name,
         namespace: body.namespace,
         resourceVersion: "50",
         type: body.type,
-        clusterIP: "10.96.0.50",
+        headless: Boolean(body.headless),
+        clusterIP: body.headless ? "None" : "10.96.0.50",
         selector: body.selector,
         ports: body.ports.map((port) => ({ name: port.name, protocol: port.protocol ?? "TCP", port: port.port, targetPort: String(port.targetPort ?? port.port) })),
         endpointCount: 0,
@@ -1020,13 +1043,16 @@ test("工作负载访问方式可创建、编辑和删除关联 Service", async 
   const createDialog = page.getByRole("dialog", { name: "配置访问方式" });
   await expect(createDialog).toBeVisible();
   await createDialog.getByLabel("Service 名称").fill("web-public");
+  await createDialog.getByRole("combobox", { name: "访问类型" }).click();
+  await page.getByRole("option", { name: "Headless（无 ClusterIP）" }).click();
   await createDialog.getByLabel("Service 端口").fill("8080");
   await createDialog.getByLabel("目标端口").fill("8080");
   const createRequest = page.waitForRequest((request) => request.method() === "POST" && new URL(request.url()).pathname === "/api/v1/services");
   await createDialog.getByRole("button", { name: "创建 Service" }).click();
   const created = await createRequest;
   expect(created.headers()["x-csrf-token"]).toBe(csrfToken);
-  expect(created.postDataJSON()).toMatchObject({ name: "web-public", namespace: "default", type: "ClusterIP", selector: { app: "web" } });
+  expect(created.postDataJSON()).toMatchObject({ name: "web-public", namespace: "default", type: "ClusterIP", headless: true, selector: { app: "web" } });
+  await expect(page.getByText("Headless", { exact: true })).toBeVisible();
   await expect(page.getByRole("link", { name: "web-public", exact: true })).toBeVisible();
 
   const webCard = page.locator(".rounded-lg.border.bg-card").filter({ has: page.getByRole("link", { name: "web", exact: true }) });
@@ -1520,7 +1546,8 @@ test("移动端关键弹窗与确认框保持在视口内", async ({ page }) => 
   await page.keyboard.press("Escape");
 
   await page.goto("/configuration?tab=secrets");
-  await page.getByRole("button", { name: "查看明文" }).click();
+  await openResourceMenu(page, "Secret default/app-secret");
+  await page.getByRole("menuitem", { name: "查看明文" }).click();
   dialog = page.getByRole("dialog", { name: "app-secret" });
   await expect(dialog).toBeVisible();
   await expectElementInsideViewport(page, dialog, "Secret reveal dialog");
@@ -1767,7 +1794,8 @@ test("Secret 明文查看解码文本并保留二进制 Base64", async ({ page }
   await installApiMocks(page);
   await page.goto("/configuration?tab=secrets");
 
-  await page.getByRole("button", { name: "查看明文" }).click();
+  await openResourceMenu(page, "Secret default/app-secret");
+  await page.getByRole("menuitem", { name: "查看明文" }).click();
 
   const token = page.locator('pre[aria-label="token 值"]');
   await expect(token).toContainText("token=abc");

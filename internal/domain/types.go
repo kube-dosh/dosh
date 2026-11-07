@@ -34,21 +34,32 @@ type Actor struct {
 }
 
 type Capabilities struct {
-	Read              bool `json:"read"`
-	Scale             bool `json:"scale"`
-	Restart           bool `json:"restart"`
-	UpdateImage       bool `json:"updateImage"`
-	SuspendCronJob    bool `json:"suspendCronJob"`
-	Delete            bool `json:"delete"`
-	Create            bool `json:"create"`
-	CreateService     bool `json:"createService"`
-	UpdateService     bool `json:"updateService"`
-	DeleteService     bool `json:"deleteService"`
-	DeleteNamespace   bool `json:"deleteNamespace"`
-	RevealSecrets     bool `json:"revealSecrets"`
-	EditYAML          bool `json:"editYAML"`
-	NodeCordon        bool `json:"nodeCordon"`
-	ReloadCertificate bool `json:"reloadCertificate"`
+	Read              bool                            `json:"read"`
+	Scale             bool                            `json:"scale"`
+	Restart           bool                            `json:"restart"`
+	UpdateImage       bool                            `json:"updateImage"`
+	SuspendCronJob    bool                            `json:"suspendCronJob"`
+	Delete            bool                            `json:"delete"`
+	Create            bool                            `json:"create"`
+	CreateService     bool                            `json:"createService"`
+	UpdateService     bool                            `json:"updateService"`
+	DeleteService     bool                            `json:"deleteService"`
+	DeleteNamespace   bool                            `json:"deleteNamespace"`
+	RevealSecrets     bool                            `json:"revealSecrets"`
+	EditYAML          bool                            `json:"editYAML"`
+	NodeCordon        bool                            `json:"nodeCordon"`
+	ReloadCertificate bool                            `json:"reloadCertificate"`
+	ResourceActions   map[string]ResourceCapabilities `json:"resourceActions,omitempty"`
+}
+
+// ResourceCapabilities is the resource-level write capability model used by
+// resource tables. It keeps authorization decisions independent from any one
+// page or Kubernetes client implementation.
+type ResourceCapabilities struct {
+	Create bool `json:"create"`
+	Update bool `json:"update"`
+	Delete bool `json:"delete"`
+	Scale  bool `json:"scale"`
 }
 
 // ServerCertificate is the non-sensitive runtime view of the TLS certificate
@@ -242,6 +253,12 @@ type Namespace struct {
 	CreatedAt       time.Time         `json:"createdAt"`
 }
 
+type NamespaceCreateSpec struct {
+	Name        string            `json:"name"`
+	Labels      map[string]string `json:"labels,omitempty"`
+	Annotations map[string]string `json:"annotations,omitempty"`
+}
+
 type NamespaceDetail struct {
 	Namespace
 	ResourceQuotas []ResourceQuota `json:"resourceQuotas"`
@@ -388,12 +405,14 @@ type ServiceCreateSpec struct {
 	Name      string             `json:"name"`
 	Namespace string             `json:"namespace"`
 	Type      string             `json:"type"`
+	Headless  bool               `json:"headless,omitempty"`
 	Selector  map[string]string  `json:"selector"`
 	Ports     []ServicePortInput `json:"ports"`
 }
 
 type ServiceUpdateSpec struct {
 	Type            string             `json:"type"`
+	Headless        bool               `json:"headless,omitempty"`
 	Selector        map[string]string  `json:"selector"`
 	Ports           []ServicePortInput `json:"ports"`
 	ResourceVersion string             `json:"resourceVersion,omitempty"`
@@ -404,6 +423,7 @@ type ServiceSummary struct {
 	Namespace       string            `json:"namespace"`
 	ResourceVersion string            `json:"resourceVersion,omitempty"`
 	Type            string            `json:"type"`
+	Headless        bool              `json:"headless"`
 	ClusterIP       string            `json:"clusterIP"`
 	ExternalIP      string            `json:"externalIP"`
 	Ports           []ServicePort     `json:"ports"`
@@ -451,12 +471,38 @@ const (
 )
 
 type IngressSummary struct {
-	Name      string        `json:"name"`
-	Namespace string        `json:"namespace"`
-	Class     string        `json:"class"`
-	Paths     []IngressPath `json:"paths"`
-	TLSHosts  []string      `json:"tlsHosts,omitempty"`
-	CreatedAt time.Time     `json:"createdAt"`
+	Name            string        `json:"name"`
+	Namespace       string        `json:"namespace"`
+	ResourceVersion string        `json:"resourceVersion,omitempty"`
+	Class           string        `json:"class"`
+	Paths           []IngressPath `json:"paths"`
+	TLSHosts        []string      `json:"tlsHosts,omitempty"`
+	CreatedAt       time.Time     `json:"createdAt"`
+}
+
+type IngressPathInput struct {
+	Host     string `json:"host,omitempty"`
+	Path     string `json:"path"`
+	PathType string `json:"pathType,omitempty"`
+	Service  string `json:"service"`
+	Port     string `json:"port"`
+}
+
+type IngressCreateSpec struct {
+	Name        string             `json:"name"`
+	Namespace   string             `json:"namespace"`
+	Class       string             `json:"class,omitempty"`
+	Paths       []IngressPathInput `json:"paths"`
+	TLS         []IngressTLS       `json:"tls,omitempty"`
+	Annotations map[string]string  `json:"annotations,omitempty"`
+}
+
+type IngressUpdateSpec struct {
+	Class           string             `json:"class,omitempty"`
+	Paths           []IngressPathInput `json:"paths"`
+	TLS             []IngressTLS       `json:"tls,omitempty"`
+	Annotations     map[string]string  `json:"annotations,omitempty"`
+	ResourceVersion string             `json:"resourceVersion,omitempty"`
 }
 
 type IngressTLS struct {
@@ -480,16 +526,30 @@ type IngressClassSummary struct {
 }
 
 type ConfigMapSummary struct {
-	Name      string    `json:"name"`
-	Namespace string    `json:"namespace"`
-	Keys      []string  `json:"keys"`
-	DataBytes int       `json:"dataBytes"`
-	CreatedAt time.Time `json:"createdAt"`
+	Name            string    `json:"name"`
+	Namespace       string    `json:"namespace"`
+	ResourceVersion string    `json:"resourceVersion,omitempty"`
+	Keys            []string  `json:"keys"`
+	DataBytes       int       `json:"dataBytes"`
+	CreatedAt       time.Time `json:"createdAt"`
 }
 
 type ConfigMapDetail struct {
 	ConfigMapSummary
 	Data map[string]string `json:"data"`
+}
+
+type ConfigMapCreateSpec struct {
+	Name        string            `json:"name"`
+	Namespace   string            `json:"namespace"`
+	Data        map[string]string `json:"data"`
+	Annotations map[string]string `json:"annotations,omitempty"`
+}
+
+type ConfigMapUpdateSpec struct {
+	Data            map[string]string `json:"data"`
+	Annotations     map[string]string `json:"annotations,omitempty"`
+	ResourceVersion string            `json:"resourceVersion,omitempty"`
 }
 
 type SecretKey struct {
@@ -498,16 +558,28 @@ type SecretKey struct {
 }
 
 type SecretSummary struct {
-	Name      string      `json:"name"`
-	Namespace string      `json:"namespace"`
-	Type      string      `json:"type"`
-	Keys      []SecretKey `json:"keys"`
-	CreatedAt time.Time   `json:"createdAt"`
+	Name            string      `json:"name"`
+	Namespace       string      `json:"namespace"`
+	ResourceVersion string      `json:"resourceVersion,omitempty"`
+	Type            string      `json:"type"`
+	Keys            []SecretKey `json:"keys"`
+	CreatedAt       time.Time   `json:"createdAt"`
 }
 
 type SecretReveal struct {
 	SecretSummary
 	Data map[string]string `json:"data"`
+}
+
+// SecretWriteSpec carries base64-encoded values. This mirrors Kubernetes'
+// native Secret data representation and avoids silently corrupting binary keys.
+type SecretWriteSpec struct {
+	Name            string            `json:"name,omitempty"`
+	Namespace       string            `json:"namespace,omitempty"`
+	Type            string            `json:"type"`
+	Data            map[string]string `json:"data"`
+	Annotations     map[string]string `json:"annotations,omitempty"`
+	ResourceVersion string            `json:"resourceVersion,omitempty"`
 }
 
 type StorageClass struct {
@@ -551,14 +623,15 @@ type PersistentVolumeDetail struct {
 }
 
 type PersistentVolumeClaim struct {
-	Name          string    `json:"name"`
-	Namespace     string    `json:"namespace"`
-	Status        string    `json:"status"`
-	VolumeName    string    `json:"volumeName,omitempty"`
-	CapacityBytes int64     `json:"capacityBytes"`
-	AccessModes   []string  `json:"accessModes"`
-	StorageClass  string    `json:"storageClass"`
-	CreatedAt     time.Time `json:"createdAt"`
+	Name            string    `json:"name"`
+	Namespace       string    `json:"namespace"`
+	ResourceVersion string    `json:"resourceVersion,omitempty"`
+	Status          string    `json:"status"`
+	VolumeName      string    `json:"volumeName,omitempty"`
+	CapacityBytes   int64     `json:"capacityBytes"`
+	AccessModes     []string  `json:"accessModes"`
+	StorageClass    string    `json:"storageClass"`
+	CreatedAt       time.Time `json:"createdAt"`
 }
 
 type PersistentVolumeClaimDetail struct {
@@ -568,6 +641,24 @@ type PersistentVolumeClaimDetail struct {
 	VolumeMode             string            `json:"volumeMode"`
 	RequestedCapacityBytes int64             `json:"requestedCapacityBytes"`
 	Conditions             []Condition       `json:"conditions"`
+}
+
+type PersistentVolumeClaimCreateSpec struct {
+	Name                   string            `json:"name"`
+	Namespace              string            `json:"namespace"`
+	StorageClass           string            `json:"storageClass,omitempty"`
+	AccessModes            []string          `json:"accessModes"`
+	RequestedCapacityBytes int64             `json:"requestedCapacityBytes"`
+	VolumeMode             string            `json:"volumeMode,omitempty"`
+	Labels                 map[string]string `json:"labels,omitempty"`
+	Annotations            map[string]string `json:"annotations,omitempty"`
+}
+
+type PersistentVolumeClaimUpdateSpec struct {
+	RequestedCapacityBytes int64             `json:"requestedCapacityBytes"`
+	Labels                 map[string]string `json:"labels,omitempty"`
+	Annotations            map[string]string `json:"annotations,omitempty"`
+	ResourceVersion        string            `json:"resourceVersion,omitempty"`
 }
 
 type YAMLResource struct {

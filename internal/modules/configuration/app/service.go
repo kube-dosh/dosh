@@ -9,8 +9,14 @@ import (
 type Repository interface {
 	ListConfigMaps(ctx context.Context, query domain.ListQuery) ([]domain.ConfigMapSummary, error)
 	GetConfigMap(ctx context.Context, namespace, name string) (domain.ConfigMapDetail, error)
+	CreateConfigMap(ctx context.Context, spec domain.ConfigMapCreateSpec) (domain.ConfigMapDetail, error)
+	UpdateConfigMap(ctx context.Context, namespace, name string, update domain.ConfigMapUpdateSpec) (domain.ConfigMapDetail, error)
+	DeleteConfigMap(ctx context.Context, namespace, name, resourceVersion string) error
 	ListSecrets(ctx context.Context, query domain.ListQuery) ([]domain.SecretSummary, error)
 	RevealSecret(ctx context.Context, namespace, name string) (domain.SecretReveal, error)
+	CreateSecret(ctx context.Context, spec domain.SecretWriteSpec) (domain.SecretSummary, error)
+	UpdateSecret(ctx context.Context, namespace, name string, update domain.SecretWriteSpec) (domain.SecretSummary, error)
+	DeleteSecret(ctx context.Context, namespace, name, resourceVersion string) error
 }
 
 type Service struct {

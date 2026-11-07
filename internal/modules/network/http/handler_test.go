@@ -79,6 +79,17 @@ func (r *httpNetworkRepository) GetIngress(_ context.Context, namespace, name st
 	r.lastIngressParams = [2]string{namespace, name}
 	return r.ingress, r.ingressErr
 }
+func (r *httpNetworkRepository) CreateIngress(_ context.Context, _ domain.IngressCreateSpec) (domain.IngressDetail, error) {
+	return r.ingress, r.ingressErr
+}
+func (r *httpNetworkRepository) UpdateIngress(_ context.Context, namespace, name string, _ domain.IngressUpdateSpec) (domain.IngressDetail, error) {
+	r.lastIngressParams = [2]string{namespace, name}
+	return r.ingress, r.ingressErr
+}
+func (r *httpNetworkRepository) DeleteIngress(_ context.Context, namespace, name, _ string) error {
+	r.lastIngressParams = [2]string{namespace, name}
+	return r.ingressErr
+}
 
 func (r *httpNetworkRepository) ListIngressClasses(_ context.Context, query domain.ListQuery) ([]domain.IngressClassSummary, error) {
 	r.lastIngressClassQry = query

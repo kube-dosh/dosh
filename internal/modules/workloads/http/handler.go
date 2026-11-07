@@ -232,6 +232,15 @@ func (h *Handler) GetPod(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	httpx.JSON(w, stdhttp.StatusOK, item)
 }
 
+func (h *Handler) DeletePod(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	actor, _ := domain.ActorFromContext(r.Context())
+	if err := h.service.DeletePod(r.Context(), actor, chi.URLParam(r, "namespace"), chi.URLParam(r, "name")); err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	httpx.JSON(w, stdhttp.StatusAccepted, map[string]string{"status": "deleting"})
+}
+
 func (h *Handler) Logs(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	tailLines, err := strconv.ParseInt(httpx.Query(r, "tailLines"), 10, 64)
 	if err != nil {
@@ -335,5 +344,6 @@ func (h *Handler) Mount(r chi.Router) {
 	r.Delete("/workloads/{kind}/{namespace}/{name}", h.Delete)
 	r.Get("/pods", h.ListPods)
 	r.Get("/pods/{namespace}/{name}", h.GetPod)
+	r.Delete("/pods/{namespace}/{name}", h.DeletePod)
 	r.Get("/pods/{namespace}/{name}/logs", h.Logs)
 }
