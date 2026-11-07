@@ -21,7 +21,9 @@ git push origin v0.1.7
 
 ## 工作流检查项
 
-发布作业使用 GitHub 托管 `ubuntu-24.04` runner，并执行以下步骤：
+发布流水线使用 GitHub 托管 `ubuntu-24.04` runner。`verify` 作业先执行版本一致性、Go 单测、
+前端单测和 Helm Chart 校验；全部通过后，`release` 作业才获得 `contents: write` 与
+`packages: write` 权限并执行以下步骤：
 
 1. 校验标签版本与 `Makefile VERSION`、`Chart.yaml appVersion`、OpenAPI、npm 版本一致。
 2. 安装前端依赖并生成 `web/dist`。
