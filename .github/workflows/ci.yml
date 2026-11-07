@@ -141,7 +141,7 @@ jobs:
           ! grep -q '0.0.0.0/0' artifacts/dosh-cilium.yaml
       - name: Validate rendered manifests
         run: |
-          go install github.com/yannh/kubeconform/cmd/kubeconform@${KUBECONFORM_VERSION}
+          go install "github.com/yannh/kubeconform/cmd/kubeconform@${KUBECONFORM_VERSION}"
           "$(go env GOPATH)/bin/kubeconform" -strict -summary artifacts/dosh-plain.yaml
       - uses: actions/upload-artifact@v4
         with:
@@ -168,7 +168,7 @@ jobs:
           cache-dependency-path: web/package-lock.json
       - name: Go vulnerability scan
         run: |
-          go install golang.org/x/vuln/cmd/govulncheck@${GOVULNCHECK_VERSION}
+          go install "golang.org/x/vuln/cmd/govulncheck@${GOVULNCHECK_VERSION}"
           "$(go env GOPATH)/bin/govulncheck" ./...
       - name: Production dependency audit
         working-directory: web
@@ -205,7 +205,7 @@ jobs:
           go-version: ${{ env.GO_VERSION }}
           cache: true
       - name: Install actionlint
-        run: go install github.com/rhysd/actionlint/cmd/actionlint@${ACTIONLINT_VERSION}
+        run: go install "github.com/rhysd/actionlint/cmd/actionlint@${ACTIONLINT_VERSION}"
       - name: Lint workflows
         run: '"$(go env GOPATH)/bin/actionlint" .github/workflows/*.yml'
       - name: Playwright isolation policy

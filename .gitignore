@@ -1,8 +1,10 @@
 # Build output
-bin/
-dist/
+/bin/
+/dist/
+tools/kubefaultproxy/bin/
 web/node_modules/
-web/dist/
+web/dist/*
+!web/dist/.gitkeep
 web/coverage/
 web/playwright-report*/
 web/test-results*/
