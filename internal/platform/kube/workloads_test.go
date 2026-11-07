@@ -103,7 +103,7 @@ func TestGetWorkloadSerializesEmptyCollectionsAsArrays(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetWorkload() error = %v", err)
 	}
-	if detail.Conditions == nil || detail.Pods == nil || detail.Containers == nil {
+	if detail.Conditions == nil || detail.Pods == nil || detail.Volumes == nil || detail.Containers == nil {
 		t.Fatalf("detail collections must be non-nil: %#v", detail)
 	}
 	payload, err := json.Marshal(detail)

@@ -136,7 +136,22 @@ const workloadDetail: WorkloadDetail = {
   conditions: [{ type: "Available", status: "True" }],
   selector: { app: "web" },
   pods: [podSummary],
-  containers: [{ name: "web", image: "nginx:alpine" }],
+  volumes: [
+    { name: "config", type: "configMap", source: "web-config", readOnly: true },
+    { name: "data", type: "persistentVolumeClaim", source: "web-data", readOnly: false },
+  ],
+  containers: [{
+    name: "web",
+    image: "nginx:alpine",
+    ports: [{ name: "http", containerPort: 80, protocol: "TCP" }],
+    resources: { cpuRequestMilli: 100, cpuLimitMilli: 500, memoryRequestBytes: 134217728, memoryLimitBytes: 536870912 },
+    env: [
+      { name: "MODE", value: "production" },
+      { name: "TOKEN", value: "", valueFrom: { kind: "secretKeyRef", name: "web-secret", key: "token" } },
+    ],
+    volumeMounts: [{ name: "config", mountPath: "/etc/web", readOnly: true }],
+    readinessProbe: { type: "httpGet", path: "/ready", port: "80", scheme: "HTTP", command: [], initialDelaySeconds: 5, periodSeconds: 10, timeoutSeconds: 1, successThreshold: 1, failureThreshold: 3 },
+  }],
 };
 
 const cronJobDetail: WorkloadDetail = {
@@ -150,6 +165,7 @@ const cronJobDetail: WorkloadDetail = {
   conditions: [],
   selector: {},
   pods: [],
+  volumes: [],
   containers: [],
 };
 
@@ -444,6 +460,9 @@ async function installApiMocks(page: Page, options: { authenticated?: boolean; a
       return json(route, { status: "ok" });
     }
     if (path === "/api/v1/workloads/deployment/default/web/image" && method === "POST") {
+      return json(route, { status: "updated" });
+    }
+    if (path === "/api/v1/workloads/deployment/default/web/containers/web/config" && method === "PUT") {
       return json(route, { status: "updated" });
     }
     if (path === "/api/v1/workloads/cronjob/default/backup" && method === "GET") return json(route, cronJobDetail);
@@ -1024,6 +1043,44 @@ test("工作负载镜像更新携带容器和资源版本并发送 CSRF", async 
   await expect(page.getByRole("dialog", { name: "更新容器镜像" })).toBeHidden();
 });
 
+test("工作负载容器配置可查看并更新环境变量", async ({ page }) => {
+  await installApiMocks(page);
+  await page.goto("/workloads/deployment/default/web?tab=config");
+  await expect(page.getByRole("heading", { name: "web", exact: true })).toBeVisible();
+
+  await expect(page.getByText("环境变量", { exact: true })).toBeVisible();
+  await expect(page.getByText("MODE", { exact: true })).toBeVisible();
+  await expect(page.getByText("production", { exact: true })).toBeVisible();
+  await expect(page.getByText("/etc/web", { exact: true })).toBeVisible();
+  await expect(page.getByText("HTTP GET http://Pod/ready:80", { exact: true })).toBeVisible();
+
+  await page.getByRole("button", { name: "编辑环境变量" }).click();
+  const dialog = page.getByRole("dialog", { name: "编辑环境变量" });
+  await expect(dialog).toBeVisible();
+  await dialog.getByRole("button", { name: "添加环境变量" }).click();
+  await dialog.getByLabel("变量 3 名称").fill("FEATURE_FLAG");
+  await dialog.getByLabel("变量 3 值").fill("enabled");
+
+  const configRequest = page.waitForRequest((request) =>
+    request.method() === "PUT" && new URL(request.url()).pathname === "/api/v1/workloads/deployment/default/web/containers/web/config",
+  );
+  await dialog.getByRole("button", { name: "保存配置" }).click();
+  const request = await configRequest;
+  expect(request.headers()["x-csrf-token"]).toBe(csrfToken);
+  expect(request.postDataJSON()).toMatchObject({
+    resourceVersion: "42",
+    volumeMounts: [{ name: "config", mountPath: "/etc/web", readOnly: true }],
+    env: [
+      { name: "MODE", value: "production" },
+      { name: "TOKEN", value: "", valueFrom: { kind: "secretKeyRef", name: "web-secret", key: "token" } },
+      { name: "FEATURE_FLAG", value: "enabled" },
+    ],
+    readinessProbe: { type: "httpGet", path: "/ready", port: "80" },
+  });
+  await expect(page.getByText("容器配置已更新，滚动发布已触发")).toBeVisible();
+  await expect(dialog).toBeHidden();
+});
+
 test("工作负载实例中的节点名称可跳转到节点详情", async ({ page }) => {
   await installApiMocks(page);
   await page.goto("/workloads/deployment/default/web?tab=pods");
@@ -1074,6 +1131,16 @@ test("工作负载访问方式可创建、编辑和删除关联 Service", async 
   expect(deleted.headers()["x-csrf-token"]).toBe(csrfToken);
   expect(new URL(deleted.url()).searchParams.get("resourceVersion")).toBe("43");
   await expect(page.getByRole("link", { name: "web", exact: true })).toHaveCount(0);
+});
+
+test("未选择命名空间时创建 Service 按钮提示原因", async ({ page }) => {
+  await installApiMocks(page);
+  await page.goto("/network");
+
+  const button = page.getByRole("button", { name: "创建 Service" });
+  await expect(button).toBeDisabled();
+  await button.locator("..").hover();
+  await expect(page.getByRole("tooltip")).toContainText("请先选择命名空间，再创建 Service");
 });
 
 test("CronJob 暂停携带资源版本并发送 CSRF", async ({ page }) => {
@@ -1203,11 +1270,12 @@ test("Pod 详情标签可深链并在刷新后保持", async ({ page }) => {
   await expect(page.getByText("nginx:alpine", { exact: true })).toBeVisible();
 });
 
-test("详情页五标签可深链并加载事件与 YAML", async ({ page }) => {
+test("详情页多标签可深链并加载事件与 YAML", async ({ page }) => {
   await installApiMocks(page);
   await page.goto("/workloads/deployment/default/web");
 
   await expect(page.getByRole("tab", { name: "概览", exact: true })).toBeVisible();
+  await expect(page.getByRole("tab", { name: "容器配置", exact: true })).toBeVisible();
   await expect(page.getByRole("tab", { name: /实例/ })).toBeVisible();
   await expect(page.getByRole("tab", { name: "事件", exact: true })).toBeVisible();
   await expect(page.getByRole("tab", { name: "日志", exact: true })).toBeVisible();
@@ -1302,6 +1370,7 @@ test("移动端逐页布局无页面级横向溢出", async ({ page }) => {
     { path: "/nodes/worker-0001?tab=taints", name: "node-taints" },
     { path: "/workloads", name: "workloads" },
     { path: "/workloads/deployment/default/web", name: "workload-detail" },
+    { path: "/workloads/deployment/default/web?tab=config", name: "workload-config" },
     { path: "/workloads/deployment/default/web?tab=logs", name: "workload-logs" },
     { path: "/workloads/deployment/default/web?tab=yaml", name: "workload-yaml" },
     { path: "/pods", name: "pods" },
@@ -1397,6 +1466,7 @@ test("320px 窄屏关键页面无横向溢出", async ({ page }) => {
     { path: "/nodes/worker-0001?tab=labels", name: "node-labels" },
     { path: "/nodes/worker-0001?tab=taints", name: "node-taints" },
     { path: "/workloads/deployment/default/web", name: "workload-detail" },
+    { path: "/workloads/deployment/default/web?tab=config", name: "workload-config" },
     { path: "/pods/default/web-abcdef-12345?tab=logs", name: "pod-logs" },
     { path: "/configuration?tab=certificate", name: "certificate" },
     { path: "/events", name: "events" },
@@ -1431,6 +1501,7 @@ test("320px 大字体缩放时页面不产生横向溢出", async ({ page }) => 
     { path: "/", name: "overview" },
     { path: "/nodes", name: "nodes" },
     { path: "/workloads/deployment/default/web", name: "workload-detail" },
+    { path: "/workloads/deployment/default/web?tab=config", name: "workload-config" },
     { path: "/pods/default/web-abcdef-12345?tab=logs", name: "pod-logs" },
     { path: "/configuration?tab=secrets", name: "secrets" },
     { path: "/events", name: "events" },
@@ -1459,6 +1530,7 @@ test.describe("Android Chrome 视口", () => {
       { path: "/nodes", name: "nodes" },
       { path: "/nodes/worker-0001?tab=labels", name: "node-labels" },
       { path: "/workloads/deployment/default/web", name: "workload-detail" },
+      { path: "/workloads/deployment/default/web?tab=config", name: "workload-config" },
       { path: "/configuration?tab=secrets", name: "secrets" },
       { path: "/events", name: "events" },
       { path: "/audit", name: "audit" },
@@ -1850,7 +1922,7 @@ test("核心运维页面在亮暗主题下无严重可访问性问题", async ({
   test.setTimeout(120_000);
   await installApiMocks(page);
   for (const theme of ["light", "dark"] as const) {
-    for (const path of ["/", "/nodes", "/workloads/deployment/default/web", "/pods/default/web-abcdef-12345", "/audit"]) {
+    for (const path of ["/", "/nodes", "/workloads/deployment/default/web", "/workloads/deployment/default/web?tab=config", "/pods/default/web-abcdef-12345", "/audit"]) {
       await page.goto(path);
       await page.evaluate((value) => localStorage.setItem("dosh-theme", value), theme);
       await page.reload();

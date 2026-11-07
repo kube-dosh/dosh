@@ -273,12 +273,84 @@ export interface WorkloadDetail extends WorkloadSummary {
   conditions: Condition[];
   selector: Record<string, string>;
   pods: PodSummary[];
+  volumes: WorkloadVolume[];
   containers: WorkloadContainer[];
 }
 
 export interface WorkloadContainer {
   name: string;
   image: string;
+  ports: WorkloadContainerPort[];
+  resources: WorkloadContainerResources;
+  env: WorkloadEnvVar[];
+  volumeMounts: WorkloadVolumeMount[];
+  livenessProbe?: WorkloadProbe;
+  readinessProbe?: WorkloadProbe;
+  startupProbe?: WorkloadProbe;
+}
+
+export interface WorkloadContainerPort {
+  name?: string;
+  containerPort: number;
+  protocol: string;
+}
+
+export interface WorkloadContainerResources {
+  cpuRequestMilli: number;
+  cpuLimitMilli: number;
+  memoryRequestBytes: number;
+  memoryLimitBytes: number;
+}
+
+export interface WorkloadEnvValueFrom {
+  kind: "configMapKeyRef" | "secretKeyRef" | "fieldRef" | "resourceFieldRef";
+  name?: string;
+  key?: string;
+  optional?: boolean;
+}
+
+export interface WorkloadEnvVar {
+  name: string;
+  value: string;
+  valueFrom?: WorkloadEnvValueFrom;
+}
+
+export interface WorkloadVolumeMount {
+  name: string;
+  mountPath: string;
+  subPath?: string;
+  readOnly: boolean;
+}
+
+export interface WorkloadVolume {
+  name: string;
+  type: string;
+  source: string;
+  readOnly: boolean;
+}
+
+export interface WorkloadProbe {
+  type: "httpGet" | "tcpSocket" | "exec" | "grpc";
+  path?: string;
+  host?: string;
+  scheme?: "HTTP" | "HTTPS";
+  port?: string;
+  service?: string;
+  command: string[];
+  initialDelaySeconds: number;
+  periodSeconds: number;
+  timeoutSeconds: number;
+  successThreshold: number;
+  failureThreshold: number;
+}
+
+export interface WorkloadContainerConfigUpdateInput {
+  env: WorkloadEnvVar[];
+  volumeMounts: WorkloadVolumeMount[];
+  livenessProbe?: WorkloadProbe;
+  readinessProbe?: WorkloadProbe;
+  startupProbe?: WorkloadProbe;
+  resourceVersion?: string;
 }
 
 export interface WorkloadImageUpdateInput {

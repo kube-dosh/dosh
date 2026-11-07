@@ -7,6 +7,7 @@ import { toast } from "sonner";
 import { api } from "@/api/client";
 import type { IngressDetail, IngressPath, IngressSummary, ServicePort, ServiceSummary } from "@/api/types";
 import { DataTable } from "@/components/data/data-table";
+import { ActionTooltip } from "@/components/feedback/action-tooltip";
 import { EmptyState, ErrorState } from "@/components/feedback/states";
 import { StatusBadge } from "@/components/feedback/status-badge";
 import { NamespaceSelect } from "@/components/layout/namespace-select";
@@ -55,6 +56,8 @@ export function NetworkPage() {
   const error = services.error || ingresses.error || ingressClasses.error;
   if (error) return <ErrorState error={error} onRetry={() => { void services.refetch(); void ingresses.refetch(); void ingressClasses.refetch(); }} />;
   const noIngressClasses = !ingressClasses.isLoading && !ingressClasses.data?.items.length;
+  const serviceCreateHint = !namespace ? "请先选择命名空间，再创建 Service" : !serviceCaps.create ? "当前身份没有创建 Service 的权限" : undefined;
+  const ingressCreateHint = !namespace ? "请先选择命名空间，再创建 Ingress" : noIngressClasses ? "集群未安装 Ingress Controller" : !ingressCaps.create ? "当前身份没有创建 Ingress 的权限" : undefined;
   const detectedClasses = ingressClasses.data?.items.map((item) => item.name).join(", ") || "—";
   const refreshServices = async () => { await services.refetch(); };
   const refreshIngresses = async () => { await ingresses.refetch(); };
@@ -86,9 +89,9 @@ export function NetworkPage() {
         breadcrumb="网络 / 服务与路由"
         description="管理集群内 Service、ClusterIP、NodePort 和 Ingress 路由规则。"
         actions={tab === "services" ? (
-          <Button onClick={() => { setEditingService(undefined); setServiceFormOpen(true); }} disabled={!namespace || !serviceCaps.create} title={!namespace ? "请先选择命名空间" : undefined}><Plus className="h-4 w-4" />创建 Service</Button>
+          <ActionTooltip content={serviceCreateHint}><Button onClick={() => { setEditingService(undefined); setServiceFormOpen(true); }} disabled={Boolean(serviceCreateHint)}><Plus className="h-4 w-4" />创建 Service</Button></ActionTooltip>
         ) : (
-          <Button onClick={() => { setEditingIngress(undefined); setIngressFormOpen(true); }} disabled={!namespace || noIngressClasses || !ingressCaps.create} title={!namespace ? "请先选择命名空间" : noIngressClasses ? "集群未安装 Ingress Controller" : undefined}><Plus className="h-4 w-4" />创建 Ingress</Button>
+          <ActionTooltip content={ingressCreateHint}><Button onClick={() => { setEditingIngress(undefined); setIngressFormOpen(true); }} disabled={Boolean(ingressCreateHint)}><Plus className="h-4 w-4" />创建 Ingress</Button></ActionTooltip>
         )}
       />
       <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center"><SearchInput value={q} onChange={(value) => updateSearch({ q: value || undefined })} placeholder="搜索名称" /><NamespaceSelect value={namespace} onChange={(value) => updateSearch({ namespace: value || undefined })} /></div>

@@ -7,6 +7,7 @@ import { toast } from "sonner";
 import { api } from "@/api/client";
 import type { PersistentVolume, PersistentVolumeClaim, PersistentVolumeClaimDetail, StorageClass } from "@/api/types";
 import { DataTable } from "@/components/data/data-table";
+import { ActionTooltip } from "@/components/feedback/action-tooltip";
 import { EmptyState, ErrorState } from "@/components/feedback/states";
 import { StatusBadge } from "@/components/feedback/status-badge";
 import { NamespaceSelect } from "@/components/layout/namespace-select";
@@ -49,6 +50,7 @@ export function StoragePage() {
   const error = classes.error || volumes.error || claims.error;
   if (error) return <ErrorState error={error} onRetry={() => { void classes.refetch(); void volumes.refetch(); void claims.refetch(); }} />;
   const noClasses = !classes.isLoading && !classes.data?.items.length;
+  const claimCreateHint = !namespace ? "请先选择命名空间，再创建 PVC" : !claimCaps.create ? "当前身份没有创建 PVC 的权限" : undefined;
   const refreshClaims = async () => { await claims.refetch(); };
   const openClaimEdit = async (item: PersistentVolumeClaim) => {
     try {
@@ -78,7 +80,7 @@ export function StoragePage() {
         title="存储"
         breadcrumb="存储 / 持久化存储"
         description="查看 StorageClass、PersistentVolume 和 PersistentVolumeClaim。"
-        actions={<Button onClick={() => { setEditingClaim(undefined); setClaimFormOpen(true); }} disabled={!namespace || !claimCaps.create} title={!namespace ? "请先选择命名空间" : undefined}><Plus className="h-4 w-4" />创建 PVC</Button>}
+        actions={<ActionTooltip content={claimCreateHint}><Button onClick={() => { setEditingClaim(undefined); setClaimFormOpen(true); }} disabled={Boolean(claimCreateHint)}><Plus className="h-4 w-4" />创建 PVC</Button></ActionTooltip>}
       />
       {noClasses ? <div className="mb-4 rounded-lg border border-warning/35 bg-warning/10 px-4 py-3 text-sm text-warning"><HardDrive className="mr-2 inline h-4 w-4" />当前集群没有 StorageClass，不支持动态持久化卷申请。已有 PV/PVC 仍可正常查看。</div> : null}
       <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center"><SearchInput value={q} onChange={(value) => updateSearch({ q: value || undefined })} placeholder="搜索存储资源" /><NamespaceSelect value={namespace} onChange={(value) => updateSearch({ namespace: value || undefined })} /></div>

@@ -20,6 +20,7 @@ type Repository interface {
 	ScaleWorkload(ctx context.Context, kind, namespace, name string, replicas int32, expectedResourceVersion string) error
 	RestartWorkload(ctx context.Context, kind, namespace, name string) error
 	UpdateWorkloadImage(ctx context.Context, kind, namespace, name string, update domain.WorkloadImageUpdate) error
+	UpdateWorkloadContainerConfig(ctx context.Context, kind, namespace, name string, update domain.WorkloadContainerConfigUpdate) error
 	SetCronJobSuspend(ctx context.Context, namespace, name string, update domain.CronJobSuspendUpdate) error
 	DeleteWorkload(ctx context.Context, kind, namespace, name string, propagation domain.DeletionPropagation) error
 	ListPods(ctx context.Context, query domain.ListQuery) ([]domain.PodSummary, error)

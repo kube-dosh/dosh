@@ -9,6 +9,7 @@ import type { ConfigMapDetail, ConfigMapSummary, SecretReveal, SecretSummary } f
 import { CopyButton } from "@/components/data/copy-button";
 import { DataTable } from "@/components/data/data-table";
 import { ErrorState, LoadingState } from "@/components/feedback/states";
+import { ActionTooltip } from "@/components/feedback/action-tooltip";
 import { DetailItem } from "@/components/data/detail-item";
 import { NamespaceSelect } from "@/components/layout/namespace-select";
 import { PageHeader } from "@/components/layout/page-header";
@@ -95,6 +96,8 @@ export function ConfigurationPage() {
   ];
   const error = tab === "certificate" ? null : configMaps.error || secrets.error;
   if (error) return <ErrorState error={error} onRetry={() => { void configMaps.refetch(); void secrets.refetch(); }} />;
+  const configMapCreateHint = !namespace ? "请先选择命名空间，再创建 ConfigMap" : !configMapCaps.create ? "当前身份没有创建 ConfigMap 的权限" : undefined;
+  const secretCreateHint = !namespace ? "请先选择命名空间，再创建 Secret" : !secretCaps.create ? "当前身份没有创建 Secret 的权限" : undefined;
   return (
     <>
       <PageHeader
@@ -102,9 +105,9 @@ export function ConfigurationPage() {
         breadcrumb="配置 / 配置中心"
         description="管理 ConfigMap、Secret 与服务端证书。"
         actions={tab === "configmaps" ? (
-          <Button onClick={() => { setEditingConfigMap(undefined); setConfigMapFormOpen(true); }} disabled={!namespace || !configMapCaps.create} title={!namespace ? "请先选择命名空间" : undefined}><Plus className="h-4 w-4" />创建 ConfigMap</Button>
+          <ActionTooltip content={configMapCreateHint}><Button onClick={() => { setEditingConfigMap(undefined); setConfigMapFormOpen(true); }} disabled={Boolean(configMapCreateHint)}><Plus className="h-4 w-4" />创建 ConfigMap</Button></ActionTooltip>
         ) : tab === "secrets" ? (
-          <Button onClick={() => { setEditingSecret(undefined); setSecretFormOpen(true); }} disabled={!namespace || !secretCaps.create} title={!namespace ? "请先选择命名空间" : undefined}><Plus className="h-4 w-4" />创建 Secret</Button>
+          <ActionTooltip content={secretCreateHint}><Button onClick={() => { setEditingSecret(undefined); setSecretFormOpen(true); }} disabled={Boolean(secretCreateHint)}><Plus className="h-4 w-4" />创建 Secret</Button></ActionTooltip>
         ) : null}
       />
       <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center"><SearchInput value={q} onChange={(value) => updateSearch({ q: value || undefined })} placeholder="搜索名称" /><NamespaceSelect value={namespace} onChange={(value) => updateSearch({ namespace: value || undefined })} /></div>

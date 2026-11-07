@@ -305,14 +305,99 @@ type WorkloadDetail struct {
 	Conditions []Condition         `json:"conditions"`
 	Selector   map[string]string   `json:"selector"`
 	Pods       []PodSummary        `json:"pods"`
+	Volumes    []WorkloadVolume    `json:"volumes"`
 	Containers []WorkloadContainer `json:"containers"`
 }
 
-// WorkloadContainer identifies one regular container in a workload pod
-// template. It intentionally excludes runtime-only pod data.
+// WorkloadContainer describes one regular container in a workload pod
+// template. Runtime-only fields such as ready state and restart counts remain
+// on PodDetail; this type is scoped to declarative template configuration.
 type WorkloadContainer struct {
-	Name  string `json:"name"`
-	Image string `json:"image"`
+	Name           string                     `json:"name"`
+	Image          string                     `json:"image"`
+	Ports          []WorkloadContainerPort    `json:"ports"`
+	Resources      WorkloadContainerResources `json:"resources"`
+	Env            []WorkloadEnvVar           `json:"env"`
+	VolumeMounts   []WorkloadVolumeMount      `json:"volumeMounts"`
+	LivenessProbe  *WorkloadProbe             `json:"livenessProbe,omitempty"`
+	ReadinessProbe *WorkloadProbe             `json:"readinessProbe,omitempty"`
+	StartupProbe   *WorkloadProbe             `json:"startupProbe,omitempty"`
+}
+
+type WorkloadContainerPort struct {
+	Name          string `json:"name,omitempty"`
+	ContainerPort int32  `json:"containerPort"`
+	Protocol      string `json:"protocol"`
+}
+
+type WorkloadContainerResources struct {
+	CPURequestMilli    int64 `json:"cpuRequestMilli"`
+	CPULimitMilli      int64 `json:"cpuLimitMilli"`
+	MemoryRequestBytes int64 `json:"memoryRequestBytes"`
+	MemoryLimitBytes   int64 `json:"memoryLimitBytes"`
+}
+
+// WorkloadEnvVar preserves both literal values and Kubernetes value sources so
+// the console can display and round-trip an existing environment exactly.
+type WorkloadEnvVar struct {
+	Name      string                `json:"name"`
+	Value     string                `json:"value"`
+	ValueFrom *WorkloadEnvValueFrom `json:"valueFrom,omitempty"`
+}
+
+type WorkloadEnvValueFrom struct {
+	Kind     string `json:"kind"`
+	Name     string `json:"name,omitempty"`
+	Key      string `json:"key,omitempty"`
+	Optional bool   `json:"optional,omitempty"`
+}
+
+type WorkloadVolumeMount struct {
+	Name      string `json:"name"`
+	MountPath string `json:"mountPath"`
+	SubPath   string `json:"subPath,omitempty"`
+	ReadOnly  bool   `json:"readOnly"`
+}
+
+// WorkloadVolume summarizes the pod-template volume that backs one or more
+// container mounts. Source is intentionally a display-oriented value; writes
+// are limited to validated container configuration fields.
+type WorkloadVolume struct {
+	Name     string `json:"name"`
+	Type     string `json:"type"`
+	Source   string `json:"source"`
+	ReadOnly bool   `json:"readOnly"`
+}
+
+// WorkloadProbe is a transport-neutral representation of common Kubernetes
+// health checks. Port is a string because Kubernetes permits either a number
+// or a named container port.
+type WorkloadProbe struct {
+	Type                string   `json:"type"`
+	Path                string   `json:"path,omitempty"`
+	Host                string   `json:"host,omitempty"`
+	Scheme              string   `json:"scheme,omitempty"`
+	Port                string   `json:"port,omitempty"`
+	Service             string   `json:"service,omitempty"`
+	Command             []string `json:"command"`
+	InitialDelaySeconds int32    `json:"initialDelaySeconds"`
+	PeriodSeconds       int32    `json:"periodSeconds"`
+	TimeoutSeconds      int32    `json:"timeoutSeconds"`
+	SuccessThreshold    int32    `json:"successThreshold"`
+	FailureThreshold    int32    `json:"failureThreshold"`
+}
+
+// WorkloadContainerConfigUpdate is the complete editable container
+// configuration. Callers send the full desired state for the editable sections
+// together with a resourceVersion for optimistic concurrency.
+type WorkloadContainerConfigUpdate struct {
+	ContainerName   string                `json:"containerName"`
+	Env             []WorkloadEnvVar      `json:"env"`
+	VolumeMounts    []WorkloadVolumeMount `json:"volumeMounts"`
+	LivenessProbe   *WorkloadProbe        `json:"livenessProbe"`
+	ReadinessProbe  *WorkloadProbe        `json:"readinessProbe"`
+	StartupProbe    *WorkloadProbe        `json:"startupProbe"`
+	ResourceVersion string                `json:"resourceVersion,omitempty"`
 }
 
 // WorkloadImageUpdate is the transport-neutral input for changing one

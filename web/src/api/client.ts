@@ -46,7 +46,9 @@ import type {
   StorageClass,
   StorageClassDetail,
   WorkloadDetail,
+  WorkloadContainerConfigUpdateInput,
   WorkloadImageUpdateInput,
+  WorkloadProbe,
   WorkloadSummary,
   YAMLResource,
 } from "./types";
@@ -111,8 +113,24 @@ function normalizeWorkloadDetail(value: WorkloadDetail): WorkloadDetail {
     conditions: list(value.conditions),
     selector: record(value.selector),
     pods: list(value.pods),
-    containers: list(value.containers),
+    volumes: list(value.volumes).map((volume) => ({ ...volume, readOnly: Boolean(volume.readOnly) })),
+    containers: list(value.containers).map((container) => ({
+      ...container,
+      ports: list(container.ports),
+      resources: container.resources ?? {
+        cpuRequestMilli: 0, cpuLimitMilli: 0, memoryRequestBytes: 0, memoryLimitBytes: 0,
+      },
+      env: list(container.env).map((variable) => ({ ...variable, value: variable.value ?? "" })),
+      volumeMounts: list(container.volumeMounts).map((mount) => ({ ...mount, readOnly: Boolean(mount.readOnly) })),
+      livenessProbe: normalizeWorkloadProbe(container.livenessProbe),
+      readinessProbe: normalizeWorkloadProbe(container.readinessProbe),
+      startupProbe: normalizeWorkloadProbe(container.startupProbe),
+    })),
   };
+}
+
+function normalizeWorkloadProbe(probe: WorkloadProbe | undefined): WorkloadProbe | undefined {
+  return probe ? { ...probe, command: list(probe.command) } : undefined;
 }
 
 function normalizePodDetail(value: PodDetail): PodDetail {
@@ -274,6 +292,11 @@ export const api = {
   updateWorkloadImage: (kind: string, namespace: string, name: string, input: WorkloadImageUpdateInput) =>
     request<{ status: string }>(`/api/v1/workloads/${kind}/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}/image`, {
       method: "POST",
+      body: JSON.stringify(input),
+    }),
+  updateWorkloadContainerConfig: (kind: string, namespace: string, name: string, container: string, input: WorkloadContainerConfigUpdateInput) =>
+    request<{ status: string }>(`/api/v1/workloads/${kind}/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}/containers/${encodeURIComponent(container)}/config`, {
+      method: "PUT",
       body: JSON.stringify(input),
     }),
   setCronJobSuspend: (kind: string, namespace: string, name: string, input: CronJobSuspendInput) =>

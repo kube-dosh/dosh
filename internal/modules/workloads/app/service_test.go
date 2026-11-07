@@ -36,6 +36,9 @@ type fakeRepository struct {
 	imageCalls     int
 	imageErr       error
 	lastImage      domain.WorkloadImageUpdate
+	containerCalls int
+	containerErr   error
+	lastContainer  domain.WorkloadContainerConfigUpdate
 	suspendCalls   int
 	suspendErr     error
 	lastSuspend    domain.CronJobSuspendUpdate
@@ -78,6 +81,12 @@ func (f *fakeRepository) UpdateWorkloadImage(_ context.Context, kind, namespace,
 	f.lastKind, f.lastNamespace, f.lastName = kind, namespace, name
 	f.lastImage = update
 	return f.imageErr
+}
+func (f *fakeRepository) UpdateWorkloadContainerConfig(_ context.Context, kind, namespace, name string, update domain.WorkloadContainerConfigUpdate) error {
+	f.containerCalls++
+	f.lastKind, f.lastNamespace, f.lastName = kind, namespace, name
+	f.lastContainer = update
+	return f.containerErr
 }
 func (f *fakeRepository) SetCronJobSuspend(_ context.Context, namespace, name string, update domain.CronJobSuspendUpdate) error {
 	f.suspendCalls++

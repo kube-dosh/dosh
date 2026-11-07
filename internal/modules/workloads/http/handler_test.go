@@ -29,6 +29,7 @@ type workloadRepo struct {
 	scaleCalls       int
 	restartCalls     int
 	imageCalls       int
+	containerCalls   int
 	suspendCalls     int
 	deleteCalls      int
 	lastKind         string
@@ -37,6 +38,7 @@ type workloadRepo struct {
 	lastReplicas     int32
 	lastResourceVer  string
 	lastImage        domain.WorkloadImageUpdate
+	lastContainer    domain.WorkloadContainerConfigUpdate
 	lastSuspend      domain.CronJobSuspendUpdate
 	lastPropagation  domain.DeletionPropagation
 	lastTailLines    int64
@@ -44,6 +46,7 @@ type workloadRepo struct {
 	scaleErr         error
 	restartErr       error
 	imageErr         error
+	containerErr     error
 	suspendErr       error
 	deleteErr        error
 	logsErr          error
@@ -103,6 +106,13 @@ func (r *workloadRepo) UpdateWorkloadImage(_ context.Context, kind, namespace, n
 	r.lastKind, r.lastNamespace, r.lastName = kind, namespace, name
 	r.lastImage = update
 	return r.imageErr
+}
+
+func (r *workloadRepo) UpdateWorkloadContainerConfig(_ context.Context, kind, namespace, name string, update domain.WorkloadContainerConfigUpdate) error {
+	r.containerCalls++
+	r.lastKind, r.lastNamespace, r.lastName = kind, namespace, name
+	r.lastContainer = update
+	return r.containerErr
 }
 
 func (r *workloadRepo) SetCronJobSuspend(_ context.Context, namespace, name string, update domain.CronJobSuspendUpdate) error {
@@ -471,6 +481,49 @@ func TestUpdateImageRequiresSessionCSRFAndValidPayload(t *testing.T) {
 	response = performWorkloadJSON(server.router, http.MethodPost, "/api/v1/workloads/job/prod/migrate/image", body, server.authHeaders())
 	if response.Code != http.StatusNotImplemented {
 		t.Fatalf("job image status = %d, body = %s", response.Code, response.Body.String())
+	}
+}
+
+func TestUpdateContainerConfigRequiresSessionCSRFAndValidPayload(t *testing.T) {
+	server := newWorkloadTestServer(t)
+	body := `{
+		"env":[{"name":"MODE","value":"staging"},{"name":"TOKEN","valueFrom":{"kind":"secretKeyRef","name":"api-secret","key":"token"}}],
+		"volumeMounts":[{"name":"config","mountPath":"/etc/app","readOnly":true}],
+		"readinessProbe":{"type":"httpGet","path":"/healthz","port":"8080","scheme":"HTTP","periodSeconds":10,"failureThreshold":3},
+		"resourceVersion":"42"
+	}`
+	path := "/api/v1/workloads/deployment/prod/api/containers/api/config"
+	response := performWorkloadJSON(server.router, http.MethodPut, path, body, nil)
+	if response.Code != http.StatusUnauthorized {
+		t.Fatalf("missing session status = %d, want 401", response.Code)
+	}
+	response = performWorkloadJSON(server.router, http.MethodPut, path, body, map[string]string{"Cookie": server.cookie.String()})
+	if response.Code != http.StatusForbidden {
+		t.Fatalf("missing CSRF status = %d, want 403", response.Code)
+	}
+	if server.repo.containerCalls != 0 {
+		t.Fatal("repository was called before authentication/CSRF passed")
+	}
+	response = performWorkloadJSON(server.router, http.MethodPut, path, `{"env":[{"name":"INVALID-NAME","value":"x"}]}`, server.authHeaders())
+	if response.Code != http.StatusBadRequest || server.repo.containerCalls != 0 {
+		t.Fatalf("invalid config status = %d calls = %d body = %s", response.Code, server.repo.containerCalls, response.Body.String())
+	}
+	response = performWorkloadJSON(server.router, http.MethodPut, path, body, server.authHeaders())
+	if response.Code != http.StatusOK || server.repo.containerCalls != 1 {
+		t.Fatalf("config status = %d calls = %d body = %s", response.Code, server.repo.containerCalls, response.Body.String())
+	}
+	if server.repo.lastContainer.ContainerName != "api" || len(server.repo.lastContainer.Env) != 2 || server.repo.lastContainer.Env[1].ValueFrom == nil ||
+		server.repo.lastContainer.ReadinessProbe == nil || server.repo.lastContainer.ReadinessProbe.Path != "/healthz" || server.repo.lastContainer.ResourceVersion != "42" {
+		t.Fatalf("container update = %#v", server.repo.lastContainer)
+	}
+	server.repo.containerErr = domain.ErrConflict
+	response = performWorkloadJSON(server.router, http.MethodPut, path, body, server.authHeaders())
+	if response.Code != http.StatusConflict {
+		t.Fatalf("conflict status = %d, body = %s", response.Code, response.Body.String())
+	}
+	response = performWorkloadJSON(server.router, http.MethodPut, "/api/v1/workloads/job/prod/migrate/containers/migrate/config", body, server.authHeaders())
+	if response.Code != http.StatusNotImplemented {
+		t.Fatalf("job config status = %d, body = %s", response.Code, response.Body.String())
 	}
 }
 

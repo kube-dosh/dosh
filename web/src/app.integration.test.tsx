@@ -6,7 +6,8 @@ import { setupServer } from "msw/node";
 import { Toaster } from "sonner";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { routeTree } from "@/router";
-import type { IngressDetail, NodeDetail, Overview, PersistentVolumeClaimDetail, PersistentVolumeDetail, PodDetail, ServiceDetail, SessionResponse, StorageClassDetail, WorkloadSummary } from "@/api/types";
+import type { IngressDetail, NodeDetail, Overview, PersistentVolumeClaimDetail, PersistentVolumeDetail, PodDetail, ServiceDetail, SessionResponse, StorageClassDetail, WorkloadDetail, WorkloadSummary } from "@/api/types";
+import { TooltipProvider } from "@/components/ui/tooltip";
 import { ThemeProvider } from "@/lib/theme";
 
 const session: SessionResponse = {
@@ -53,6 +54,33 @@ const workload: WorkloadSummary = {
   kind: "Deployment", name: "web", namespace: "default", status: "Running", ready: "2/2", desired: 2,
   restarts: 0, images: ["nginx:alpine"], createdAt: "2026-11-02T00:00:00Z",
 };
+
+function configuredWorkload(): WorkloadDetail {
+  return {
+    ...workload,
+    name: "web-api",
+    resourceVersion: "317754",
+    conditions: [],
+    selector: { app: "web" },
+    pods: [],
+    volumes: [
+      { name: "config", type: "configMap", source: "web-config", readOnly: true },
+      { name: "data", type: "persistentVolumeClaim", source: "web-data", readOnly: false },
+    ],
+    containers: [{
+      name: "web",
+      image: "nginx:alpine",
+      ports: [{ name: "http", containerPort: 80, protocol: "TCP" }],
+      resources: { cpuRequestMilli: 100, cpuLimitMilli: 500, memoryRequestBytes: 134217728, memoryLimitBytes: 536870912 },
+      env: [
+        { name: "MODE", value: "production" },
+        { name: "TOKEN", value: "", valueFrom: { kind: "secretKeyRef", name: "web-secret", key: "token" } },
+      ],
+      volumeMounts: [{ name: "config", mountPath: "/etc/web", readOnly: true }],
+      readinessProbe: { type: "httpGet", path: "/ready", port: "80", scheme: "HTTP", command: [], initialDelaySeconds: 5, periodSeconds: 10, timeoutSeconds: 1, successThreshold: 1, failureThreshold: 3 },
+    }],
+  };
+}
 
 const nodeDetail: NodeDetail = {
   name: "worker-0001", status: "Ready", roles: ["worker"], internalIP: "192.168.122.200", version: "v1.36.5",
@@ -149,7 +177,7 @@ function renderRoute(path: string) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
   const history = createMemoryHistory({ initialEntries: [path] });
   const router = createRouter({ routeTree, history, defaultPreload: false });
-  render(<ThemeProvider><QueryClientProvider client={queryClient}><RouterProvider router={router} /><Toaster /></QueryClientProvider></ThemeProvider>);
+  render(<ThemeProvider><QueryClientProvider client={queryClient}><TooltipProvider><RouterProvider router={router} /><Toaster /></TooltipProvider></QueryClientProvider></ThemeProvider>);
   return router;
 }
 
@@ -635,6 +663,97 @@ describe("dosh application", () => {
     expect(screen.getByRole("dialog", { name: "更新容器镜像" })).toBeInTheDocument();
   });
 
+  it("shows workload container environment, mounts and health checks", async () => {
+    server.use(http.get("/api/v1/workloads/deployment/default/web-api", () => HttpResponse.json(configuredWorkload())));
+    renderRoute("/workloads/deployment/default/web-api?tab=config");
+
+    expect(await screen.findByText("环境变量")).toBeInTheDocument();
+    expect(screen.getByText("MODE")).toBeInTheDocument();
+    expect(screen.getByText("production")).toBeInTheDocument();
+    expect(screen.getByText("web-secret / token")).toBeInTheDocument();
+    expect(screen.getByText("/etc/web")).toBeInTheDocument();
+    expect(screen.getByText("web-config")).toBeInTheDocument();
+    expect(screen.getByText("HTTP GET http://Pod/ready:80")).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "编辑就绪检查" })).toBeInTheDocument();
+  });
+
+  it("updates workload environment variables with the current resource version", async () => {
+    let updateBody: Record<string, unknown> | undefined;
+    server.use(
+      http.get("/api/v1/workloads/deployment/default/web-api", () => HttpResponse.json(configuredWorkload())),
+      http.put("/api/v1/workloads/deployment/default/web-api/containers/web/config", async ({ request }) => {
+        updateBody = await request.json() as Record<string, unknown>;
+        return HttpResponse.json({ status: "updated" });
+      }),
+    );
+    renderRoute("/workloads/deployment/default/web-api?tab=config");
+    fireEvent.click(await screen.findByRole("button", { name: "编辑环境变量" }));
+    const dialog = await screen.findByRole("dialog", { name: "编辑环境变量" });
+    fireEvent.click(within(dialog).getByRole("button", { name: "添加环境变量" }));
+    fireEvent.change(within(dialog).getByLabelText("变量 3 名称"), { target: { value: "FEATURE_FLAG" } });
+    fireEvent.change(within(dialog).getByLabelText("变量 3 值"), { target: { value: "enabled" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "保存配置" }));
+
+    await waitFor(() => expect(updateBody).toMatchObject({
+      resourceVersion: "317754",
+      env: [
+        { name: "MODE", value: "production" },
+        { name: "TOKEN", value: "", valueFrom: { kind: "secretKeyRef", name: "web-secret", key: "token" } },
+        { name: "FEATURE_FLAG", value: "enabled" },
+      ],
+      volumeMounts: [{ name: "config", mountPath: "/etc/web", readOnly: true }],
+      readinessProbe: { type: "httpGet", path: "/ready", port: "80" },
+    }));
+    expect(await screen.findByText("容器配置已更新，滚动发布已触发")).toBeInTheDocument();
+  });
+
+  it("updates workload volume mounts without dropping environment or probes", async () => {
+    let updateBody: Record<string, unknown> | undefined;
+    server.use(
+      http.get("/api/v1/workloads/deployment/default/web-api", () => HttpResponse.json(configuredWorkload())),
+      http.put("/api/v1/workloads/deployment/default/web-api/containers/web/config", async ({ request }) => {
+        updateBody = await request.json() as Record<string, unknown>;
+        return HttpResponse.json({ status: "updated" });
+      }),
+    );
+    renderRoute("/workloads/deployment/default/web-api?tab=config");
+    fireEvent.click(await screen.findByRole("button", { name: "编辑数据存储" }));
+    const dialog = await screen.findByRole("dialog", { name: "编辑数据存储" });
+    fireEvent.change(within(dialog).getByLabelText("挂载 1 路径"), { target: { value: "/srv/web-config" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "保存配置" }));
+
+    await waitFor(() => expect(updateBody).toMatchObject({
+      resourceVersion: "317754",
+      env: [{ name: "MODE", value: "production" }, { name: "TOKEN", value: "", valueFrom: { kind: "secretKeyRef", name: "web-secret", key: "token" } }],
+      volumeMounts: [{ name: "config", mountPath: "/srv/web-config", readOnly: true }],
+      readinessProbe: { type: "httpGet", path: "/ready", port: "80" },
+    }));
+  });
+
+  it("updates a readiness probe and keeps disabled probes unset", async () => {
+    let updateBody: Record<string, unknown> | undefined;
+    server.use(
+      http.get("/api/v1/workloads/deployment/default/web-api", () => HttpResponse.json(configuredWorkload())),
+      http.put("/api/v1/workloads/deployment/default/web-api/containers/web/config", async ({ request }) => {
+        updateBody = await request.json() as Record<string, unknown>;
+        return HttpResponse.json({ status: "updated" });
+      }),
+    );
+    renderRoute("/workloads/deployment/default/web-api?tab=config");
+    fireEvent.click(await screen.findByRole("button", { name: "编辑就绪检查" }));
+    const dialog = await screen.findByRole("dialog", { name: "编辑就绪检查" });
+    fireEvent.change(within(dialog).getByLabelText("请求路径"), { target: { value: "/healthz" } });
+    fireEvent.change(within(dialog).getByLabelText("端口"), { target: { value: "8080" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "保存配置" }));
+
+    await waitFor(() => expect(updateBody).toMatchObject({
+      resourceVersion: "317754",
+      readinessProbe: { type: "httpGet", path: "/healthz", port: "8080" },
+    }));
+    expect(updateBody).not.toHaveProperty("livenessProbe");
+    expect(updateBody).not.toHaveProperty("startupProbe");
+  });
+
   it("pauses a CronJob with the current resource version", async () => {
     const cronJob = {
       ...workload, kind: "CronJob", name: "backup", namespace: "default", status: "Idle", ready: "0/0", desired: 0,
@@ -1055,6 +1174,18 @@ describe("dosh application", () => {
     expect(screen.getByRole("menuitem", { name: "删除 Ingress" })).toBeInTheDocument();
   });
 
+  it("explains why Service creation is disabled without a namespace", async () => {
+    renderRoute("/network");
+
+    const createButton = await screen.findByRole("button", { name: "创建 Service" });
+    expect(createButton).toBeDisabled();
+    const trigger = createButton.parentElement!;
+    expect(trigger).toHaveAttribute("tabindex", "0");
+
+    fireEvent.focus(trigger);
+    expect(await screen.findByRole("tooltip")).toHaveTextContent("请先选择命名空间，再创建 Service");
+  });
+
   it("edits and deletes an Ingress from its detail page", async () => {
     let updateBody: Record<string, unknown> | undefined;
     let deletedResourceVersion: string | null = null;
@@ -1071,7 +1202,7 @@ describe("dosh application", () => {
     );
     const router = renderRoute("/network/ingresses/default/web");
 
-    fireEvent.click(await screen.findByRole("button", { name: "编辑" }));
+    fireEvent.click(await screen.findByRole("button", { name: "编辑" }, { timeout: 5000 }));
     let dialog = await screen.findByRole("dialog", { name: "编辑 Ingress" });
     fireEvent.click(within(dialog).getByRole("button", { name: "保存修改" }));
     await waitFor(() => expect(updateBody).toMatchObject({ resourceVersion: "41", annotations: { "nginx.ingress.kubernetes.io/rewrite-target": "/" } }));

@@ -27,11 +27,12 @@ import { useCapabilities } from "@/features/auth/use-session";
 import { workloadCapabilities } from "@/lib/capabilities";
 import { ResourceEvents } from "@/features/events/resource-events";
 import { PodLogs } from "@/features/workloads/pod-logs";
+import { WorkloadContainerConfigPanel } from "@/features/workloads/workload-container-config-panel";
 import { WorkloadServicesPanel } from "@/features/workloads/workload-services-panel";
 import { formatAge, formatDate } from "@/lib/utils";
 
 const podColumn = createColumnHelper<PodSummary>();
-const workloadTabs = ["overview", "pods", "services", "events", "logs", "yaml"] as const;
+const workloadTabs = ["overview", "config", "pods", "services", "events", "logs", "yaml"] as const;
 type WorkloadTab = (typeof workloadTabs)[number];
 
 const kubernetesKinds: Record<string, string> = {
@@ -82,6 +83,7 @@ export function WorkloadDetailPage() {
   const canScale = workloadCaps.scale && ["deployment", "statefulset"].includes(kind);
   const canRestart = workloadCaps.update && !["job", "cronjob"].includes(kind);
   const canUpdateImage = workloadCaps.update && ["deployment", "statefulset", "daemonset"].includes(kind);
+  const canUpdateContainerConfig = workloadCaps.update && ["deployment", "statefulset", "daemonset"].includes(kind);
   const canSuspend = workloadCaps.update && kind === "cronjob";
   const canDelete = workloadCaps.delete;
   const invalidate = async () => {
@@ -179,7 +181,7 @@ export function WorkloadDetailPage() {
         }
       />
       <Tabs value={tab} onValueChange={changeTab}>
-        <TabsList><TabsTrigger value="overview">概览</TabsTrigger><TabsTrigger value="pods">实例 ({workload.pods.length})</TabsTrigger><TabsTrigger value="services">访问方式</TabsTrigger><TabsTrigger value="events">事件</TabsTrigger><TabsTrigger value="logs"><ScrollText className="h-3.5 w-3.5" />日志</TabsTrigger><TabsTrigger value="yaml"><FileCode2 className="h-3.5 w-3.5" />YAML</TabsTrigger></TabsList>
+        <TabsList><TabsTrigger value="overview">概览</TabsTrigger><TabsTrigger value="config">容器配置</TabsTrigger><TabsTrigger value="pods">实例 ({workload.pods.length})</TabsTrigger><TabsTrigger value="services">访问方式</TabsTrigger><TabsTrigger value="events">事件</TabsTrigger><TabsTrigger value="logs"><ScrollText className="h-3.5 w-3.5" />日志</TabsTrigger><TabsTrigger value="yaml"><FileCode2 className="h-3.5 w-3.5" />YAML</TabsTrigger></TabsList>
         <TabsContent value="overview">
           <div className="grid gap-4 xl:grid-cols-[1.1fr_0.9fr]">
             <Card>
@@ -211,6 +213,7 @@ export function WorkloadDetailPage() {
             </Card>
           </div>
         </TabsContent>
+        <TabsContent value="config"><WorkloadContainerConfigPanel workload={workload} canEdit={canUpdateContainerConfig} onSaved={invalidate} /></TabsContent>
         <TabsContent value="pods">
           <DataTable
             columns={[

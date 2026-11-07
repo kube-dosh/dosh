@@ -1086,6 +1086,58 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/workloads/{kind}/{namespace}/{name}/containers/{container}/config": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Update environment, volume mounts and health probes for one container */
+        put: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    kind: components["parameters"]["KindPath"];
+                    namespace: components["parameters"]["NamespacePath"];
+                    name: components["parameters"]["Name"];
+                    container: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["WorkloadContainerConfigUpdate"];
+                };
+            };
+            responses: {
+                /** @description Container configuration updated */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["OperationStatus"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+                404: components["responses"]["NotFound"];
+                409: components["responses"]["Conflict"];
+                501: components["responses"]["NotSupported"];
+                503: components["responses"]["DependencyUnavailable"];
+            };
+        };
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/workloads/{kind}/{namespace}/{name}/suspend": {
         parameters: {
             query?: never;
@@ -3137,11 +3189,82 @@ export interface components {
                 [key: string]: string;
             };
             pods: components["schemas"]["PodSummary"][];
+            volumes: components["schemas"]["WorkloadVolume"][];
             containers: components["schemas"]["WorkloadContainer"][];
         };
         WorkloadContainer: {
             name: string;
             image: string;
+            ports: components["schemas"]["WorkloadContainerPort"][];
+            resources: components["schemas"]["WorkloadContainerResources"];
+            env: components["schemas"]["WorkloadEnvVar"][];
+            volumeMounts: components["schemas"]["WorkloadVolumeMount"][];
+            livenessProbe?: components["schemas"]["WorkloadProbe"];
+            readinessProbe?: components["schemas"]["WorkloadProbe"];
+            startupProbe?: components["schemas"]["WorkloadProbe"];
+        };
+        WorkloadContainerPort: {
+            name?: string;
+            containerPort: number;
+            protocol: string;
+        };
+        WorkloadContainerResources: {
+            /** Format: int64 */
+            cpuRequestMilli: number;
+            /** Format: int64 */
+            cpuLimitMilli: number;
+            /** Format: int64 */
+            memoryRequestBytes: number;
+            /** Format: int64 */
+            memoryLimitBytes: number;
+        };
+        WorkloadEnvVar: {
+            name: string;
+            value: string;
+            valueFrom?: components["schemas"]["WorkloadEnvValueFrom"];
+        };
+        WorkloadEnvValueFrom: {
+            /** @enum {string} */
+            kind: "configMapKeyRef" | "secretKeyRef" | "fieldRef" | "resourceFieldRef";
+            name?: string;
+            key?: string;
+            optional?: boolean;
+        };
+        WorkloadVolumeMount: {
+            name: string;
+            mountPath: string;
+            subPath?: string;
+            readOnly: boolean;
+        };
+        WorkloadVolume: {
+            name: string;
+            type: string;
+            source: string;
+            readOnly: boolean;
+        };
+        WorkloadProbe: {
+            /** @enum {string} */
+            type: "httpGet" | "tcpSocket" | "exec" | "grpc";
+            path?: string;
+            host?: string;
+            /** @enum {string} */
+            scheme?: "HTTP" | "HTTPS";
+            port?: string;
+            service?: string;
+            command: string[];
+            initialDelaySeconds: number;
+            periodSeconds: number;
+            timeoutSeconds: number;
+            successThreshold: number;
+            failureThreshold: number;
+        };
+        WorkloadContainerConfigUpdate: {
+            env: components["schemas"]["WorkloadEnvVar"][];
+            volumeMounts: components["schemas"]["WorkloadVolumeMount"][];
+            livenessProbe?: components["schemas"]["WorkloadProbe"];
+            readinessProbe?: components["schemas"]["WorkloadProbe"];
+            startupProbe?: components["schemas"]["WorkloadProbe"];
+            resourceVersion?: string;
         };
         PodSummary: {
             name: string;

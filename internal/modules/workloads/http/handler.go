@@ -77,6 +77,86 @@ type deploymentEnvVarRequest struct {
 	Value string `json:"value"`
 }
 
+type containerEnvValueFromRequest struct {
+	Kind     string `json:"kind"`
+	Name     string `json:"name"`
+	Key      string `json:"key"`
+	Optional bool   `json:"optional"`
+}
+
+type containerEnvVarRequest struct {
+	Name      string                        `json:"name"`
+	Value     string                        `json:"value"`
+	ValueFrom *containerEnvValueFromRequest `json:"valueFrom"`
+}
+
+type containerVolumeMountRequest struct {
+	Name      string `json:"name"`
+	MountPath string `json:"mountPath"`
+	SubPath   string `json:"subPath"`
+	ReadOnly  bool   `json:"readOnly"`
+}
+
+type containerProbeRequest struct {
+	Type                string   `json:"type"`
+	Path                string   `json:"path"`
+	Host                string   `json:"host"`
+	Scheme              string   `json:"scheme"`
+	Port                string   `json:"port"`
+	Service             string   `json:"service"`
+	Command             []string `json:"command"`
+	InitialDelaySeconds int32    `json:"initialDelaySeconds"`
+	PeriodSeconds       int32    `json:"periodSeconds"`
+	TimeoutSeconds      int32    `json:"timeoutSeconds"`
+	SuccessThreshold    int32    `json:"successThreshold"`
+	FailureThreshold    int32    `json:"failureThreshold"`
+}
+
+type containerConfigRequest struct {
+	Env             []containerEnvVarRequest      `json:"env"`
+	VolumeMounts    []containerVolumeMountRequest `json:"volumeMounts"`
+	LivenessProbe   *containerProbeRequest        `json:"livenessProbe"`
+	ReadinessProbe  *containerProbeRequest        `json:"readinessProbe"`
+	StartupProbe    *containerProbeRequest        `json:"startupProbe"`
+	ResourceVersion string                        `json:"resourceVersion"`
+}
+
+func (request containerConfigRequest) update(containerName string) domain.WorkloadContainerConfigUpdate {
+	env := make([]domain.WorkloadEnvVar, 0, len(request.Env))
+	for _, item := range request.Env {
+		variable := domain.WorkloadEnvVar{Name: item.Name, Value: item.Value}
+		if item.ValueFrom != nil {
+			variable.ValueFrom = &domain.WorkloadEnvValueFrom{
+				Kind: item.ValueFrom.Kind, Name: item.ValueFrom.Name, Key: item.ValueFrom.Key, Optional: item.ValueFrom.Optional,
+			}
+		}
+		env = append(env, variable)
+	}
+	mounts := make([]domain.WorkloadVolumeMount, 0, len(request.VolumeMounts))
+	for _, item := range request.VolumeMounts {
+		mounts = append(mounts, domain.WorkloadVolumeMount{
+			Name: item.Name, MountPath: item.MountPath, SubPath: item.SubPath, ReadOnly: item.ReadOnly,
+		})
+	}
+	return domain.WorkloadContainerConfigUpdate{
+		ContainerName: containerName, Env: env, VolumeMounts: mounts,
+		LivenessProbe: containerProbe(request.LivenessProbe), ReadinessProbe: containerProbe(request.ReadinessProbe),
+		StartupProbe: containerProbe(request.StartupProbe), ResourceVersion: request.ResourceVersion,
+	}
+}
+
+func containerProbe(request *containerProbeRequest) *domain.WorkloadProbe {
+	if request == nil {
+		return nil
+	}
+	return &domain.WorkloadProbe{
+		Type: request.Type, Path: request.Path, Host: request.Host, Scheme: request.Scheme, Port: request.Port,
+		Service: request.Service, Command: request.Command, InitialDelaySeconds: request.InitialDelaySeconds,
+		PeriodSeconds: request.PeriodSeconds, TimeoutSeconds: request.TimeoutSeconds,
+		SuccessThreshold: request.SuccessThreshold, FailureThreshold: request.FailureThreshold,
+	}
+}
+
 type deploymentCreateRequest struct {
 	Name               string                    `json:"name"`
 	Namespace          string                    `json:"namespace"`
@@ -169,6 +249,23 @@ func (h *Handler) UpdateImage(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	err := h.service.UpdateImage(r.Context(), actor, chi.URLParam(r, "kind"), chi.URLParam(r, "namespace"), chi.URLParam(r, "name"), domain.WorkloadImageUpdate{
 		ContainerName: request.ContainerName, Image: request.Image, ResourceVersion: request.ResourceVersion,
 	})
+	if err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	httpx.JSON(w, stdhttp.StatusOK, map[string]string{"status": "updated"})
+}
+
+func (h *Handler) UpdateContainerConfig(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	var request containerConfigRequest
+	if !httpx.DecodeJSON(w, r, &request) {
+		return
+	}
+	actor, _ := domain.ActorFromContext(r.Context())
+	err := h.service.UpdateContainerConfig(
+		r.Context(), actor, chi.URLParam(r, "kind"), chi.URLParam(r, "namespace"), chi.URLParam(r, "name"),
+		request.update(chi.URLParam(r, "container")),
+	)
 	if err != nil {
 		httpx.Error(w, r, err)
 		return
@@ -340,6 +437,7 @@ func (h *Handler) Mount(r chi.Router) {
 	r.Post("/workloads/{kind}/{namespace}/{name}/scale", h.Scale)
 	r.Post("/workloads/{kind}/{namespace}/{name}/restart", h.Restart)
 	r.Post("/workloads/{kind}/{namespace}/{name}/image", h.UpdateImage)
+	r.Put("/workloads/{kind}/{namespace}/{name}/containers/{container}/config", h.UpdateContainerConfig)
 	r.Post("/workloads/{kind}/{namespace}/{name}/suspend", h.SetSuspend)
 	r.Delete("/workloads/{kind}/{namespace}/{name}", h.Delete)
 	r.Get("/pods", h.ListPods)

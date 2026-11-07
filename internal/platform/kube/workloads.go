@@ -121,6 +121,7 @@ func (c *Client) GetWorkload(ctx context.Context, kind, namespace, name string) 
 	var selector *metav1.LabelSelector
 	conditions := make([]domain.Condition, 0)
 	var containers []corev1.Container
+	var volumes []corev1.Volume
 	switch strings.ToLower(kind) {
 	case "deployment":
 		item, err := c.clientset.AppsV1().Deployments(namespace).Get(ctx, name, metav1.GetOptions{})
@@ -130,6 +131,7 @@ func (c *Client) GetWorkload(ctx context.Context, kind, namespace, name string) 
 		summary = deploymentSummary(*item)
 		selector = item.Spec.Selector
 		containers = item.Spec.Template.Spec.Containers
+		volumes = item.Spec.Template.Spec.Volumes
 		for _, condition := range item.Status.Conditions {
 			conditions = append(conditions, domain.Condition{Type: string(condition.Type), Status: string(condition.Status), Reason: condition.Reason, Message: condition.Message, LastTransitionTime: condition.LastTransitionTime.Time})
 		}
@@ -141,6 +143,7 @@ func (c *Client) GetWorkload(ctx context.Context, kind, namespace, name string) 
 		summary = statefulSetSummary(*item)
 		selector = item.Spec.Selector
 		containers = item.Spec.Template.Spec.Containers
+		volumes = item.Spec.Template.Spec.Volumes
 		for _, condition := range item.Status.Conditions {
 			conditions = append(conditions, domain.Condition{Type: string(condition.Type), Status: string(condition.Status), Reason: condition.Reason, Message: condition.Message, LastTransitionTime: condition.LastTransitionTime.Time})
 		}
@@ -152,6 +155,7 @@ func (c *Client) GetWorkload(ctx context.Context, kind, namespace, name string) 
 		summary = daemonSetSummary(*item)
 		selector = item.Spec.Selector
 		containers = item.Spec.Template.Spec.Containers
+		volumes = item.Spec.Template.Spec.Volumes
 		for _, condition := range item.Status.Conditions {
 			conditions = append(conditions, domain.Condition{Type: string(condition.Type), Status: string(condition.Status), Reason: condition.Reason, Message: condition.Message, LastTransitionTime: condition.LastTransitionTime.Time})
 		}
@@ -163,6 +167,7 @@ func (c *Client) GetWorkload(ctx context.Context, kind, namespace, name string) 
 		summary = jobSummary(*item)
 		selector = item.Spec.Selector
 		containers = item.Spec.Template.Spec.Containers
+		volumes = item.Spec.Template.Spec.Volumes
 		for _, condition := range item.Status.Conditions {
 			conditions = append(conditions, domain.Condition{Type: string(condition.Type), Status: string(condition.Status), Reason: condition.Reason, Message: condition.Message, LastTransitionTime: condition.LastTransitionTime.Time})
 		}
@@ -173,6 +178,7 @@ func (c *Client) GetWorkload(ctx context.Context, kind, namespace, name string) 
 		}
 		summary = cronJobSummary(*item)
 		containers = item.Spec.JobTemplate.Spec.Template.Spec.Containers
+		volumes = item.Spec.JobTemplate.Spec.Template.Spec.Volumes
 	default:
 		return domain.WorkloadDetail{}, fmt.Errorf("%w: workload kind %q", domain.ErrUnsupported, kind)
 	}
@@ -185,7 +191,14 @@ func (c *Client) GetWorkload(ctx context.Context, kind, namespace, name string) 
 		}
 		summary.Restarts = c.restartsForSelector(ctx, namespace, selector)
 	}
-	return domain.WorkloadDetail{WorkloadSummary: summary, Conditions: conditions, Selector: selectorLabels, Pods: pods, Containers: workloadContainers(containers)}, nil
+	return domain.WorkloadDetail{
+		WorkloadSummary: summary,
+		Conditions:      conditions,
+		Selector:        selectorLabels,
+		Pods:            pods,
+		Volumes:         workloadVolumes(volumes),
+		Containers:      workloadContainers(containers),
+	}, nil
 }
 
 func (c *Client) ScaleWorkload(ctx context.Context, kind, namespace, name string, replicas int32, expectedResourceVersion string) error {
@@ -509,9 +522,153 @@ func podTemplateImages(containers []corev1.Container) []string {
 func workloadContainers(containers []corev1.Container) []domain.WorkloadContainer {
 	out := make([]domain.WorkloadContainer, 0, len(containers))
 	for _, container := range containers {
-		out = append(out, domain.WorkloadContainer{Name: container.Name, Image: container.Image})
+		item := domain.WorkloadContainer{
+			Name:           container.Name,
+			Image:          container.Image,
+			Ports:          workloadContainerPorts(container.Ports),
+			Resources:      workloadContainerResources(container.Resources),
+			Env:            workloadEnvVars(container.Env),
+			VolumeMounts:   workloadVolumeMounts(container.VolumeMounts),
+			LivenessProbe:  workloadProbe(container.LivenessProbe),
+			ReadinessProbe: workloadProbe(container.ReadinessProbe),
+			StartupProbe:   workloadProbe(container.StartupProbe),
+		}
+		out = append(out, item)
 	}
 	return out
+}
+
+func workloadContainerPorts(ports []corev1.ContainerPort) []domain.WorkloadContainerPort {
+	out := make([]domain.WorkloadContainerPort, 0, len(ports))
+	for _, port := range ports {
+		out = append(out, domain.WorkloadContainerPort{
+			Name: port.Name, ContainerPort: port.ContainerPort, Protocol: string(port.Protocol),
+		})
+	}
+	return out
+}
+
+func workloadContainerResources(resources corev1.ResourceRequirements) domain.WorkloadContainerResources {
+	out := domain.WorkloadContainerResources{}
+	if quantity, ok := resources.Requests[corev1.ResourceCPU]; ok {
+		out.CPURequestMilli = quantity.MilliValue()
+	}
+	if quantity, ok := resources.Limits[corev1.ResourceCPU]; ok {
+		out.CPULimitMilli = quantity.MilliValue()
+	}
+	if quantity, ok := resources.Requests[corev1.ResourceMemory]; ok {
+		out.MemoryRequestBytes = quantity.Value()
+	}
+	if quantity, ok := resources.Limits[corev1.ResourceMemory]; ok {
+		out.MemoryLimitBytes = quantity.Value()
+	}
+	return out
+}
+
+func workloadEnvVars(env []corev1.EnvVar) []domain.WorkloadEnvVar {
+	out := make([]domain.WorkloadEnvVar, 0, len(env))
+	for _, variable := range env {
+		item := domain.WorkloadEnvVar{Name: variable.Name, Value: variable.Value}
+		if source := variable.ValueFrom; source != nil {
+			switch {
+			case source.ConfigMapKeyRef != nil:
+				item.ValueFrom = &domain.WorkloadEnvValueFrom{
+					Kind: "configMapKeyRef", Name: source.ConfigMapKeyRef.Name, Key: source.ConfigMapKeyRef.Key,
+					Optional: source.ConfigMapKeyRef.Optional != nil && *source.ConfigMapKeyRef.Optional,
+				}
+			case source.SecretKeyRef != nil:
+				item.ValueFrom = &domain.WorkloadEnvValueFrom{
+					Kind: "secretKeyRef", Name: source.SecretKeyRef.Name, Key: source.SecretKeyRef.Key,
+					Optional: source.SecretKeyRef.Optional != nil && *source.SecretKeyRef.Optional,
+				}
+			case source.FieldRef != nil:
+				item.ValueFrom = &domain.WorkloadEnvValueFrom{Kind: "fieldRef", Name: source.FieldRef.FieldPath}
+			case source.ResourceFieldRef != nil:
+				item.ValueFrom = &domain.WorkloadEnvValueFrom{
+					Kind: "resourceFieldRef", Name: source.ResourceFieldRef.Resource, Key: source.ResourceFieldRef.ContainerName,
+				}
+			}
+		}
+		out = append(out, item)
+	}
+	return out
+}
+
+func workloadVolumeMounts(mounts []corev1.VolumeMount) []domain.WorkloadVolumeMount {
+	out := make([]domain.WorkloadVolumeMount, 0, len(mounts))
+	for _, mount := range mounts {
+		out = append(out, domain.WorkloadVolumeMount{
+			Name: mount.Name, MountPath: mount.MountPath, SubPath: mount.SubPath, ReadOnly: mount.ReadOnly,
+		})
+	}
+	return out
+}
+
+func workloadVolumes(volumes []corev1.Volume) []domain.WorkloadVolume {
+	out := make([]domain.WorkloadVolume, 0, len(volumes))
+	for _, volume := range volumes {
+		item := domain.WorkloadVolume{Name: volume.Name, Type: "other"}
+		switch {
+		case volume.ConfigMap != nil:
+			item.Type, item.Source, item.ReadOnly = "configMap", volume.ConfigMap.Name, true
+		case volume.Secret != nil:
+			item.Type, item.Source, item.ReadOnly = "secret", volume.Secret.SecretName, true
+		case volume.PersistentVolumeClaim != nil:
+			item.Type, item.Source = "persistentVolumeClaim", volume.PersistentVolumeClaim.ClaimName
+		case volume.EmptyDir != nil:
+			item.Type, item.Source = "emptyDir", string(volume.EmptyDir.Medium)
+		case volume.HostPath != nil:
+			item.Type, item.Source = "hostPath", volume.HostPath.Path
+		case volume.NFS != nil:
+			item.Type, item.Source = "nfs", volume.NFS.Server+":"+volume.NFS.Path
+		case volume.CSI != nil:
+			item.Type, item.Source = "csi", volume.CSI.Driver
+		case volume.DownwardAPI != nil:
+			item.Type, item.ReadOnly = "downwardAPI", true
+		case volume.Projected != nil:
+			item.Type, item.ReadOnly = "projected", true
+		}
+		out = append(out, item)
+	}
+	return out
+}
+
+func workloadProbe(probe *corev1.Probe) *domain.WorkloadProbe {
+	if probe == nil {
+		return nil
+	}
+	item := &domain.WorkloadProbe{
+		Command:             make([]string, 0),
+		InitialDelaySeconds: probe.InitialDelaySeconds,
+		PeriodSeconds:       probe.PeriodSeconds,
+		TimeoutSeconds:      probe.TimeoutSeconds,
+		SuccessThreshold:    probe.SuccessThreshold,
+		FailureThreshold:    probe.FailureThreshold,
+	}
+	switch {
+	case probe.HTTPGet != nil:
+		item.Type = "httpGet"
+		item.Path = probe.HTTPGet.Path
+		item.Host = probe.HTTPGet.Host
+		item.Scheme = string(probe.HTTPGet.Scheme)
+		item.Port = probe.HTTPGet.Port.String()
+	case probe.TCPSocket != nil:
+		item.Type = "tcpSocket"
+		item.Host = probe.TCPSocket.Host
+		item.Port = probe.TCPSocket.Port.String()
+	case probe.GRPC != nil:
+		item.Type = "grpc"
+		item.Port = strconv.Itoa(int(probe.GRPC.Port))
+		if probe.GRPC.Service != nil {
+			item.Service = *probe.GRPC.Service
+		}
+	case probe.Exec != nil:
+		item.Type = "exec"
+		item.Command = append([]string(nil), probe.Exec.Command...)
+	default:
+		item.Type = "unknown"
+	}
+	return item
 }
 
 func (c *Client) restartsForSelector(ctx context.Context, namespace string, selector *metav1.LabelSelector) int32 {

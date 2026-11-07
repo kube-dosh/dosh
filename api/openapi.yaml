@@ -540,6 +540,39 @@ paths:
         "409": { $ref: "#/components/responses/Conflict" }
         "501": { $ref: "#/components/responses/NotSupported" }
         "503": { $ref: "#/components/responses/DependencyUnavailable" }
+  /api/v1/workloads/{kind}/{namespace}/{name}/containers/{container}/config:
+    put:
+      tags: [workloads]
+      summary: Update environment, volume mounts and health probes for one container
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      parameters:
+        - { $ref: "#/components/parameters/KindPath" }
+        - { $ref: "#/components/parameters/NamespacePath" }
+        - { $ref: "#/components/parameters/Name" }
+        - name: container
+          in: path
+          required: true
+          schema: { type: string, minLength: 1, maxLength: 63 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/WorkloadContainerConfigUpdate" }
+      responses:
+        "200":
+          description: Container configuration updated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OperationStatus" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "501": { $ref: "#/components/responses/NotSupported" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
   /api/v1/workloads/{kind}/{namespace}/{name}/suspend:
     post:
       tags: [workloads]
@@ -1985,7 +2018,7 @@ components:
       allOf:
         - { $ref: "#/components/schemas/WorkloadSummary" }
         - type: object
-          required: [conditions, selector, pods, containers]
+          required: [conditions, selector, pods, volumes, containers]
           properties:
             conditions:
               type: array
@@ -1996,15 +2029,115 @@ components:
             pods:
               type: array
               items: { $ref: "#/components/schemas/PodSummary" }
+            volumes:
+              type: array
+              items: { $ref: "#/components/schemas/WorkloadVolume" }
             containers:
               type: array
               items: { $ref: "#/components/schemas/WorkloadContainer" }
     WorkloadContainer:
       type: object
-      required: [name, image]
+      required: [name, image, ports, resources, env, volumeMounts]
       properties:
         name: { type: string }
         image: { type: string }
+        ports:
+          type: array
+          items: { $ref: "#/components/schemas/WorkloadContainerPort" }
+        resources: { $ref: "#/components/schemas/WorkloadContainerResources" }
+        env:
+          type: array
+          items: { $ref: "#/components/schemas/WorkloadEnvVar" }
+        volumeMounts:
+          type: array
+          items: { $ref: "#/components/schemas/WorkloadVolumeMount" }
+        livenessProbe: { $ref: "#/components/schemas/WorkloadProbe" }
+        readinessProbe: { $ref: "#/components/schemas/WorkloadProbe" }
+        startupProbe: { $ref: "#/components/schemas/WorkloadProbe" }
+    WorkloadContainerPort:
+      type: object
+      required: [containerPort, protocol]
+      properties:
+        name: { type: string }
+        containerPort: { type: integer }
+        protocol: { type: string }
+    WorkloadContainerResources:
+      type: object
+      required: [cpuRequestMilli, cpuLimitMilli, memoryRequestBytes, memoryLimitBytes]
+      properties:
+        cpuRequestMilli: { type: integer, format: int64 }
+        cpuLimitMilli: { type: integer, format: int64 }
+        memoryRequestBytes: { type: integer, format: int64 }
+        memoryLimitBytes: { type: integer, format: int64 }
+    WorkloadEnvVar:
+      type: object
+      required: [name, value]
+      properties:
+        name: { type: string }
+        value: { type: string }
+        valueFrom: { $ref: "#/components/schemas/WorkloadEnvValueFrom" }
+    WorkloadEnvValueFrom:
+      type: object
+      required: [kind]
+      properties:
+        kind:
+          type: string
+          enum: [configMapKeyRef, secretKeyRef, fieldRef, resourceFieldRef]
+        name: { type: string }
+        key: { type: string }
+        optional: { type: boolean }
+    WorkloadVolumeMount:
+      type: object
+      required: [name, mountPath, readOnly]
+      properties:
+        name: { type: string }
+        mountPath: { type: string }
+        subPath: { type: string }
+        readOnly: { type: boolean }
+    WorkloadVolume:
+      type: object
+      required: [name, type, source, readOnly]
+      properties:
+        name: { type: string }
+        type: { type: string }
+        source: { type: string }
+        readOnly: { type: boolean }
+    WorkloadProbe:
+      type: object
+      required: [type, command, initialDelaySeconds, periodSeconds, timeoutSeconds, successThreshold, failureThreshold]
+      properties:
+        type:
+          type: string
+          enum: [httpGet, tcpSocket, exec, grpc]
+        path: { type: string }
+        host: { type: string }
+        scheme: { type: string, enum: [HTTP, HTTPS] }
+        port: { type: string }
+        service: { type: string }
+        command:
+          type: array
+          items: { type: string }
+        initialDelaySeconds: { type: integer }
+        periodSeconds: { type: integer }
+        timeoutSeconds: { type: integer }
+        successThreshold: { type: integer }
+        failureThreshold: { type: integer }
+    WorkloadContainerConfigUpdate:
+      type: object
+      required: [env, volumeMounts]
+      properties:
+        env:
+          type: array
+          maxItems: 128
+          items: { $ref: "#/components/schemas/WorkloadEnvVar" }
+        volumeMounts:
+          type: array
+          maxItems: 64
+          items: { $ref: "#/components/schemas/WorkloadVolumeMount" }
+        livenessProbe: { $ref: "#/components/schemas/WorkloadProbe" }
+        readinessProbe: { $ref: "#/components/schemas/WorkloadProbe" }
+        startupProbe: { $ref: "#/components/schemas/WorkloadProbe" }
+        resourceVersion: { type: string, maxLength: 256 }
     PodSummary:
       type: object
       required: [name, namespace, status, ready, restarts, ip, node, createdAt]
