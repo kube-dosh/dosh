@@ -37,20 +37,20 @@ Browser
 ## 当前候选 v0.1.5
 
 - 源码版本：App/OpenAPI/npm `0.1.5`，Chart `0.1.7`；默认认证模式为 `token`。
-- 当前 Preview 镜像：`192.168.122.10:5000/dosh/dosh:0.1.5-rc-yaml-create-20261107T090541Z`，
-  registry digest `sha256:f9ffa45dcec2b4c659c0b8b08780effefb94d42f63aa9f7436e2c4d9cebf6e9b`，
-  构建源码提交 `2d2b6e3`。
+- 当前 Preview 镜像：`192.168.122.10:5000/dosh/dosh:0.1.5-rc-secret-yaml-20261107T111925Z`，
+  registry digest `sha256:86736b4d4cacb1e8654184d5eaec99e77baf939dcdb36b25afb0f178e70370a9`，
+  构建源码提交 `9ebf259`。
 - Token 登录链路：浏览器提交 Bearer Token → `TokenReview` 校验 → 加密 HttpOnly 会话 →
   业务请求使用 `Impersonate-User`/`Impersonate-Group` → `SubjectAccessReview` 判权。Token 不写入
   Cookie、浏览器存储、审计或日志；用户 Token 与 ServiceAccount Token 均受支持。
 - 传输模式：HTTP 与 HTTPS 使用同一二进制，由 `DOSH_TLS_ENABLED` 切换；HTTPS 可使用自签证书，
   OIDC 自定义 CA 和 TLS 受信 CA 均为可选增强，不是启动前提。
-- 本轮验收：Go 全量测试、Vitest `98/98`、Chromium 定向 `4/4`（YAML/集群配置 `3/3`、
-  移动端逐页无横向溢出 `1/1`）、生产构建、bundle `414.62 KiB`、架构、OpenAPI、Helm 和
+- 本轮验收：Go 全量测试、Vitest `100/100`、Chromium 定向 `4/4`（YAML 创建 `2/2`、
+  Secret 数据与 YAML 查看 `2/2`）、生产构建、bundle `414.50 KiB`、架构、OpenAPI、Helm 和
   Playwright 隔离检查。
-- Preview：Release `dosh-preview` revision 21、1/1 Ready、NodePort `32630`，HTTP(S) 前有 NGINX
-  和 Cloudflare；新镜像完成滚动发布，NodePort 与公网 `/healthz` 均返回 `200`。本轮包含多文档
-  YAML 创建、create/update/patch 分权、集群网络配置页面、事件对象跳转与移动端表格优化。
+- Preview：Release `dosh-preview` revision 22、1/1 Ready、NodePort `32630`，HTTP(S) 前有 NGINX
+  和 Cloudflare；新镜像完成滚动发布，NodePort 与公网 `/healthz` 均返回 `200`。本轮将 YAML 创建
+  放入快捷入口，Secret YAML 正常展示原始数据并支持按权限编辑，YAML 响应禁用缓存。
 - 生产 `dosh` 保持 App `0.1.2` / Chart `0.1.4` / revision 12 / 2/2 Ready / NodePort `32626`。
 - 当前外部商用门禁剩余 5 项：生产 SIEM、Edge/Safari 实机、GitHub Actions/分支保护、离机 WORM、
   生产变更授权。它们未关闭前不得升级生产或宣称完整商用放行。

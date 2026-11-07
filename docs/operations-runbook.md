@@ -12,9 +12,9 @@
 | 容器端口 | `32626` |
 | 当前生产版本 | App `0.1.2` / Chart `dosh-0.1.4`（revision 12，2/2 Ready） |
 | 当前源码版本 | App `0.1.5` / Chart `dosh-0.1.7`（Token/HTTP/HTTPS 候选，生产未升级） |
-| 当前源码状态 | 资源管理操作闭环，并支持多文档 YAML 创建、create/update/patch 分权、集群网络配置、事件对象跳转和移动端表格优化；写操作保留 Dry Run、RBAC、CSRF 与审计 |
-| 当前 Preview 候选 | `192.168.122.10:5000/dosh/dosh:0.1.5-rc-yaml-create-20261107T090541Z@sha256:f9ffa45dcec2b4c659c0b8b08780effefb94d42f63aa9f7436e2c4d9cebf6e9b`；源码提交 `2d2b6e3` |
-| 当前 Preview Release | `dosh-preview/dosh-preview` revision 21、1/1 Ready、NodePort `32630`；前有 NGINX 与 Cloudflare strict SSL；生产未改动 |
+| 当前源码状态 | 资源管理操作闭环，并支持多文档 YAML 创建、快捷入口、Secret YAML 原始数据展示与分权编辑、create/update/patch 分权、集群网络配置和移动端表格优化；写操作保留 Dry Run、RBAC、CSRF 与审计 |
+| 当前 Preview 候选 | `192.168.122.10:5000/dosh/dosh:0.1.5-rc-secret-yaml-20261107T111925Z@sha256:86736b4d4cacb1e8654184d5eaec99e77baf939dcdb36b25afb0f178e70370a9`；源码提交 `9ebf259` |
+| 当前 Preview Release | `dosh-preview/dosh-preview` revision 22、1/1 Ready、NodePort `32630`；前有 NGINX 与 Cloudflare strict SSL；生产未改动 |
 | 历史隔离 Token Release | `dosh-token-e2e/dosh-token-e2e` revision 10（rollback 到 revision 8 配置）、1/1 Ready、NodePort `32628`；HTTPS 自签证书；历史证据不继承给 v2.49 |
 | 历史源码绑定 | `deploy/release/bindings/source-binding-v247-token.txt`；218 个源文件，binary SHA-256 `b01911f428ac8732fc80b6ef02ce7edb610c4178454a48791d9fd9d73ebc0511`；仅绑定 v2.47 |
 | 历史证据归档 | `/var/lib/dosh/evidence/c114113009dd/20261105T014514Z-v247-final-token-r1`；23 文件，manifest SHA-256 `734cbdbc10b15e4d48f56665eed24e5e170ec68622ce8a5390b0a92114570005`；不继承给 v2.49 |
