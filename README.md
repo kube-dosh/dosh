@@ -37,19 +37,19 @@ Browser
 ## 当前候选 v0.1.5
 
 - 源码版本：App/OpenAPI/npm `0.1.5`，Chart `0.1.7`；默认认证模式为 `token`。
-- 当前 Preview 镜像：`192.168.122.10:5000/dosh/dosh:0.1.5-rc-resource-admin-headless-20261107T045917Z`，
-  registry digest `sha256:95479f6844beabd90b84a68004d18c1a82f5d626fae87b69776f8ef3e8835d03`。
+- 当前 Preview 镜像：`192.168.122.10:5000/dosh/dosh:0.1.5-rc-container-config-20261107T070547Z`，
+  registry digest `sha256:5e134d5c39c59cf2af4b1eb06eb432ab6239ea4f014950d7f0032cf8f5115661`。
 - Token 登录链路：浏览器提交 Bearer Token → `TokenReview` 校验 → 加密 HttpOnly 会话 →
   业务请求使用 `Impersonate-User`/`Impersonate-Group` → `SubjectAccessReview` 判权。Token 不写入
   Cookie、浏览器存储、审计或日志；用户 Token 与 ServiceAccount Token 均受支持。
 - 传输模式：HTTP 与 HTTPS 使用同一二进制，由 `DOSH_TLS_ENABLED` 切换；HTTPS 可使用自签证书，
   OIDC 自定义 CA 和 TLS 受信 CA 均为可选增强，不是启动前提。
-- 本轮验收：Go 全量/race、Vitest `83/83`、Chromium `53/53`、单 worker/零重试/`4g/2 CPU`
+- 本轮验收：Go 全量/race、Vitest `88/88`、Chromium `55/55`、单 worker/零重试/`4g/2 CPU`
   独立容器、生产构建、bundle `368.85 KiB`、架构、OpenAPI、Helm、版本、Playwright 隔离和
   E2E 镜像绑定检查。
-- Preview：Release `dosh-preview` revision 19、1/1 Ready、NodePort `32630`，HTTP(S) 前有 NGINX
-  和 Cloudflare；新镜像完成滚动发布且 `/healthz` 正常。本轮包含资源管理功能、配置/密钥列表
-  隐藏键名以及 Headless Service 创建与展示支持。
+- Preview：Release `dosh-preview` revision 20、1/1 Ready、NodePort `32630`，HTTP(S) 前有 NGINX
+  和 Cloudflare；新镜像完成滚动发布且 `/healthz` 正常。本轮包含工作负载容器环境变量、存储挂载、
+  资源与健康检查的查看/编辑支持，以及禁用操作原因提示。
 - 生产 `dosh` 保持 App `0.1.2` / Chart `0.1.4` / revision 12 / 2/2 Ready / NodePort `32626`。
 - 当前外部商用门禁剩余 5 项：生产 SIEM、Edge/Safari 实机、GitHub Actions/分支保护、离机 WORM、
   生产变更授权。它们未关闭前不得升级生产或宣称完整商用放行。
