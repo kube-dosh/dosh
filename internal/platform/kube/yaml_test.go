@@ -71,6 +71,32 @@ func TestGetYAMLRejectsUnsupportedAndMissingNamespace(t *testing.T) {
 	}
 }
 
+func TestExistsDistinguishesPresentMissingAndInvalidTargets(t *testing.T) {
+	storageClass := &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": "storage.k8s.io/v1", "kind": "StorageClass",
+		"metadata": map[string]any{"name": "fast"},
+	}}
+	client, _ := newFakeYAMLClient(unstructuredConfigMap(), storageClass)
+	exists, err := client.Exists(context.Background(), domain.ResourceConfigMap, "prod", "app")
+	if err != nil || !exists {
+		t.Fatalf("Exists(present) = (%v, %v), want (true, nil)", exists, err)
+	}
+	exists, err = client.Exists(context.Background(), domain.ResourceConfigMap, "prod", "missing")
+	if err != nil || exists {
+		t.Fatalf("Exists(missing) = (%v, %v), want (false, nil)", exists, err)
+	}
+	if _, err := client.Exists(context.Background(), domain.ResourceType("unknown"), "prod", "app"); !errors.Is(err, domain.ErrUnsupported) {
+		t.Fatalf("Exists(unsupported) error = %v, want ErrUnsupported", err)
+	}
+	if _, err := client.Exists(context.Background(), domain.ResourceConfigMap, "", "app"); !errors.Is(err, domain.ErrInvalid) {
+		t.Fatalf("Exists(missing namespace) error = %v, want ErrInvalid", err)
+	}
+	exists, err = client.Exists(context.Background(), domain.ResourceStorageClass, "", "fast")
+	if err != nil || !exists {
+		t.Fatalf("Exists(cluster-scoped) = (%v, %v), want (true, nil)", exists, err)
+	}
+}
+
 func TestApplyYAMLValidation(t *testing.T) {
 	client, _ := newFakeYAMLClient()
 	tests := []struct {

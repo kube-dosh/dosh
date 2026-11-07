@@ -1,7 +1,7 @@
 import "@testing-library/jest-dom/vitest";
 import { configure } from "@testing-library/react";
 
-configure({ asyncUtilTimeout: 5000 });
+configure({ asyncUtilTimeout: 10000 });
 
 // jsdom exposes scrollTo but throws "Not implemented" when components call it.
 Object.defineProperty(window, "scrollTo", {

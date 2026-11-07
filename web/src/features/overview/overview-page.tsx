@@ -51,8 +51,10 @@ export function OverviewPage() {
               </div>
             </div>
             <div className="grid gap-4 sm:grid-cols-2">
-              <ResourceBar label="Pod 容量" used={data.counts.pods} total={Number(data.capacity.podCapacity)} displayUsed={String(data.counts.pods)} displayTotal={String(data.capacity.podCapacity)} />
-              <div className="flex items-center justify-between rounded-lg border px-4 py-3 text-sm"><span className="text-muted-foreground">Metrics Server</span><StatusBadge status={data.cluster.metricsAvailable ? "Available" : "Not installed"} /></div>
+              <div className="rounded-lg border bg-muted/25 p-4">
+                <ResourceBar label="Pod 容量" used={data.counts.pods} total={Number(data.capacity.podCapacity)} displayUsed={String(data.counts.pods)} displayTotal={String(data.capacity.podCapacity)} />
+              </div>
+              <div className="flex items-center justify-between rounded-lg border bg-muted/25 p-4 text-sm"><span className="text-muted-foreground">Metrics Server</span><StatusBadge status={data.cluster.metricsAvailable ? "Available" : "Not installed"} /></div>
             </div>
             {!data.cluster.metricsAvailable ? <p className="rounded-md bg-muted/50 px-3 py-2 text-xs text-muted-foreground">当前未安装 Metrics Server，因此仅展示容量与 requests/limits，不展示实际利用率。</p> : null}
           </CardContent>

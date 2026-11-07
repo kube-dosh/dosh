@@ -26,10 +26,16 @@ const yamlTestPassword = "a-valid-test-password"
 
 type yamlRepo struct {
 	getCalls   int
+	exists     bool
+	existsErr  error
 	applyCalls int
 	lastApply  domain.ApplyRequest
 	getErr     error
 	applyErr   error
+}
+
+func (r *yamlRepo) Exists(context.Context, domain.ResourceType, string, string) (bool, error) {
+	return r.exists, r.existsErr
 }
 
 func (r *yamlRepo) GetYAML(_ context.Context, resourceType domain.ResourceType, namespace, name string) (domain.YAMLResource, error) {

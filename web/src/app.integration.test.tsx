@@ -143,6 +143,21 @@ const server = setupServer(
   http.post("/api/v1/session", () => HttpResponse.json(session)),
   http.delete("/api/v1/session", () => new HttpResponse(null, { status: 204 })),
   http.get("/api/v1/overview", () => HttpResponse.json(overview)),
+  http.get("/api/v1/cluster/config", () => HttpResponse.json({
+    name: "kubedo-lab",
+    version: "v1.36.5",
+    platform: "linux/amd64",
+    cni: "Cilium",
+    controlPlaneEndpoint: "192.168.122.50:16443",
+    podCIDR: "10.244.0.0/16",
+    serviceCIDR: "10.96.0.0/12",
+    dnsDomain: "cluster.local",
+    kubernetesServiceIP: "10.96.0.1",
+    dnsServiceIP: "10.96.0.10",
+    source: "kubeadm-config",
+    nodeCIDRs: [{ name: "worker-0001", internalIP: "192.168.122.200", podCIDRs: ["10.244.1.0/24"] }],
+    warnings: [],
+  })),
   http.get("/api/v1/nodes", () => HttpResponse.json({ items: [{ name: "worker-0001", status: "Ready", roles: ["worker"], internalIP: "192.168.122.200", version: "v1.36.5", osImage: "Fedora", kernelVersion: "6.19", containerRuntime: "containerd://2.3.6", cpuCapacityMilli: 2000, memoryCapacityBytes: 4294967296, podCapacity: 110, podCount: 12, cpuRequestsMilli: 800, memoryRequestsBytes: 1073741824, unschedulable: false, createdAt: "2026-11-02T00:00:00Z" }], meta: { total: 1 } })),
   http.get("/api/v1/nodes/worker-0001", () => HttpResponse.json(nodeDetail)),
   http.get("/api/v1/workloads", () => HttpResponse.json({ items: [workload], meta: { total: 1 } })),
@@ -166,6 +181,7 @@ const server = setupServer(
   http.get("/api/v1/certificate", () => HttpResponse.json({ mode: "https", enabled: true, configured: true, status: "valid", subject: "CN=dosh.example.test", issuer: "CN=dosh.example.test", dnsNames: ["dosh.example.test"], ipAddresses: [], daysRemaining: 90, fingerprintSha256: "A".repeat(64), keyAlgorithm: "ECDSA", autoReload: true, reloadIntervalSeconds: 30, lastReloadedAt: "2026-11-05T00:00:00Z" })),
   http.get("/api/v1/audit-events", () => HttpResponse.json({ items: [], meta: { total: 0, page: 1, pageSize: 20, totalPages: 0, filters: {} } })),
   http.get("/api/v1/yaml", () => HttpResponse.json({ kind: "Pod", namespace: "default", name: "web-abcdef-12345", yaml: "apiVersion: v1\nkind: Pod\nmetadata:\n  name: web-abcdef-12345\n" })),
+  http.post("/api/v1/yaml/apply", () => HttpResponse.json({ kind: "Deployment", namespace: "default", name: "web", yaml: "" })),
 );
 
 beforeAll(() => server.listen({ onUnhandledRequest: "error" }));
@@ -256,6 +272,72 @@ describe("dosh application", () => {
     renderRoute("/nodes");
     await expectNodeLink();
     expect(screen.getByText("192.168.122.200")).toBeInTheDocument();
+  });
+
+  it("renders cluster network ranges and links node Pod CIDRs", async () => {
+    renderRoute("/cluster/config");
+
+    expect(await screen.findByRole("heading", { name: "集群配置" })).toBeInTheDocument();
+    expect(screen.getByText("10.244.0.0/16")).toBeInTheDocument();
+    expect(screen.getByText("10.96.0.0/12")).toBeInTheDocument();
+    expect(screen.getByText("192.168.122.50:16443")).toBeInTheDocument();
+    expect(screen.getByText("10.244.1.0/24")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "worker-0001" })).toHaveAttribute("href", "/nodes/worker-0001");
+  });
+
+  it("dry-runs and applies a YAML resource from the create page", async () => {
+    const requests: Array<{ yaml: string; dryRun: boolean }> = [];
+    server.use(http.post("/api/v1/yaml/apply", async ({ request }) => {
+      const body = await request.json() as { yaml: string; dryRun: boolean };
+      requests.push(body);
+      return HttpResponse.json({ kind: "Deployment", namespace: "default", name: "web", yaml: "" });
+    }));
+    renderRoute("/yaml/create");
+
+    expect(await screen.findByRole("heading", { name: "YAML 创建" })).toBeInTheDocument();
+    const dryRun = screen.getByRole("button", { name: "Dry Run" });
+    await waitFor(() => expect(dryRun).toBeEnabled());
+    fireEvent.click(dryRun);
+
+    await waitFor(() => expect(requests).toHaveLength(1));
+    expect(requests[0]).toMatchObject({ dryRun: true });
+    expect(requests[0].yaml).toContain("kind: Deployment");
+    expect(await screen.findByRole("status", { name: "Dry Run 校验结果" })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "创建 / 应用" }));
+    await waitFor(() => expect(requests).toHaveLength(2));
+    expect(requests[1]).toMatchObject({ dryRun: false });
+    expect(await screen.findByRole("status", { name: "YAML 应用结果" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "查看工作负载" })).toHaveAttribute("href", "/workloads/deployment/default/web");
+  });
+
+  it("dry-runs and sequentially applies multiple YAML documents", async () => {
+    const requests: Array<{ yaml: string; dryRun: boolean }> = [];
+    server.use(http.post("/api/v1/yaml/apply", async ({ request }) => {
+      const body = await request.json() as { yaml: string; dryRun: boolean };
+      requests.push(body);
+      const kind = body.yaml.match(/^kind:\s*(\S+)/m)?.[1] ?? "Resource";
+      const name = body.yaml.match(/^  name:\s*(\S+)/m)?.[1] ?? "resource";
+      return HttpResponse.json({ kind, namespace: "default", name, yaml: body.yaml });
+    }));
+    renderRoute("/yaml/create");
+
+    expect(await screen.findByRole("heading", { name: "YAML 创建" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "组合示例" }));
+    expect(await screen.findByText("3 个有效文档")).toBeInTheDocument();
+    const dryRun = screen.getByRole("button", { name: "Dry Run" });
+    await waitFor(() => expect(dryRun).toBeEnabled());
+    fireEvent.click(dryRun);
+
+    await waitFor(() => expect(requests).toHaveLength(3));
+    expect(requests.map((request) => request.dryRun)).toEqual([true, true, true]);
+    expect(requests.map((request) => request.yaml.match(/^kind:\s*(\S+)/m)?.[1])).toEqual(["ConfigMap", "Deployment", "Service"]);
+    expect(await screen.findByRole("status", { name: "Dry Run 校验结果" })).toHaveTextContent("3/3 成功");
+
+    fireEvent.click(screen.getByRole("button", { name: "创建 / 应用 3 个资源" }));
+    await waitFor(() => expect(requests).toHaveLength(6));
+    expect(requests.slice(3).map((request) => request.dryRun)).toEqual([false, false, false]);
+    expect(await screen.findByRole("status", { name: "YAML 应用结果" })).toHaveTextContent("3/3 成功");
   });
 
   it("restores the namespace filter from the URL", async () => {
@@ -993,6 +1075,9 @@ describe("dosh application", () => {
     renderRoute("/workloads/deployment/default/web-api?tab=services");
 
     expect(await screen.findByRole("heading", { name: "关联 Service" })).toBeInTheDocument();
+    expect(await screen.findByRole("columnheader", { name: "类型" })).toBeInTheDocument();
+    expect(await screen.findByRole("columnheader", { name: "访问地址" })).toBeInTheDocument();
+    expect(await screen.findByRole("columnheader", { name: "Endpoint" })).toBeInTheDocument();
     fireEvent.click(await screen.findByRole("button", { name: "配置访问方式" }));
     let dialog = await screen.findByRole("dialog", { name: "配置访问方式" });
     fireEvent.change(within(dialog).getByLabelText("Service 名称"), { target: { value: "web-api-public" } });
@@ -1002,13 +1087,14 @@ describe("dosh application", () => {
     await waitFor(() => expect(createBody).toMatchObject({ name: "web-api-public", namespace: "default", selector: { app: "web" } }));
     expect(await screen.findByText("web-api-public")).toBeInTheDocument();
 
-    const serviceCard = screen.getByRole("link", { name: "web-api" }).closest(".rounded-lg") as HTMLElement;
-    fireEvent.click(within(serviceCard).getByRole("button", { name: "编辑" }));
+    openResourceMenu("Service default/web-api");
+    fireEvent.click(await screen.findByRole("menuitem", { name: "编辑" }));
     dialog = await screen.findByRole("dialog", { name: "编辑 Service" });
     fireEvent.click(within(dialog).getByRole("button", { name: "保存修改" }));
     await waitFor(() => expect(updateBody).toMatchObject({ resourceVersion: "21", selector: { app: "web" } }));
 
-    fireEvent.click(within(serviceCard).getByRole("button", { name: "删除" }));
+    openResourceMenu("Service default/web-api");
+    fireEvent.click(await screen.findByRole("menuitem", { name: "删除" }));
     const alert = await screen.findByRole("alertdialog", { name: /删除 Service web-api/ });
     fireEvent.change(within(alert).getByLabelText("Service 名称"), { target: { value: "web-api" } });
     fireEvent.click(within(alert).getByRole("button", { name: "确认删除" }));
@@ -1077,6 +1163,30 @@ describe("dosh application", () => {
     fireEvent.click(yamlTab);
     await waitFor(() => expect(router.state.location.search).toMatchObject({ tab: "yaml" }));
     expect(screen.getByRole("tab", { name: "YAML" })).toHaveAttribute("aria-selected", "true");
+  });
+
+  it("links event objects and renders more than ten events", async () => {
+    let eventQuery: URLSearchParams | undefined;
+    const events = [
+      { uid: "event-deployment", namespace: "default", type: "Normal", reason: "ScalingReplicaSet", message: "Scaled deployment", objectKind: "Deployment", objectName: "web-api", count: 1, firstSeen: "2026-11-02T00:00:00Z", lastSeen: "2026-11-02T00:01:00Z" },
+      { uid: "event-service", namespace: "default", type: "Normal", reason: "UpdatedLoadBalancer", message: "Updated service", objectKind: "Service", objectName: "web-api", count: 1, firstSeen: "2026-11-02T00:00:00Z", lastSeen: "2026-11-02T00:02:00Z" },
+      { uid: "event-node", namespace: "", type: "Warning", reason: "NodeNotReady", message: "Node unavailable", objectKind: "Node", objectName: "worker-0001", count: 2, firstSeen: "2026-11-02T00:00:00Z", lastSeen: "2026-11-02T00:03:00Z" },
+      ...Array.from({ length: 9 }, (_, index) => ({ uid: `event-pod-${index}`, namespace: "default", type: "Normal", reason: "Started", message: `Started pod ${index}`, objectKind: "Pod", objectName: `web-event-${index}`, count: 1, firstSeen: "2026-11-02T00:00:00Z", lastSeen: `2026-11-02T00:${10 + index}:00Z` })),
+    ];
+    server.use(http.get("/api/v1/events", ({ request }) => {
+      eventQuery = new URL(request.url).searchParams;
+      return HttpResponse.json({ items: events, meta: { total: events.length, page: 1, pageSize: 200, totalPages: 1, filters: {} } });
+    }));
+    renderRoute("/events");
+
+    expect(await screen.findByText("共 12 条事件")).toBeInTheDocument();
+    await waitFor(() => expect(eventQuery?.get("pageSize")).toBe("200"));
+    expect(eventQuery?.get("sort")).toBe("lastSeen");
+    expect(eventQuery?.get("order")).toBe("desc");
+    expect(await screen.findByRole("link", { name: "Deployment/web-api" })).toHaveAttribute("href", "/workloads/deployment/default/web-api");
+    expect(screen.getByRole("link", { name: "Service/web-api" })).toHaveAttribute("href", "/network/services/default/web-api");
+    expect(screen.getByRole("link", { name: "Node/worker-0001" })).toHaveAttribute("href", "/nodes/worker-0001");
+    expect(screen.getAllByRole("link", { name: /^Pod\/web-event-/ })).toHaveLength(9);
   });
 
   it("restores Service detail tabs and shows Endpoint readiness", async () => {

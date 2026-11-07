@@ -9,6 +9,7 @@ import (
 	audithistoryhttp "dosh/internal/modules/audithistory/http"
 	authhttp "dosh/internal/modules/auth/http"
 	certificateshttp "dosh/internal/modules/certificates/http"
+	clusterconfighttp "dosh/internal/modules/clusterconfig/http"
 	configurationhttp "dosh/internal/modules/configuration/http"
 	eventshttp "dosh/internal/modules/events/http"
 	networkhttp "dosh/internal/modules/network/http"
@@ -31,6 +32,7 @@ type routerDependencies struct {
 	kube          *kube.Client
 	auth          *authhttp.Handler
 	overview      *overviewhttp.Handler
+	clusterConfig *clusterconfighttp.Handler
 	nodes         *nodeshttp.Handler
 	workloads     *workloadshttp.Handler
 	events        *eventshttp.Handler
@@ -68,6 +70,7 @@ func buildRouter(deps routerDependencies) (stdhttp.Handler, error) {
 			r.Use(deps.auth.RequireCSRF)
 			authhttp.MountProtected(r, deps.auth)
 			deps.overview.Mount(r)
+			deps.clusterConfig.Mount(r)
 			deps.nodes.Mount(r)
 			deps.workloads.Mount(r)
 			deps.events.Mount(r)

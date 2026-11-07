@@ -165,6 +165,28 @@ export interface AuditRecord {
   error?: string;
 }
 
+export interface ClusterNodeCIDR {
+  name: string;
+  internalIP?: string;
+  podCIDRs: string[];
+}
+
+export interface ClusterConfiguration {
+  name: string;
+  version: string;
+  platform?: string;
+  cni?: string;
+  controlPlaneEndpoint?: string;
+  podCIDR?: string;
+  serviceCIDR?: string;
+  dnsDomain?: string;
+  kubernetesServiceIP?: string;
+  dnsServiceIP?: string;
+  source?: string;
+  nodeCIDRs: ClusterNodeCIDR[];
+  warnings?: string[];
+}
+
 export interface Overview {
   cluster: ClusterInfo;
   counts: OverviewCounts;

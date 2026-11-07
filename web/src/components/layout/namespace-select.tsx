@@ -4,11 +4,11 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 
 const ALL = "__all__";
 
-export function NamespaceSelect({ value, onChange, className, allowAll = true }: { value: string; onChange: (value: string) => void; className?: string; allowAll?: boolean }) {
+export function NamespaceSelect({ value, onChange, className, allowAll = true, ariaLabel = "命名空间筛选" }: { value: string; onChange: (value: string) => void; className?: string; allowAll?: boolean; ariaLabel?: string }) {
   const query = useQuery({ queryKey: ["namespaces", "selector"], queryFn: () => api.namespaces(), staleTime: 30_000 });
   return (
     <Select value={value || ALL} onValueChange={(next) => onChange(next === ALL ? "" : next)}>
-      <SelectTrigger className={className ?? "w-48"} aria-label="命名空间筛选">
+      <SelectTrigger className={className ?? "w-48"} aria-label={ariaLabel}>
         <SelectValue placeholder="全部命名空间" />
       </SelectTrigger>
       <SelectContent>

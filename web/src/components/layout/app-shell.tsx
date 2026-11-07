@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Link, Outlet, useNavigate, useRouterState } from "@tanstack/react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import {
-  Activity, Bell, Boxes, ChevronDown, CircleDot, Database, FolderTree, HelpCircle,
+  Activity, Bell, Boxes, ChevronDown, CircleDot, CloudCog, Database, FileCode2, FolderTree, HelpCircle,
   LayoutDashboard, LogOut, Menu, Moon, Network, ScrollText, Search, Server, Settings2, Sun, X,
   type LucideIcon,
 } from "lucide-react";
@@ -19,6 +19,8 @@ import { useTheme } from "@/lib/theme";
 
 const nav: Array<{ href: string; label: string; icon: LucideIcon; adminOnly?: boolean; match: (path: string) => boolean }> = [
   { href: "/", label: "总览", icon: LayoutDashboard, match: (path: string) => path === "/" },
+  { href: "/cluster/config", label: "集群配置", icon: CloudCog, match: (path: string) => path.startsWith("/cluster/config") },
+  { href: "/yaml/create", label: "YAML 创建", icon: FileCode2, match: (path: string) => path.startsWith("/yaml/create") },
   { href: "/nodes", label: "节点管理", icon: Server, match: (path: string) => path.startsWith("/nodes") },
   { href: "/workloads", label: "工作负载", icon: Boxes, match: (path: string) => path.startsWith("/workloads") || path.startsWith("/pods") },
   { href: "/network", label: "服务与路由", icon: Network, match: (path: string) => path.startsWith("/network") },

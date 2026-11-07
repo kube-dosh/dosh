@@ -8,11 +8,38 @@ import (
 
 	"dosh/internal/domain"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/yaml"
 )
+
+func (c *Client) Exists(ctx context.Context, resourceType domain.ResourceType, namespace, name string) (bool, error) {
+	gvr, namespaced, ok := gvrFor(resourceType)
+	if !ok {
+		return false, fmt.Errorf("%w: unsupported resource type %q", domain.ErrUnsupported, resourceType)
+	}
+	ctx, cancel := c.withTimeout(ctx)
+	defer cancel()
+	resource := c.dynamic.Resource(gvr)
+	var err error
+	if namespaced {
+		if namespace == "" {
+			return false, fmt.Errorf("%w: namespace is required", domain.ErrInvalid)
+		}
+		_, err = resource.Namespace(namespace).Get(ctx, name, metav1.GetOptions{})
+	} else {
+		_, err = resource.Get(ctx, name, metav1.GetOptions{})
+	}
+	if apierrors.IsNotFound(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, mapKubeError(err)
+	}
+	return true, nil
+}
 
 func (c *Client) GetYAML(ctx context.Context, resourceType domain.ResourceType, namespace, name string) (domain.YAMLResource, error) {
 	gvr, namespaced, ok := gvrFor(resourceType)

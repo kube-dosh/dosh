@@ -18,6 +18,8 @@ import (
 	authhttp "dosh/internal/modules/auth/http"
 	certificatesapp "dosh/internal/modules/certificates/app"
 	certificateshttp "dosh/internal/modules/certificates/http"
+	clusterconfigapp "dosh/internal/modules/clusterconfig/app"
+	clusterconfighttp "dosh/internal/modules/clusterconfig/http"
 	configurationapp "dosh/internal/modules/configuration/app"
 	configurationhttp "dosh/internal/modules/configuration/http"
 	eventsapp "dosh/internal/modules/events/app"
@@ -134,6 +136,7 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 	})
 
 	overviewService := overviewapp.New(kubeClient, cfg.ClusterName)
+	clusterConfigService := clusterconfigapp.New(kubeClient)
 	nodesService := nodesapp.New(kubeClient, authorizer, auditLogger)
 	workloadsService := workloadsapp.New(kubeClient, authorizer, auditLogger)
 	eventsService := eventsapp.New(kubeClient)
@@ -150,6 +153,7 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 		kube:          kubeClient,
 		auth:          authHandler,
 		overview:      overviewhttp.New(overviewService),
+		clusterConfig: clusterconfighttp.New(clusterConfigService),
 		nodes:         nodeshttp.New(nodesService),
 		workloads:     workloadshttp.New(workloadsService),
 		events:        eventshttp.New(eventsService),

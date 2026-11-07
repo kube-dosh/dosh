@@ -1,18 +1,20 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { Loader2, Network, Pencil, Plus, Trash2 } from "lucide-react";
+import { createColumnHelper } from "@tanstack/react-table";
+import { Loader2, Pencil, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/api/client";
-import type { ServiceSummary } from "@/api/types";
-import { ErrorState } from "@/components/feedback/states";
+import type { ServicePort, ServiceSummary } from "@/api/types";
+import { DataTable } from "@/components/data/data-table";
+import { EmptyState, ErrorState } from "@/components/feedback/states";
+import { ResourceActionsMenu, type ResourceAction } from "@/components/resources/resource-actions-menu";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
   AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useCapabilities } from "@/features/auth/use-session";
@@ -20,9 +22,16 @@ import { ServiceFormDialog } from "@/features/workloads/service-form-dialog";
 import { resourceCapabilities } from "@/lib/capabilities";
 import { formatAge } from "@/lib/utils";
 
+const serviceColumn = createColumnHelper<ServiceSummary>();
+
 function associatedService(service: ServiceSummary, workloadSelector: Record<string, string>): boolean {
   const entries = Object.entries(service.selector || {});
   return entries.length > 0 && entries.every(([key, value]) => workloadSelector[key] === value);
+}
+
+function formatPort(port: ServicePort): string {
+  const nodePort = port.nodePort ? ` · NodePort ${port.nodePort}` : "";
+  return `${port.port} → ${port.targetPort}/${port.protocol}${nodePort}`;
 }
 
 export function WorkloadServicesPanel({ namespace, workloadName, workloadSelector }: {
@@ -62,8 +71,35 @@ export function WorkloadServicesPanel({ namespace, workloadName, workloadSelecto
     onError: (error) => toast.error(error.message),
   });
 
+  const actionsFor = (service: ServiceSummary): ResourceAction[] => {
+    const actions: ResourceAction[] = [];
+    if (canUpdate) {
+      actions.push({
+        label: "编辑",
+        icon: <Pencil className="h-4 w-4" />,
+        onSelect: () => { setEditing(service); setFormOpen(true); },
+      });
+    }
+    if (canDelete) {
+      actions.push({
+        label: "删除",
+        icon: <Trash2 className="h-4 w-4" />,
+        onSelect: () => { setDeleting(service); setDeleteConfirm(""); },
+        destructive: true,
+        separatorBefore: actions.length > 0,
+      });
+    }
+    return actions;
+  };
+
   if (query.isError) return <ErrorState error={query.error} onRetry={() => void query.refetch()} />;
   const services = (query.data?.items ?? []).filter((service) => associatedService(service, workloadSelector));
+  const createDisabled = !Object.keys(workloadSelector).length;
+  const createButton = canCreate ? (
+    <Button size="sm" onClick={() => { setEditing(undefined); setFormOpen(true); }} disabled={createDisabled}>
+      <Plus className="h-4 w-4" />配置访问方式
+    </Button>
+  ) : undefined;
 
   return (
     <div className="space-y-4">
@@ -72,57 +108,50 @@ export function WorkloadServicesPanel({ namespace, workloadName, workloadSelecto
           <h2 className="text-base font-semibold">关联 Service</h2>
           <p className="mt-1 text-sm text-muted-foreground">Selector 与此工作负载匹配的访问入口，可直接创建、编辑和删除。</p>
         </div>
-        {canCreate ? (
-          <Button size="sm" onClick={() => { setEditing(undefined); setFormOpen(true); }} disabled={!Object.keys(workloadSelector).length}>
-            <Plus className="h-4 w-4" />配置访问方式
-          </Button>
-        ) : null}
+        {createButton}
       </div>
 
-      {query.isLoading ? (
-        <Card><CardContent><div className="flex items-center justify-center gap-2 py-12 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />正在加载 Service</div></CardContent></Card>
-      ) : services.length ? (
-        <div className="grid gap-4 xl:grid-cols-2">
-          {services.map((service) => (
-            <Card key={`${service.namespace}/${service.name}`} className="min-w-0">
-              <CardHeader className="gap-2">
-                <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
-                  <CardTitle className="flex min-w-0 items-center gap-2"><Network className="h-4 w-4 shrink-0 text-muted-foreground" /><Link to="/network/services/$namespace/$name" params={{ namespace: service.namespace, name: service.name }} search={{}} className="truncate text-primary hover:underline">{service.name}</Link></CardTitle>
-                  <div className="flex flex-wrap items-center gap-1.5"><Badge variant={service.headless ? "outline" : "secondary"}>{service.headless ? "Headless" : service.type}</Badge><Badge variant={service.endpointCount > 0 ? "default" : "outline"}>{service.endpointCount} 就绪 Endpoint</Badge></div>
+      <DataTable
+        columns={[
+          serviceColumn.accessor("name", { header: "名称", cell: (info) => <Link to="/network/services/$namespace/$name" params={{ namespace: info.row.original.namespace, name: info.getValue() }} search={{}} className="font-medium text-primary hover:underline">{info.getValue()}</Link> }),
+          serviceColumn.accessor("type", { header: "类型", cell: (info) => <Badge variant={info.row.original.headless ? "outline" : info.getValue() === "LoadBalancer" ? "default" : "secondary"}>{info.row.original.headless ? "Headless" : info.getValue()}</Badge> }),
+          serviceColumn.accessor("clusterIP", {
+            header: "访问地址",
+            cell: (info) => {
+              const service = info.row.original;
+              return (
+                <div className="space-y-1">
+                  <div className="font-mono text-xs">{service.headless ? "None（Headless）" : info.getValue() || "—"}</div>
+                  {service.externalIP ? <div className="break-all font-mono text-[11px] text-muted-foreground">外部 {service.externalIP}</div> : null}
                 </div>
-                <p className="text-xs text-muted-foreground">ClusterIP <span className="font-mono text-foreground">{service.headless ? "None（Headless）" : service.clusterIP || "—"}</span> · 创建于 {formatAge(service.createdAt)}</p>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="space-y-2">
-                  {service.ports.map((port) => (
-                    <div key={`${port.name}-${port.protocol}-${port.port}`} className="flex min-w-0 flex-wrap items-center justify-between gap-2 rounded-md border bg-muted/20 px-3 py-2 text-sm">
-                      <span className="font-medium">{port.name || "未命名"}</span>
-                      <span className="break-all font-mono text-xs text-muted-foreground">{port.port} → {port.targetPort}/{port.protocol}{port.nodePort ? ` · NodePort ${port.nodePort}` : ""}</span>
-                    </div>
-                  ))}
-                </div>
-                <div className="flex flex-wrap gap-1.5">
-                  {Object.entries(service.selector || {}).map(([key, value]) => <Badge key={key} variant="outline" className="max-w-full break-all font-mono text-[11px]">{key}={value}</Badge>)}
-                </div>
-                {canUpdate || canDelete ? (
-                  <div className="flex flex-wrap justify-end gap-2 border-t pt-3">
-                    {canUpdate ? <Button variant="outline" size="sm" onClick={() => { setEditing(service); setFormOpen(true); }}><Pencil className="h-4 w-4" />编辑</Button> : null}
-                    {canDelete ? <Button variant="outline" size="sm" onClick={() => { setDeleting(service); setDeleteConfirm(""); }}><Trash2 className="h-4 w-4" />删除</Button> : null}
-                  </div>
-                ) : null}
-              </CardContent>
-            </Card>
-          ))}
-        </div>
-      ) : (
-        <Card>
-          <CardContent className="flex flex-col items-center gap-3 px-6 py-12 text-center">
-            <Network className="h-7 w-7 text-muted-foreground" />
-            <div><p className="font-medium">尚未配置访问方式</p><p className="mt-1 text-sm text-muted-foreground">创建 Service 后，可通过 ClusterIP、Headless、NodePort 或 LoadBalancer 访问该工作负载。</p></div>
-            {canCreate ? <Button size="sm" onClick={() => { setEditing(undefined); setFormOpen(true); }} disabled={!Object.keys(workloadSelector).length}><Plus className="h-4 w-4" />配置访问方式</Button> : null}
-          </CardContent>
-        </Card>
-      )}
+              );
+            },
+          }),
+          serviceColumn.accessor("ports", {
+            header: "端口",
+            enableSorting: false,
+            size: 260,
+            cell: (info) => <div className="flex flex-wrap gap-1.5">{info.getValue().map((port: ServicePort) => <span key={`${port.name}-${port.protocol}-${port.port}`} className="rounded border bg-muted/30 px-1.5 py-0.5 font-mono text-[11px]">{formatPort(port)}</span>)}</div>,
+          }),
+          serviceColumn.accessor("endpointCount", {
+            header: "Endpoint",
+            size: 120,
+            cell: (info) => <Badge variant={info.getValue() > 0 ? "default" : "outline"}>{info.getValue()} 就绪</Badge>,
+          }),
+          serviceColumn.accessor("createdAt", { header: "年龄", size: 120, cell: (info) => formatAge(info.getValue()) }),
+          serviceColumn.display({ id: "actions", header: "操作", size: 56, cell: (info) => <ResourceActionsMenu resource={`Service ${info.row.original.namespace}/${info.row.original.name}`} actions={actionsFor(info.row.original)} /> }),
+        ]}
+        data={services}
+        loading={query.isLoading}
+        empty={(
+          <EmptyState
+            title="尚未配置访问方式"
+            description="创建 Service 后，可通过 ClusterIP、Headless、NodePort 或 LoadBalancer 访问该工作负载。"
+            action={createButton}
+            className="border-0 bg-transparent"
+          />
+        )}
+      />
 
       <ServiceFormDialog
         open={formOpen}

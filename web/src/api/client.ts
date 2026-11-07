@@ -2,6 +2,7 @@ import type {
   AuditRecord,
   AuthConfig,
   Capabilities,
+  ClusterConfiguration,
   ConfigMapDetail,
   ConfigMapCreateInput,
   ConfigMapSummary,
@@ -258,6 +259,10 @@ export const api = {
   },
   capabilities: (namespace?: string) => request<Capabilities>(`/api/v1/capabilities${query({ namespace })}`),
   overview: () => request<Overview>("/api/v1/overview"),
+  clusterConfiguration: async () => {
+    const configuration = await request<ClusterConfiguration>("/api/v1/cluster/config");
+    return { ...configuration, nodeCIDRs: list(configuration.nodeCIDRs), warnings: list(configuration.warnings) };
+  },
   auditEvents: (params?: ListParams) => request<ListResponse<AuditRecord>>(`/api/v1/audit-events${query(params)}`),
   nodes: (params?: ListParams) => request<ListResponse<NodeSummary>>(`/api/v1/nodes${query(params)}`),
   node: async (name: string) => normalizeNodeDetail(await request<NodeDetail>(`/api/v1/nodes/${encodeURIComponent(name)}`)),

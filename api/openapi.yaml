@@ -129,6 +129,18 @@ paths:
               schema: { $ref: "#/components/schemas/Overview" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "503": { $ref: "#/components/responses/DependencyUnavailable" }
+  /api/v1/cluster/config:
+    get:
+      tags: [cluster]
+      summary: Read non-secret cluster identity and network configuration
+      responses:
+        "200":
+          description: Cluster configuration
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ClusterConfiguration" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
   /api/v1/nodes:
     get:
       tags: [cluster]
@@ -1455,6 +1467,10 @@ paths:
     post:
       tags: [yaml]
       summary: Validate with server-side dry run, then server-side apply
+      description: >-
+        Supports one allow-listed YAML document per request. The backend checks whether
+        the target exists, then requires create for a new resource or update/patch for
+        an existing resource before running Server-Side Apply.
       security:
         - cookieAuth: []
           csrfToken: []
@@ -1469,7 +1485,7 @@ paths:
                 yaml:
                   type: string
                   minLength: 1
-                  description: Exactly one YAML document. Empty documents, multiple documents and duplicate keys are rejected before authorization or apply.
+                  description: Exactly one YAML document up to 1 MiB. Empty documents, multiple documents and duplicate keys are rejected before authorization or apply.
                 resourceVersion: { type: string }
                 dryRun: { type: boolean }
       responses:
@@ -1481,6 +1497,7 @@ paths:
         "400": { $ref: "#/components/responses/BadRequest" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "409": { $ref: "#/components/responses/Conflict" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
         "501": { $ref: "#/components/responses/NotSupported" }
 components:
   securitySchemes:
@@ -1761,6 +1778,36 @@ components:
           type: array
           items: { $ref: "#/components/schemas/AuditRecord" }
         meta: { $ref: "#/components/schemas/ListMeta" }
+    ClusterNodeCIDR:
+      type: object
+      required: [name, podCIDRs]
+      properties:
+        name: { type: string }
+        internalIP: { type: string }
+        podCIDRs:
+          type: array
+          items: { type: string }
+    ClusterConfiguration:
+      type: object
+      required: [name, version, nodeCIDRs]
+      properties:
+        name: { type: string }
+        version: { type: string }
+        platform: { type: string }
+        cni: { type: string }
+        controlPlaneEndpoint: { type: string }
+        podCIDR: { type: string }
+        serviceCIDR: { type: string }
+        dnsDomain: { type: string }
+        kubernetesServiceIP: { type: string }
+        dnsServiceIP: { type: string }
+        source: { type: string }
+        nodeCIDRs:
+          type: array
+          items: { $ref: "#/components/schemas/ClusterNodeCIDR" }
+        warnings:
+          type: array
+          items: { type: string }
     ClusterInfo:
       type: object
       required: [name, version, status, metricsAvailable]

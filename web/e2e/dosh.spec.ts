@@ -2,6 +2,7 @@ import { devices, expect, test, type Page, type Route } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
 import type {
   ListResponse,
+  ClusterConfiguration,
   IngressDetail,
   NodeDetail,
   NodeSummary,
@@ -285,6 +286,22 @@ const overview: Overview = {
   }],
 };
 
+const clusterConfiguration: ClusterConfiguration = {
+  name: "kubedo-lab",
+  version: "v1.36.5",
+  platform: "linux/amd64",
+  cni: "Cilium",
+  controlPlaneEndpoint: "192.168.122.50:16443",
+  podCIDR: "10.244.0.0/16",
+  serviceCIDR: "10.96.0.0/12",
+  dnsDomain: "cluster.local",
+  kubernetesServiceIP: "10.96.0.1",
+  dnsServiceIP: "10.96.0.10",
+  source: "kubeadm-config",
+  nodeCIDRs: [{ name: "worker-0001", internalIP: "192.168.122.200", podCIDRs: ["10.244.1.0/24"] }],
+  warnings: [],
+};
+
 const serverCertificate: ServerCertificate = {
   mode: "https",
   enabled: true,
@@ -368,6 +385,7 @@ async function installApiMocks(page: Page, options: { authenticated?: boolean; a
       return json(route, { code: "unauthorized", message: "authentication required" }, 401);
     }
     if (path === "/api/v1/overview") return json(route, options.overview ?? overview, options.overviewStatus ?? 200);
+    if (path === "/api/v1/cluster/config") return json(route, clusterConfiguration);
     if (path === "/api/v1/capabilities") return json(route, session.capabilities);
     if (path === "/api/v1/nodes") return json(route, list([{ ...nodeSummary, unschedulable: nodeSchedulingDisabled }]));
     if (path === "/api/v1/nodes/worker-0001") return json(route, currentNodeDetail());
@@ -549,6 +567,12 @@ async function installApiMocks(page: Page, options: { authenticated?: boolean; a
       name: "web-abcdef-12345",
       yaml: "apiVersion: v1\nkind: Pod\nmetadata:\n  name: web-abcdef-12345\n",
     });
+    if (path === "/api/v1/yaml/apply" && method === "POST") {
+      const body = request.postDataJSON() as { yaml: string };
+      const kind = body.yaml.match(/^kind:\s*(\S+)/m)?.[1] ?? "Deployment";
+      const name = body.yaml.match(/^  name:\s*(\S+)/m)?.[1] ?? "web";
+      return json(route, { kind, namespace: "default", name, yaml: body.yaml });
+    }
     if (path === "/api/v1/storageclasses") {
       const q = new URL(request.url()).searchParams.get("q") ?? "";
       return json(route, list([
@@ -796,6 +820,66 @@ test("节点列表可进入节点详情", async ({ page }) => {
   await yamlRequest;
   await expect(page).toHaveURL(/\?tab=yaml$/);
   await expect(page.getByText("apiVersion: v1", { exact: false })).toBeVisible();
+});
+
+test("集群配置展示网络规划与节点 Pod 网段", async ({ page }) => {
+  await installApiMocks(page);
+  await page.goto("/cluster/config");
+
+  await expect(page.getByRole("heading", { name: "集群配置" })).toBeVisible();
+  await expect(page.getByText("10.244.0.0/16", { exact: true })).toBeVisible();
+  await expect(page.getByText("10.96.0.0/12", { exact: true })).toBeVisible();
+  await expect(page.getByText("192.168.122.50:16443", { exact: true })).toBeVisible();
+  await expect(page.getByRole("link", { name: "worker-0001" })).toHaveAttribute("href", "/nodes/worker-0001");
+  await expectNoPageOverflow(page, "cluster-config");
+});
+
+test("YAML 创建支持 Dry Run 并应用资源", async ({ page }) => {
+  await installApiMocks(page);
+  await page.goto("/yaml/create");
+
+  await expect(page.getByRole("heading", { name: "YAML 创建" })).toBeVisible();
+  const dryRunRequest = page.waitForRequest((request) => {
+    if (new URL(request.url()).pathname !== "/api/v1/yaml/apply") return false;
+    return (request.postDataJSON() as { dryRun?: boolean }).dryRun === true;
+  });
+  await page.getByRole("button", { name: "Dry Run" }).click();
+  const dryRunPayload = (await dryRunRequest).postDataJSON() as { yaml: string; dryRun: boolean };
+  expect(dryRunPayload.dryRun).toBe(true);
+  expect(dryRunPayload.yaml).toContain("kind: Deployment");
+  await expect(page.getByRole("status", { name: "Dry Run 校验结果" })).toBeVisible();
+
+  const applyRequest = page.waitForRequest((request) => {
+    if (new URL(request.url()).pathname !== "/api/v1/yaml/apply") return false;
+    return (request.postDataJSON() as { dryRun?: boolean }).dryRun === false;
+  });
+  await page.getByRole("button", { name: "创建 / 应用" }).click();
+  await applyRequest;
+  await expect(page.getByRole("status", { name: "YAML 应用结果" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "查看工作负载" })).toHaveAttribute("href", "/workloads/deployment/default/web");
+});
+
+test("YAML 创建支持多个文档顺序 Dry Run 与应用", async ({ page }) => {
+  await installApiMocks(page);
+  const requests: Array<{ yaml: string; dryRun: boolean }> = [];
+  page.on("request", (request) => {
+    if (new URL(request.url()).pathname !== "/api/v1/yaml/apply") return;
+    requests.push(request.postDataJSON() as { yaml: string; dryRun: boolean });
+  });
+  await page.goto("/yaml/create");
+
+  await expect(page.getByRole("heading", { name: "YAML 创建" })).toBeVisible();
+  await page.getByRole("button", { name: "组合示例" }).click();
+  await expect(page.getByText("3 个有效文档", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Dry Run" }).click();
+  await expect.poll(() => requests.filter((request) => request.dryRun).length).toBe(3);
+  await expect(page.getByRole("status", { name: "Dry Run 校验结果" })).toContainText("3/3 成功");
+
+  await page.getByRole("button", { name: "创建 / 应用 3 个资源" }).click();
+  await expect.poll(() => requests.filter((request) => !request.dryRun).length).toBe(3);
+  await expect(page.getByRole("status", { name: "YAML 应用结果" })).toContainText("3/3 成功");
+  await page.getByRole("button", { name: "返回 YAML" }).first().click();
+  await expect(page.getByRole("dialog", { name: /ConfigMap default\/web-config/ })).toBeVisible();
 });
 
 test("节点详情确认后停止并恢复调度", async ({ page }) => {
@@ -1095,6 +1179,9 @@ test("工作负载访问方式可创建、编辑和删除关联 Service", async 
   await installApiMocks(page);
   await page.goto("/workloads/deployment/default/web?tab=services");
   await expect(page.getByRole("heading", { name: "关联 Service" })).toBeVisible();
+  await expect(page.getByRole("columnheader", { name: "类型" })).toBeVisible();
+  await expect(page.getByRole("columnheader", { name: "访问地址" })).toBeVisible();
+  await expect(page.getByRole("columnheader", { name: "Endpoint" })).toBeVisible();
 
   await page.getByRole("button", { name: "配置访问方式" }).click();
   const createDialog = page.getByRole("dialog", { name: "配置访问方式" });
@@ -1112,8 +1199,9 @@ test("工作负载访问方式可创建、编辑和删除关联 Service", async 
   await expect(page.getByText("Headless", { exact: true })).toBeVisible();
   await expect(page.getByRole("link", { name: "web-public", exact: true })).toBeVisible();
 
-  const webCard = page.locator(".rounded-lg.border.bg-card").filter({ has: page.getByRole("link", { name: "web", exact: true }) });
-  await webCard.getByRole("button", { name: "编辑" }).click();
+  const webRow = page.getByRole("row").filter({ has: page.getByRole("link", { name: "web", exact: true }) });
+  await webRow.getByRole("button", { name: "操作 Service default/web" }).click();
+  await page.getByRole("menuitem", { name: "编辑" }).click();
   const editDialog = page.getByRole("dialog", { name: "编辑 Service" });
   await expect(editDialog).toBeVisible();
   const updateRequest = page.waitForRequest((request) => request.method() === "PUT" && new URL(request.url()).pathname === "/api/v1/services/default/web");
@@ -1122,7 +1210,8 @@ test("工作负载访问方式可创建、编辑和删除关联 Service", async 
   expect(updated.headers()["x-csrf-token"]).toBe(csrfToken);
   expect(updated.postDataJSON()).toMatchObject({ resourceVersion: "42", selector: { app: "web" } });
 
-  await webCard.getByRole("button", { name: "删除" }).click();
+  await webRow.getByRole("button", { name: "操作 Service default/web" }).click();
+  await page.getByRole("menuitem", { name: "删除" }).click();
   const deleteDialog = page.getByRole("alertdialog", { name: /删除 Service web/ });
   await deleteDialog.getByLabel("Service 名称").fill("web");
   const deleteRequest = page.waitForRequest((request) => request.method() === "DELETE" && new URL(request.url()).pathname === "/api/v1/services/default/web");
@@ -1240,6 +1329,46 @@ test("集群事件长消息限制为两行并可查看全文", async ({ page }) 
   const dialog = page.getByRole("dialog", { name: "事件消息" });
   await expect(dialog).toBeVisible();
   await expect(dialog.getByText(message, { exact: true })).toBeVisible();
+});
+
+test("集群事件对象可跳转到资源详情并显示完整总数", async ({ page }) => {
+  await installApiMocks(page);
+  const events = [
+    {
+      uid: "event-deployment-link",
+      namespace: "default",
+      type: "Normal",
+      reason: "ScalingReplicaSet",
+      message: "Scaled deployment",
+      objectKind: "Deployment",
+      objectName: "web",
+      count: 1,
+      firstSeen: "2026-11-02T00:00:00Z",
+      lastSeen: "2026-11-02T00:01:00Z",
+    },
+    ...Array.from({ length: 11 }, (_, index) => ({
+      uid: `event-pod-link-${index}`,
+      namespace: "default",
+      type: "Normal",
+      reason: "Started",
+      message: `Started pod ${index}`,
+      objectKind: "Pod",
+      objectName: `web-event-${index}`,
+      count: 1,
+      firstSeen: "2026-11-02T00:00:00Z",
+      lastSeen: `2026-11-02T00:${10 + index}:00Z`,
+    })),
+  ];
+  await page.route("**/api/v1/events**", (route) => json(route, list(events)));
+  await page.goto("/events");
+
+  await expect(page.getByText("共 12 条事件")).toBeVisible();
+  const deployment = page.getByRole("link", { name: "Deployment/web", exact: true });
+  await expect(deployment).toHaveAttribute("href", "/workloads/deployment/default/web");
+  await expect(page.getByRole("link", { name: "Pod/web-event-10", exact: true })).toBeVisible();
+  await deployment.click();
+  await expect(page).toHaveURL(/\/workloads\/deployment\/default\/web$/);
+  await expect(page.getByRole("heading", { name: "web", exact: true })).toBeVisible();
 });
 
 test("Pod 日志可切换时间戳参数", async ({ page }) => {
@@ -1364,12 +1493,15 @@ test("移动端逐页布局无页面级横向溢出", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   const routes = [
     { path: "/", name: "overview" },
+    { path: "/cluster/config", name: "cluster-config" },
+    { path: "/yaml/create", name: "yaml-create" },
     { path: "/nodes", name: "nodes" },
     { path: "/nodes/worker-0001", name: "node-detail" },
     { path: "/nodes/worker-0001?tab=labels", name: "node-labels" },
     { path: "/nodes/worker-0001?tab=taints", name: "node-taints" },
     { path: "/workloads", name: "workloads" },
     { path: "/workloads/deployment/default/web", name: "workload-detail" },
+    { path: "/workloads/deployment/default/web?tab=services", name: "workload-services" },
     { path: "/workloads/deployment/default/web?tab=config", name: "workload-config" },
     { path: "/workloads/deployment/default/web?tab=logs", name: "workload-logs" },
     { path: "/workloads/deployment/default/web?tab=yaml", name: "workload-yaml" },
@@ -1466,6 +1598,7 @@ test("320px 窄屏关键页面无横向溢出", async ({ page }) => {
     { path: "/nodes/worker-0001?tab=labels", name: "node-labels" },
     { path: "/nodes/worker-0001?tab=taints", name: "node-taints" },
     { path: "/workloads/deployment/default/web", name: "workload-detail" },
+    { path: "/workloads/deployment/default/web?tab=services", name: "workload-services" },
     { path: "/workloads/deployment/default/web?tab=config", name: "workload-config" },
     { path: "/pods/default/web-abcdef-12345?tab=logs", name: "pod-logs" },
     { path: "/configuration?tab=certificate", name: "certificate" },
@@ -1501,6 +1634,7 @@ test("320px 大字体缩放时页面不产生横向溢出", async ({ page }) => 
     { path: "/", name: "overview" },
     { path: "/nodes", name: "nodes" },
     { path: "/workloads/deployment/default/web", name: "workload-detail" },
+    { path: "/workloads/deployment/default/web?tab=services", name: "workload-services" },
     { path: "/workloads/deployment/default/web?tab=config", name: "workload-config" },
     { path: "/pods/default/web-abcdef-12345?tab=logs", name: "pod-logs" },
     { path: "/configuration?tab=secrets", name: "secrets" },
@@ -1530,6 +1664,7 @@ test.describe("Android Chrome 视口", () => {
       { path: "/nodes", name: "nodes" },
       { path: "/nodes/worker-0001?tab=labels", name: "node-labels" },
       { path: "/workloads/deployment/default/web", name: "workload-detail" },
+      { path: "/workloads/deployment/default/web?tab=services", name: "workload-services" },
       { path: "/workloads/deployment/default/web?tab=config", name: "workload-config" },
       { path: "/configuration?tab=secrets", name: "secrets" },
       { path: "/events", name: "events" },

@@ -171,6 +171,32 @@ type ClusterInfo struct {
 	MetricsAvailable bool   `json:"metricsAvailable"`
 }
 
+// ClusterConfiguration is the non-secret, read-only view of cluster networking
+// and control-plane settings used by the cluster configuration page and API.
+type ClusterConfiguration struct {
+	Name                 string            `json:"name"`
+	Version              string            `json:"version"`
+	Platform             string            `json:"platform,omitempty"`
+	CNI                  string            `json:"cni,omitempty"`
+	ControlPlaneEndpoint string            `json:"controlPlaneEndpoint,omitempty"`
+	PodCIDR              string            `json:"podCIDR,omitempty"`
+	ServiceCIDR          string            `json:"serviceCIDR,omitempty"`
+	DNSDomain            string            `json:"dnsDomain,omitempty"`
+	KubernetesServiceIP  string            `json:"kubernetesServiceIP,omitempty"`
+	DNSServiceIP         string            `json:"dnsServiceIP,omitempty"`
+	Source               string            `json:"source,omitempty"`
+	NodeCIDRs            []ClusterNodeCIDR `json:"nodeCIDRs"`
+	Warnings             []string          `json:"warnings,omitempty"`
+}
+
+// ClusterNodeCIDR exposes the Pod CIDR allocation of a node without coupling
+// the cluster configuration page to the full node inventory.
+type ClusterNodeCIDR struct {
+	Name       string   `json:"name"`
+	InternalIP string   `json:"internalIP,omitempty"`
+	PodCIDRs   []string `json:"podCIDRs"`
+}
+
 type OverviewCounts struct {
 	Nodes         int `json:"nodes"`
 	ReadyNodes    int `json:"readyNodes"`

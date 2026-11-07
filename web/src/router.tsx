@@ -19,6 +19,8 @@ import { NamespacesPage } from "@/features/namespaces/namespaces-page";
 import { NamespaceDetailPage } from "@/features/namespaces/namespace-detail-page";
 import { EventsPage } from "@/features/events/events-page";
 import { AuditPage } from "@/features/audit/audit-page";
+import { ClusterConfigurationPage } from "@/features/cluster/cluster-configuration-page";
+import { YAMLCreatePage } from "@/features/yaml/yaml-create-page";
 import { Button } from "@/components/ui/button";
 import { Link } from "@tanstack/react-router";
 import { parseListSearch } from "@/lib/list-search";
@@ -57,6 +59,8 @@ const appRoute = createRoute({
 });
 
 const indexRoute = createRoute({ getParentRoute: () => appRoute, path: "/", component: OverviewPage });
+const clusterConfigurationRoute = createRoute({ getParentRoute: () => appRoute, path: "/cluster/config", component: ClusterConfigurationPage });
+const yamlCreateRoute = createRoute({ getParentRoute: () => appRoute, path: "/yaml/create", component: YAMLCreatePage });
 const nodesRoute = createRoute({ getParentRoute: () => appRoute, path: "/nodes", component: NodesPage, validateSearch: parseListSearch });
 const nodeDetailRoute = createRoute({ getParentRoute: () => appRoute, path: "/nodes/$name", component: NodeDetailPage, validateSearch: parseListSearch });
 const workloadsRoute = createRoute({ getParentRoute: () => appRoute, path: "/workloads", component: WorkloadsPage, validateSearch: parseListSearch });
@@ -80,6 +84,8 @@ export const routeTree = rootRoute.addChildren([
   loginRoute,
   appRoute.addChildren([
     indexRoute,
+    clusterConfigurationRoute,
+    yamlCreateRoute,
     nodesRoute,
     nodeDetailRoute,
     workloadsRoute,
@@ -95,7 +101,7 @@ export const routeTree = rootRoute.addChildren([
     persistentVolumeDetailRoute,
     persistentVolumeClaimDetailRoute,
     namespacesRoute,
-  namespaceDetailRoute,
+    namespaceDetailRoute,
     eventsRoute,
     auditRoute,
   ]),

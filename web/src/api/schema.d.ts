@@ -302,6 +302,44 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/cluster/config": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read non-secret cluster identity and network configuration */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Cluster configuration */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ClusterConfiguration"];
+                    };
+                };
+                401: components["responses"]["Unauthorized"];
+                503: components["responses"]["DependencyUnavailable"];
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/nodes": {
         parameters: {
             query?: never;
@@ -2797,7 +2835,10 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Validate with server-side dry run, then server-side apply */
+        /**
+         * Validate with server-side dry run, then server-side apply
+         * @description Supports one allow-listed YAML document per request. The backend checks whether the target exists, then requires create for a new resource or update/patch for an existing resource before running Server-Side Apply.
+         */
         post: {
             parameters: {
                 query?: never;
@@ -2808,7 +2849,7 @@ export interface paths {
             requestBody: {
                 content: {
                     "application/json": {
-                        /** @description Exactly one YAML document. Empty documents, multiple documents and duplicate keys are rejected before authorization or apply. */
+                        /** @description Exactly one YAML document up to 1 MiB. Empty documents, multiple documents and duplicate keys are rejected before authorization or apply. */
                         yaml: string;
                         resourceVersion?: string;
                         dryRun: boolean;
@@ -2829,6 +2870,7 @@ export interface paths {
                 403: components["responses"]["Forbidden"];
                 409: components["responses"]["Conflict"];
                 501: components["responses"]["NotSupported"];
+                503: components["responses"]["DependencyUnavailable"];
             };
         };
         delete?: never;
@@ -2980,6 +3022,26 @@ export interface components {
         AuditRecordList: {
             items: components["schemas"]["AuditRecord"][];
             meta: components["schemas"]["ListMeta"];
+        };
+        ClusterNodeCIDR: {
+            name: string;
+            internalIP?: string;
+            podCIDRs: string[];
+        };
+        ClusterConfiguration: {
+            name: string;
+            version: string;
+            platform?: string;
+            cni?: string;
+            controlPlaneEndpoint?: string;
+            podCIDR?: string;
+            serviceCIDR?: string;
+            dnsDomain?: string;
+            kubernetesServiceIP?: string;
+            dnsServiceIP?: string;
+            source?: string;
+            nodeCIDRs: components["schemas"]["ClusterNodeCIDR"][];
+            warnings?: string[];
         };
         ClusterInfo: {
             name: string;

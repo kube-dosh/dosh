@@ -13,6 +13,7 @@ import { PageHeader } from "@/components/layout/page-header";
 import { SearchInput } from "@/components/layout/search-input";
 import { Button } from "@/components/ui/button";
 import { eventMessageColumn } from "@/features/events/event-columns";
+import { EventObjectLink } from "@/features/events/event-object-link";
 import { mergeEventRows, useEventStream } from "@/features/events/use-event-stream";
 import { formatDate } from "@/lib/utils";
 
@@ -28,11 +29,12 @@ export function EventsPage() {
   };
   const [live, setLive] = useState(false);
   const stream = useEventStream(namespace, live);
-  const query = useQuery({ queryKey: ["events", namespace, q], queryFn: () => api.events({ namespace, q }), refetchInterval: live ? false : 20_000 });
+  const query = useQuery({ queryKey: ["events", namespace, q], queryFn: () => api.events({ namespace, q, pageSize: 200, sort: "lastSeen", order: "desc" }), refetchInterval: live ? false : 20_000 });
 
   const items = useMemo(() => {
     return mergeEventRows(query.data?.items ?? [], stream.events, 500);
   }, [query.data?.items, stream.events]);
+  const total = Math.max(query.data?.meta.total ?? 0, items.length);
   if (query.isError) return <ErrorState error={query.error} onRetry={() => void query.refetch()} />;
   return (
     <>
@@ -42,14 +44,14 @@ export function EventsPage() {
         description="查看 Kubernetes Events，识别调度失败、镜像拉取、探针和资源异常。"
         actions={<Button variant={live ? "default" : "outline"} onClick={() => setLive((value) => !value)}><Radio className={live ? "h-4 w-4 animate-pulse" : "h-4 w-4"} />{live ? "停止实时流" : "开启实时流"}</Button>}
       />
-      <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center"><SearchInput value={q} onChange={(value) => updateSearch({ q: value || undefined })} placeholder="搜索原因、对象或消息" /><NamespaceSelect value={namespace} onChange={(value) => updateSearch({ namespace: value || undefined })} /><span className="text-xs text-muted-foreground sm:ml-auto">{items.length} 条事件</span></div>
+      <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center"><SearchInput value={q} onChange={(value) => updateSearch({ q: value || undefined })} placeholder="搜索原因、对象或消息" /><NamespaceSelect value={namespace} onChange={(value) => updateSearch({ namespace: value || undefined })} /><span className="text-xs text-muted-foreground sm:ml-auto">{total > items.length ? `共 ${total} 条，已加载最近 ${items.length} 条` : `共 ${items.length} 条事件`}</span></div>
       {stream.error ? <div className="mb-3 flex items-center gap-2 rounded-md border border-warning/35 bg-warning/10 px-3 py-2 text-xs text-warning"><TriangleAlert className="h-4 w-4" />{stream.error}<Button variant="outline" size="sm" className="ml-auto h-7" onClick={stream.reconnect}><RotateCw className="h-3.5 w-3.5" />立即重连</Button></div> : null}
       {live && stream.status === "connected" ? <div className="mb-3 flex items-center gap-2 rounded-md border border-success/30 bg-success/10 px-3 py-2 text-xs text-success"><span className="h-1.5 w-1.5 animate-pulse rounded-full bg-success" />实时事件流已连接，新事件按 UID 去重后插入列表顶部。</div> : null}
       <DataTable
         columns={[
           column.accessor("type", { header: "类型", cell: (info) => <StatusBadge status={info.getValue()} /> }),
           column.accessor("namespace", { header: "命名空间" }),
-          column.accessor("objectKind", { header: "对象", cell: (info) => <span className="font-mono text-xs">{info.getValue()}/{info.row.original.objectName}</span> }),
+          column.accessor("objectKind", { header: "对象", cell: (info) => <EventObjectLink event={info.row.original} /> }),
           column.accessor("reason", { header: "原因", cell: (info) => <span className="font-medium">{info.getValue()}</span> }),
           eventMessageColumn,
           column.accessor("count", { header: "次数", cell: (info) => <span className="tabular-nums">{info.getValue()}</span> }),
@@ -59,7 +61,7 @@ export function EventsPage() {
         loading={query.isLoading}
         stickyFirstColumn={false}
         empty={<div className="flex flex-col items-center gap-2"><Activity className="h-6 w-6" /><span>没有匹配的事件</span></div>}
-        pageSize={30}
+        pageSize={50}
       />
     </>
   );

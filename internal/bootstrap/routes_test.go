@@ -17,6 +17,7 @@ import (
 	authhttp "dosh/internal/modules/auth/http"
 	certificatesapp "dosh/internal/modules/certificates/app"
 	certificateshttp "dosh/internal/modules/certificates/http"
+	clusterconfighttp "dosh/internal/modules/clusterconfig/http"
 	configurationhttp "dosh/internal/modules/configuration/http"
 	eventshttp "dosh/internal/modules/events/http"
 	networkhttp "dosh/internal/modules/network/http"
@@ -97,6 +98,7 @@ func TestModuleRoutesAreScoped(t *testing.T) {
 			authhttp.MountProtected(r, deps.auth)
 		}, prefixes: []string{"/auth", "/session", "/capabilities"}},
 		{name: "overview", mount: deps.overview.Mount, prefixes: []string{"/overview"}},
+		{name: "cluster-config", mount: deps.clusterConfig.Mount, prefixes: []string{"/cluster"}},
 		{name: "nodes", mount: deps.nodes.Mount, prefixes: []string{"/nodes", "/namespaces"}},
 		{name: "workloads", mount: deps.workloads.Mount, prefixes: []string{"/workloads", "/pods"}},
 		{name: "events", mount: deps.events.Mount, prefixes: []string{"/events"}},
@@ -152,6 +154,7 @@ func newRouteTestDependencies(t *testing.T) routerDependencies {
 		cfg:           config.Config{},
 		auth:          authHandler,
 		overview:      overviewhttp.New(nil),
+		clusterConfig: clusterconfighttp.New(nil),
 		nodes:         nodeshttp.New(nil),
 		workloads:     workloadshttp.New(nil),
 		events:        eventshttp.New(nil),
