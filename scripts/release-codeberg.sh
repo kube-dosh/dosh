@@ -240,7 +240,8 @@ EOF
     existing=$(curl -fsS -H "$auth_header" "${api}/repos/${repo}/releases/${release_id}/assets" \
       | jq -r --arg name "$name" '[.[] | select(.name == $name)][0].id // empty')
     if [[ -n "$existing" ]]; then
-      curl -fsS -X DELETE -H "$auth_header" "${api}/repos/${repo}/releases/assets/${existing}" >/dev/null
+      curl -fsS -X DELETE -H "$auth_header" \
+        "${api}/repos/${repo}/releases/${release_id}/assets/${existing}" >/dev/null
     fi
     curl -fsS -X POST \
       -H "$auth_header" \
@@ -258,6 +259,7 @@ EOF
   upload_asset "$chart_path"
 
   upload_status=$(curl -sS -o /tmp/dosh-helm-upload.out -w '%{http_code}' \
+    -X POST \
     --user "${registry_user}:${token}" \
     --upload-file "$chart_path" \
     "${server}/api/packages/${owner}/helm/api/charts")
