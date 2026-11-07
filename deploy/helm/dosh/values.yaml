@@ -4,7 +4,7 @@ replicaCount: 2
 
 image:
   repository: 192.168.122.10:5000/dosh/dosh
-  tag: "0.1.5"
+  tag: "0.1.6"
   # 生产发布优先设置 sha256 digest；设置后忽略 tag。
   digest: ""
   pullPolicy: IfNotPresent

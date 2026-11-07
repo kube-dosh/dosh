@@ -119,7 +119,7 @@ kubectl -n dosh create secret tls dosh-tls \
 helm upgrade --install dosh ./deploy/helm/dosh \
   --namespace dosh \
   --set image.repository=registry.example.com/dosh/dosh \
-  --set image.tag=0.1.5 \
+  --set image.tag=0.1.6 \
   --set runtime.clusterName=my-cluster
 ```
 
@@ -129,7 +129,7 @@ HTTP 试用部署可以使用完整命令：
 helm upgrade --install dosh ./deploy/helm/dosh \
   --namespace dosh \
   --set image.repository=registry.example.com/dosh/dosh \
-  --set image.tag=0.1.5 \
+  --set image.tag=0.1.6 \
   --set runtime.clusterName=my-cluster \
   --set tls.enabled=false \
   --set auth.cookieSecure=false
@@ -172,14 +172,14 @@ kubectl -n dosh create token dosh-admin --duration=1h
 make web-install
 make build
 
-make image TAG=0.1.5
-make push  TAG=0.1.5
+make image TAG=0.1.6
+make push  TAG=0.1.6
 ```
 
-默认镜像名为 `dosh/dosh:0.1.5`。需要推送到其他仓库时，通过 `IMAGE` 覆盖：
+默认镜像名为 `dosh/dosh:0.1.6`。需要推送到其他仓库时，通过 `IMAGE` 覆盖：
 
 ```bash
-IMAGE=registry.example.com/dosh/dosh make image TAG=0.1.5
+IMAGE=registry.example.com/dosh/dosh make image TAG=0.1.6
 ```
 
 `make build` 会先构建前端并生成 `web/dist`，随后将静态资源嵌入 `bin/dosh`。运行镜像只包含该二进制。

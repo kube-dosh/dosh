@@ -8,7 +8,7 @@ TRIVY_TIMEOUT ?= 20m
 TRIVY_GODEBUG ?= http2client=0
 TRIVY_DB_FLAGS ?=
 IMAGE_TAR ?= /tmp/dosh-image-$(TAG).tar
-VERSION ?= 0.1.5
+VERSION ?= 0.1.6
 COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
 BUILD_DATE ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 GATE_FILE ?= deploy/release/commercial-gates.json

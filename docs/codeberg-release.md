@@ -4,24 +4,39 @@ Dosh 的正式发布由 [`.forgejo/workflows/release.yml`](../.forgejo/workflows
 `v*` 标签或从已有标签手动触发后，流水线会构建并发布 Linux 双架构产物、多架构容器镜像和 Helm
 Chart。
 
+流水线使用 Codeberg 官方托管 Forgejo Actions runner，不依赖带有 `docker` 标签的自建 runner，
+也不需要在 runner 中暴露 Docker daemon。Codeberg 单个托管任务最长运行 10 分钟，因此发布流程拆成
+四个短任务：
+
+| 任务 | Runner | 职责 |
+|---|---|---|
+| `web` | `codeberg-medium` | 安装前端依赖并构建 `web/dist` |
+| `artifacts` | `codeberg-medium` | 交叉编译 Linux `amd64`/`aarch64`，生成压缩包、校验和与 Helm Chart |
+| `image` | `codeberg-medium` | 使用 `ko` 构建并推送 `linux/amd64`、`linux/arm64` 多架构镜像 |
+| `publish` | `codeberg-small` | 创建/更新 Release、上传附件并发布 Helm Chart |
+
+任务之间通过 Actions Artifacts 传递构建产物，所有任务都有明确的 10 分钟或 5 分钟超时。若将来构建
+规模超过 Codeberg 托管 runner 的限额，应在仓库中注册自建 runner，并将工作流中的 `runs-on` 改为
+对应标签。
+
 ## 触发方式
 
 推送标签：
 
 ```bash
-git tag -a v0.1.5 -m "Dosh v0.1.5"
-git push origin v0.1.5
+git tag -a v0.1.6 -m "Dosh v0.1.6"
+git push origin v0.1.6
 ```
 
-也可以在 Codeberg 的 **Actions → Release → Run workflow** 中填写已有标签，例如 `v0.1.5`。手动
+也可以在 Codeberg 的 **Actions → Release → Run workflow** 中填写已有标签，例如 `v0.1.6`。手动
 运行必须选择对应标签作为工作流 ref，脚本会校验输入标签与当前 checkout 的标签一致。
 
 ## 运行前置条件
 
 1. 在仓库 **Settings → Units → Overview** 中启用 Actions。
-2. 注册带有 `docker` 标签的 Forgejo Runner。工作流使用
-   `golang:1.26.10-bookworm` 作为任务容器，不需要 runner 暴露 Docker daemon。
-3. Runner 需要能够访问 `nodejs.org`、`get.helm.sh`、GitHub Releases、`gcr.io` 和
+2. 项目需要满足 Codeberg 托管 runner 的使用条件；工作流使用 `codeberg-medium` 和
+   `codeberg-small`，不要再填写 `docker`、`ubuntu-latest` 等 Codeberg 未托管的标签。
+3. Runner 需要能够访问 Node.js、Go 官方下载站、`get.helm.sh`、GitHub Releases、`gcr.io` 和
    `codeberg.org`。
 4. 发布版本的 `Makefile VERSION`、`Chart.yaml appVersion` 和 Git 标签必须一致。Chart 自身的
    `version` 可以独立递增。
@@ -31,6 +46,10 @@ git push origin v0.1.5
 
 - 仓库写权限；
 - Package 写权限。
+
+使用 `CODEBERG_TOKEN` 时，Registry 登录用户名默认取触发工作流的账号。如果 Token 属于其他账号，
+请设置仓库 Variable `CODEBERG_REGISTRY_USER`，否则容器镜像和 Helm Chart 推送会因用户名与 Token
+不匹配而失败。
 
 ## 发布产物
 
@@ -60,7 +79,7 @@ git push origin v0.1.5
 ### 容器镜像
 
 ```bash
-docker pull codeberg.org/aido/dosh:0.1.5
+docker pull codeberg.org/aido/dosh:0.1.6
 ```
 
 ### Helm Chart
@@ -68,20 +87,20 @@ docker pull codeberg.org/aido/dosh:0.1.5
 ```bash
 helm repo add dosh https://codeberg.org/api/packages/aido/helm
 helm repo update
-helm install dosh dosh/dosh --version 0.1.7
+helm install dosh dosh/dosh --version 0.1.8
 ```
 
-也可以在 Release 页面下载 `dosh-0.1.7.tgz` 后直接安装：
+也可以在 Release 页面下载 `dosh-0.1.8.tgz` 后直接安装：
 
 ```bash
-helm install dosh ./dosh-0.1.7.tgz
+helm install dosh ./dosh-0.1.8.tgz
 ```
 
 ### 二进制
 
 ```bash
 sha256sum -c SHA256SUMS
-tar -xzf dosh_0.1.5_linux_amd64.tar.gz
+tar -xzf dosh_0.1.6_linux_amd64.tar.gz
 ./dosh
 ```
 
@@ -92,10 +111,22 @@ tar -xzf dosh_0.1.5_linux_amd64.tar.gz
 不连接 Codeberg Registry 时，可只生成并检查发布产物：
 
 ```bash
-RELEASE_TAG=v0.1.5 SKIP_PUBLISH=1 bash scripts/release-codeberg.sh
+RELEASE_TAG=v0.1.6 SKIP_PUBLISH=1 bash scripts/release-codeberg.sh
 ```
 
 产物位于 `dist/`。该模式不会登录 Registry、创建 Release 或上传 Helm Chart。
+
+也可以单独运行某个发布阶段，便于复现 CI 行为：
+
+```bash
+# 需要先准备 web/dist
+RELEASE_TAG=v0.1.6 RELEASE_STAGE=artifacts bash scripts/release-codeberg.sh
+RELEASE_TAG=v0.1.6 RELEASE_STAGE=image bash scripts/release-codeberg.sh
+RELEASE_TAG=v0.1.6 RELEASE_STAGE=publish bash scripts/release-codeberg.sh
+```
+
+`RELEASE_STAGE=image` 需要 `RELEASE_TOKEN`（或 `FORGEJO_TOKEN`/`GITHUB_TOKEN`）以及 `ko`；
+`RELEASE_STAGE=publish` 需要前两个阶段生成的 `dist/` 内容。
 
 完整发布脚本还会执行：
 
@@ -118,9 +149,9 @@ RELEASE_TAG=v0.1.5 SKIP_PUBLISH=1 bash scripts/release-codeberg.sh
 ## 验证发布结果
 
 ```bash
-curl -fsS https://codeberg.org/api/v1/repos/aido/dosh/releases/tags/v0.1.5
+curl -fsS https://codeberg.org/api/v1/repos/aido/dosh/releases/tags/v0.1.6
 
-docker buildx imagetools inspect codeberg.org/aido/dosh:0.1.5
+docker buildx imagetools inspect codeberg.org/aido/dosh:0.1.6
 
 helm repo add dosh https://codeberg.org/api/packages/aido/helm
 helm repo update

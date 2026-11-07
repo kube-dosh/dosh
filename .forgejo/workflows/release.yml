@@ -15,90 +15,158 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  NODE_VERSION: "24.18.0"
   HELM_VERSION: "3.22.0"
   KO_VERSION: "0.19.1"
 
 jobs:
-  release:
-    runs-on: docker
-    timeout-minutes: 90
-    container:
-      image: golang:1.26.10-bookworm
+  web:
+    name: Build web assets
+    runs-on: codeberg-medium
+    timeout-minutes: 10
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: https://code.forgejo.org/actions/checkout@v7
         with:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Install release toolchain
+      - name: Set up Node.js
+        uses: https://code.forgejo.org/actions/setup-node@v7
+        with:
+          node-version: "24.18.0"
+
+      - name: Build frontend
         run: |
           set -Eeuo pipefail
+          npm --prefix web ci --no-audit --no-fund
+          npm --prefix web run build
 
-          apt-get update
-          apt-get install -y --no-install-recommends \
-            ca-certificates \
-            curl \
-            git \
-            jq \
-            ripgrep \
-            xz-utils
+      - name: Upload web assets
+        uses: https://code.forgejo.org/actions/upload-artifact@v7
+        with:
+          name: web-dist
+          path: web/dist
+          if-no-files-found: error
+          retention-days: 2
 
-          case "$(uname -m)" in
-            x86_64)
-              node_arch=x64
-              helm_arch=amd64
-              ko_arch=x86_64
-              ;;
-            aarch64|arm64)
-              node_arch=arm64
-              helm_arch=arm64
-              ko_arch=arm64
-              ;;
-            *)
-              printf 'unsupported runner architecture: %s\n' "$(uname -m)" >&2
-              exit 1
-              ;;
-          esac
+  artifacts:
+    name: Build Linux artifacts
+    needs: web
+    runs-on: codeberg-medium
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: https://code.forgejo.org/actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
 
-          workdir=$(mktemp -d)
-          trap 'rm -rf "$workdir"' EXIT
+      - name: Set up Go
+        uses: https://code.forgejo.org/actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: false
 
-          node_archive="node-v${NODE_VERSION}-linux-${node_arch}.tar.xz"
-          curl -fsSL --retry 3 -o "${workdir}/${node_archive}" \
-            "https://nodejs.org/dist/v${NODE_VERSION}/${node_archive}"
-          curl -fsSL --retry 3 -o "${workdir}/SHASUMS256.txt" \
-            "https://nodejs.org/dist/v${NODE_VERSION}/SHASUMS256.txt"
-          (cd "$workdir" && grep " ${node_archive}$" SHASUMS256.txt | sha256sum -c -)
-          tar -xJf "${workdir}/${node_archive}" -C /usr/local --strip-components=1
+      - name: Download web assets
+        uses: https://code.forgejo.org/actions/download-artifact@v8
+        with:
+          name: web-dist
+          path: web/dist
 
-          helm_archive="helm-v${HELM_VERSION}-linux-${helm_arch}.tar.gz"
-          curl -fsSL --retry 3 -o "${workdir}/${helm_archive}" \
-            "https://get.helm.sh/${helm_archive}"
-          curl -fsSL --retry 3 -o "${workdir}/${helm_archive}.sha256sum" \
-            "https://get.helm.sh/${helm_archive}.sha256sum"
-          (cd "$workdir" && sha256sum -c "${helm_archive}.sha256sum")
-          tar -xzf "${workdir}/${helm_archive}" -C "$workdir"
-          install -m 0755 "${workdir}/linux-${helm_arch}/helm" /usr/local/bin/helm
-
-          ko_archive="ko_${KO_VERSION}_Linux_${ko_arch}.tar.gz"
-          curl -fsSL --retry 3 -o "${workdir}/${ko_archive}" \
-            "https://github.com/ko-build/ko/releases/download/v${KO_VERSION}/${ko_archive}"
-          curl -fsSL --retry 3 -o "${workdir}/ko-checksums.txt" \
-            "https://github.com/ko-build/ko/releases/download/v${KO_VERSION}/checksums.txt"
-          (cd "$workdir" && grep " ${ko_archive}$" ko-checksums.txt | sha256sum -c -)
-          tar -xzf "${workdir}/${ko_archive}" -C "$workdir"
-          install -m 0755 "${workdir}/ko" /usr/local/bin/ko
-
-          go version
-          node --version
-          npm --version
-          helm version --short
-          ko version
-
-      - name: Build and publish release
+      - name: Install Helm
         env:
+          HELM_VERSION: ${{ env.HELM_VERSION }}
+        run: bash scripts/install-codeberg-release-tool.sh helm
+
+      - name: Build binaries and Helm chart
+        env:
+          RELEASE_STAGE: artifacts
+          RELEASE_TAG_INPUT: ${{ inputs.tag }}
+        run: PATH="${HOME}/.local/bin:${PATH}" bash scripts/release-codeberg.sh
+
+      - name: Upload release artifacts
+        uses: https://code.forgejo.org/actions/upload-artifact@v7
+        with:
+          name: release-artifacts
+          path: dist
+          if-no-files-found: error
+          retention-days: 2
+
+  image:
+    name: Publish multi-arch image
+    needs: web
+    runs-on: codeberg-medium
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: https://code.forgejo.org/actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: https://code.forgejo.org/actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Download web assets
+        uses: https://code.forgejo.org/actions/download-artifact@v8
+        with:
+          name: web-dist
+          path: web/dist
+
+      - name: Install ko
+        env:
+          KO_VERSION: ${{ env.KO_VERSION }}
+        run: bash scripts/install-codeberg-release-tool.sh ko
+
+      - name: Build and push image
+        env:
+          RELEASE_STAGE: image
           RELEASE_TAG_INPUT: ${{ inputs.tag }}
           RELEASE_TOKEN: ${{ secrets.CODEBERG_TOKEN }}
+          CODEBERG_REGISTRY_USER: ${{ vars.CODEBERG_REGISTRY_USER }}
+        run: PATH="${HOME}/.local/bin:${PATH}" bash scripts/release-codeberg.sh
+
+      - name: Upload image metadata
+        uses: https://code.forgejo.org/actions/upload-artifact@v7
+        with:
+          name: container-image
+          path: dist/container-image.txt
+          if-no-files-found: error
+          retention-days: 2
+
+  publish:
+    name: Publish Codeberg release
+    needs:
+      - artifacts
+      - image
+    runs-on: codeberg-small
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: https://code.forgejo.org/actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Download release artifacts
+        uses: https://code.forgejo.org/actions/download-artifact@v8
+        with:
+          name: release-artifacts
+          path: dist
+
+      - name: Download image metadata
+        uses: https://code.forgejo.org/actions/download-artifact@v8
+        with:
+          name: container-image
+          path: dist
+
+      - name: Publish release and Helm chart
+        env:
+          RELEASE_STAGE: publish
+          RELEASE_TAG_INPUT: ${{ inputs.tag }}
+          RELEASE_TOKEN: ${{ secrets.CODEBERG_TOKEN }}
+          CODEBERG_REGISTRY_USER: ${{ vars.CODEBERG_REGISTRY_USER }}
         run: bash scripts/release-codeberg.sh

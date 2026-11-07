@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Dosh Kubernetes Operations API
-  version: 0.1.5
+  version: 0.1.6
   description: |
     Same-origin API consumed by the Dosh embedded React console. Session cookies
     are HttpOnly and every mutating request must include the session CSRF token.
