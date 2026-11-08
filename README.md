@@ -172,14 +172,14 @@ kubectl -n dosh create token dosh-admin --duration=1h
 make web-install
 make build
 
-make image TAG=0.1.7
-make push  TAG=0.1.7
+make image TAG=0.1.8
+make push  TAG=0.1.8
 ```
 
-默认镜像名为 `ghcr.io/kube-dosh/dosh:0.1.7`。需要推送到其他仓库时，通过 `IMAGE` 覆盖：
+默认镜像名为 `ghcr.io/kube-dosh/dosh:0.1.8`。需要推送到其他仓库时，通过 `IMAGE` 覆盖：
 
 ```bash
-IMAGE=registry.example.com/dosh/dosh make image TAG=0.1.7
+IMAGE=registry.example.com/dosh/dosh make image TAG=0.1.8
 ```
 
 `make build` 会先构建前端并生成 `web/dist`，随后将静态资源嵌入 `bin/dosh`。运行镜像只包含该二进制。
@@ -191,7 +191,7 @@ IMAGE=registry.example.com/dosh/dosh make image TAG=0.1.7
 | 配置项 | 默认值 | 说明 |
 |---|---|---|
 | `replicaCount` | `2` | Dosh 副本数 |
-| `image.repository` / `image.tag` | `ghcr.io/kube-dosh/dosh` / `0.1.7` | 公共镜像；生产建议固定 digest |
+| `image.repository` / `image.tag` | `ghcr.io/kube-dosh/dosh` / `0.1.8` | 公共镜像；生产建议固定 digest |
 | `service.type` / `service.port` | `NodePort` / `32626` | 对外服务类型和容器端口 |
 | `service.nodePort` | `32626` | NodePort 端口 |
 | `tls.enabled` | `true` | 是否启用 HTTPS |

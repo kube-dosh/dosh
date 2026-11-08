@@ -4,7 +4,7 @@ replicaCount: 2
 
 image:
   repository: ghcr.io/kube-dosh/dosh
-  tag: "0.1.7"
+  tag: "0.1.8"
   # 生产发布优先设置 sha256 digest；设置后忽略 tag。
   digest: ""
   pullPolicy: IfNotPresent

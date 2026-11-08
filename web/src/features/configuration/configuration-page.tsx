@@ -82,6 +82,9 @@ export function ConfigurationPage() {
   const openSecretEdit = async (item: SecretSummary) => {
     try { setEditingSecret(await api.revealSecret(item.namespace, item.name)); setSecretFormOpen(true); } catch (error) { toast.error(error instanceof Error ? error.message : "加载 Secret 失败"); }
   };
+  const openSecretData = (item: SecretSummary) => {
+    if (capabilities?.revealSecrets) reveal.mutate(item);
+  };
   const configMapActions = (item: ConfigMapSummary): ResourceAction[] => [
     { label: "查看数据", icon: <Eye className="h-4 w-4" />, onSelect: () => setConfigMap(item) },
     { label: "编辑 ConfigMap", icon: <Pencil className="h-4 w-4" />, onSelect: () => void openConfigMapEdit(item), disabled: !configMapCaps.update },
@@ -89,7 +92,7 @@ export function ConfigurationPage() {
     { label: "删除 ConfigMap", icon: <Trash2 className="h-4 w-4" />, onSelect: () => setDeletingConfigMap(item), destructive: true, disabled: !configMapCaps.delete, separatorBefore: true },
   ];
   const secretActions = (item: SecretSummary): ResourceAction[] => [
-    { label: "查看数据", icon: <Eye className="h-4 w-4" />, onSelect: () => reveal.mutate(item), disabled: !capabilities?.revealSecrets },
+    { label: "查看数据", icon: <Eye className="h-4 w-4" />, onSelect: () => openSecretData(item), disabled: !capabilities?.revealSecrets },
     { label: "编辑 Secret", icon: <Pencil className="h-4 w-4" />, onSelect: () => void openSecretEdit(item), disabled: !secretCaps.update || !capabilities?.revealSecrets },
     { label: "查看 YAML", icon: <FileCode2 className="h-4 w-4" />, onSelect: () => setYamlTarget({ type: "secret", namespace: item.namespace, name: item.name }) },
     { label: "删除 Secret", icon: <Trash2 className="h-4 w-4" />, onSelect: () => setDeletingSecret(item), destructive: true, disabled: !secretCaps.delete, separatorBefore: true },
@@ -131,7 +134,7 @@ export function ConfigurationPage() {
         <TabsContent value="secrets">
           <DataTable
             columns={[
-              secretColumn.accessor("name", { header: "名称", cell: (info) => <span className="font-medium">{info.getValue()}</span> }),
+              secretColumn.accessor("name", { header: "名称", cell: (info) => <ActionTooltip content={!capabilities?.revealSecrets ? "当前身份没有查看 Secret 数据的权限" : undefined}><button type="button" className="font-medium text-primary hover:underline disabled:pointer-events-none disabled:text-muted-foreground disabled:no-underline" onClick={(event) => { event.stopPropagation(); openSecretData(info.row.original); }} disabled={!capabilities?.revealSecrets}>{info.getValue()}</button></ActionTooltip> }),
               secretColumn.accessor("namespace", { header: "命名空间" }),
               secretColumn.accessor("type", { header: "类型", cell: (info) => <span className="font-mono text-xs">{info.getValue()}</span> }),
               secretColumn.accessor("createdAt", { header: "年龄", cell: (info) => formatAge(info.getValue()) }),
@@ -140,6 +143,7 @@ export function ConfigurationPage() {
             data={secrets.data?.items ?? []}
             loading={secrets.isLoading}
             empty={<div className="flex flex-col items-center gap-2"><LockKeyhole className="h-6 w-6" /><span>没有 Secret</span></div>}
+            onRowClick={capabilities?.revealSecrets ? openSecretData : undefined}
           />
         </TabsContent>
         <TabsContent value="certificate"><ServerCertificatePanel /></TabsContent>

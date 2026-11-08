@@ -436,8 +436,7 @@ describe("dosh application", () => {
     expect(await screen.findByRole("cell", { name: "app-secret" })).toBeInTheDocument();
     expect(screen.queryByText("token · 10 B")).not.toBeInTheDocument();
     expect(screen.queryByText("blob · 3 B")).not.toBeInTheDocument();
-    openResourceMenu("Secret default/app-secret");
-    fireEvent.click(await screen.findByRole("menuitem", { name: "查看数据" }));
+    fireEvent.click(await screen.findByRole("button", { name: "app-secret" }));
 
     expect(await screen.findByLabelText("token 值")).toHaveTextContent("token=abc");
     expect(screen.getByLabelText("token 值")).not.toHaveTextContent(encodedToken);
