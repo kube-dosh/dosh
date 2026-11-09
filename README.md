@@ -7,7 +7,7 @@
 
   <p>One binary for cluster overview, workloads, Pod logs, networking, configuration, storage, events, YAML creation, and audit trails.</p>
 
-  <p><a href="#quick-start">Quick start</a> · <a href="#features">Features</a> · <a href="#deployment-and-configuration">Deployment</a> · <a href="#authentication-and-permissions">Authentication</a> · <a href="#local-development">Development</a> · <a href="docs/operations-runbook.md">Runbook</a></p>
+  <p><a href="#quick-start">Quick start</a> · <a href="#screenshots">Screenshots</a> · <a href="#features">Features</a> · <a href="#deployment-and-configuration">Deployment</a> · <a href="#authentication-and-permissions">Authentication</a> · <a href="#local-development">Development</a> · <a href="docs/operations-runbook.md">Runbook</a></p>
 
   <p><sub><strong>English</strong> · <a href="README.zh-CN.md">简体中文</a></sub></p>
 </div>
@@ -26,6 +26,20 @@ Dosh does not replace Kubernetes or bypass it. Authentication, authorization, an
 - **Guarded by default** — write operations pass through RBAC, CSRF protection, resource-version checks, and auditing. Global read-only mode, dangerous-action confirmation, and YAML dry runs are built in.
 - **HTTP and HTTPS** — the same binary supports both modes. TLS certificates can be mounted read-only from a Secret and reloaded without restarting Pods.
 - **Mobile ready** — tables, search, dialogs, and detail views are responsive enough for checking cluster health and handling alerts from a phone.
+
+## Screenshots
+
+<p align="center">
+  <img src="docs/images/readme/overview.png" alt="Dosh cluster overview" />
+</p>
+
+| Workloads | Cluster events |
+|---|---|
+| ![Workloads](docs/images/readme/workloads.png) | ![Cluster events](docs/images/readme/events.png) |
+
+![YAML creation](docs/images/readme/yaml-create.png)
+
+> Screenshots are captured from a live console. The current UI is Chinese-first while the product documentation is available in English and Simplified Chinese.
 
 ## Features
 

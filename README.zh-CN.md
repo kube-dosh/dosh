@@ -7,7 +7,7 @@
 
   <p>一个二进制，提供集群总览、工作负载、Pod 日志、网络、配置、存储、事件、YAML 创建与审计能力。</p>
 
-  <p><a href="#快速开始">快速开始</a> · <a href="#功能一览">功能一览</a> · <a href="#部署与配置">部署与配置</a> · <a href="#认证与权限">认证与权限</a> · <a href="#本地开发">本地开发</a> · <a href="docs/operations-runbook.md">运维手册</a></p>
+  <p><a href="#快速开始">快速开始</a> · <a href="#产品截图">产品截图</a> · <a href="#功能一览">功能一览</a> · <a href="#部署与配置">部署与配置</a> · <a href="#认证与权限">认证与权限</a> · <a href="#本地开发">本地开发</a> · <a href="docs/operations-runbook.md">运维手册</a></p>
 
   <p><sub><a href="README.md">English</a> · <strong>简体中文</strong></sub></p>
 </div>
@@ -26,6 +26,20 @@ Dosh 不替代 Kubernetes，也不绕过 Kubernetes。所有身份、权限和�
 - **安全可控**：写操作经过 RBAC、CSRF、资源版本锁和审计；支持全局只读模式、危险操作确认和 YAML Dry Run。
 - **HTTP/HTTPS 一体**：同一个二进制支持两种传输模式；HTTPS 证书可从 Secret 只读挂载并热加载。
 - **移动端可用**：列表、搜索、弹窗和详情页均针对窄屏做了适配，可直接在手机上查看集群状态和处理告警。
+
+## 产品截图
+
+<p align="center">
+  <img src="docs/images/readme/overview.png" alt="Dosh 集群总览" />
+</p>
+
+| 工作负载 | 集群事件 |
+|---|---|
+| ![工作负载](docs/images/readme/workloads.png) | ![集群事件](docs/images/readme/events.png) |
+
+![YAML 创建](docs/images/readme/yaml-create.png)
+
+> 截图来自真实控制台，展示当前的中文界面。
 
 ## 功能一览
 

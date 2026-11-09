@@ -17,8 +17,10 @@
     "playwright.performance.config.ts",
     "playwright.oidc.config.ts",
     "playwright.local.config.ts",
+    "playwright.screenshots.config.ts",
     "e2e/**/*.ts",
     "e2e-oidc/**/*.ts",
-    "e2e-local/**/*.ts"
+    "e2e-local/**/*.ts",
+    "e2e-screenshots/**/*.ts"
   ]
 }

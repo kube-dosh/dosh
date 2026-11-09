@@ -33,7 +33,7 @@ grep -Fq -- 'DOSH_PLAYWRIGHT_ALLOW_WEBKIT' "$RUNNER" || fail "WebKit must requir
 grep -Fq -- 'refusing to run WebKit by default' "$RUNNER" || fail "WebKit default guard is missing"
 grep -Fq -- '--ipc=host' "$ROOT/web/package.json" "$ROOT/scripts/e2e-oidc-browser.sh" "$ROOT/.github/workflows/ci.yml" 2>/dev/null &&
   fail "host IPC must not be shared with Playwright containers"
-for config in playwright.config.ts playwright.oidc.config.ts playwright.local.config.ts playwright.performance.config.ts; do
+for config in playwright.config.ts playwright.oidc.config.ts playwright.local.config.ts playwright.performance.config.ts playwright.screenshots.config.ts; do
   grep -Fq -- 'workers: 1' "$ROOT/web/$config" || fail "$config workers must be 1"
   grep -Fq -- 'retries: 0' "$ROOT/web/$config" || fail "$config retries must be 0"
 done
@@ -44,7 +44,7 @@ for config in playwright.config.ts playwright.oidc.config.ts playwright.local.co
 done
 grep -Fq -- 'refusing to run WebKit directly on the host' "$ROOT/scripts/e2e-oidc-browser.sh" ||
   fail "OIDC browser script lacks a direct-host WebKit guard"
-for script in e2e e2e:chromium e2e:firefox e2e:webkit e2e:container e2e:oidc e2e:oidc:chromium e2e:local e2e:performance; do
+for script in e2e e2e:chromium e2e:firefox e2e:webkit e2e:container e2e:oidc e2e:oidc:chromium e2e:local screenshots:readme e2e:performance; do
   node -e 'const scripts=require(process.argv[1]).scripts; const name=process.argv[2]; const command=scripts[name] ?? ""; if (!command.includes("run-playwright-container.sh") || command.includes("npx playwright")) process.exit(1)' \
     "$ROOT/web/package.json" "$script" || fail "npm script $script bypasses the isolated Playwright runner"
 done

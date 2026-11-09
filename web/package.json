@@ -22,6 +22,7 @@
     "e2e:oidc": "DOSH_PLAYWRIGHT_CONFIG=playwright.oidc.config.ts DOSH_PLAYWRIGHT_HOST_NETWORK=1 bash ../scripts/run-playwright-container.sh",
     "e2e:oidc:chromium": "DOSH_PLAYWRIGHT_CONFIG=playwright.oidc.config.ts DOSH_PLAYWRIGHT_HOST_NETWORK=1 bash ../scripts/run-playwright-container.sh --project=chromium",
     "e2e:local": "DOSH_PLAYWRIGHT_CONFIG=playwright.local.config.ts DOSH_PLAYWRIGHT_HOST_NETWORK=1 bash ../scripts/run-playwright-container.sh",
+    "screenshots:readme": "DOSH_PLAYWRIGHT_CONFIG=playwright.screenshots.config.ts DOSH_PLAYWRIGHT_HOST_NETWORK=1 bash ../scripts/run-playwright-container.sh --project=chromium",
     "e2e:performance": "DOSH_PLAYWRIGHT_CONFIG=playwright.performance.config.ts bash ../scripts/run-playwright-container.sh --project=chromium-production",
     "e2e:typecheck": "tsc -p tsconfig.e2e.json --pretty false",
     "preview": "vite preview",
