@@ -15,6 +15,7 @@ const (
 	minimumPageSize = 1
 	maximumPageSize = 200
 	maxScanChunks   = 50
+	overviewChunk   = 500
 )
 
 type cursorPayload struct {
@@ -179,4 +180,72 @@ func listPageWithFinalize[TIn any, TOut any](
 		Truncated:  truncated,
 		Warnings:   warnings,
 	}, nil
+}
+
+// scanChunks walks a Kubernetes collection in bounded chunks. It intentionally
+// exposes only one chunk at a time so callers that compute aggregates do not
+// need to keep the full collection in memory.
+func scanChunks[T any](
+	ctx context.Context,
+	fetch func(metav1.ListOptions) ([]T, metav1.ListMeta, error),
+	visit func([]T) error,
+) error {
+	token := ""
+	for chunks := 0; ; chunks++ {
+		if chunks >= 10000 {
+			return fmt.Errorf("%w: collection scan exceeded safety limit", domain.ErrUnavailable)
+		}
+		items, meta, err := fetch(metav1.ListOptions{Limit: overviewChunk, Continue: token})
+		if err != nil {
+			return err
+		}
+		if len(items) > 0 {
+			if err := visit(items); err != nil {
+				return err
+			}
+		}
+		if meta.Continue == "" {
+			return nil
+		}
+		if meta.Continue == token {
+			return fmt.Errorf("%w: collection scan returned a repeated cursor", domain.ErrUnavailable)
+		}
+		token = meta.Continue
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+	}
+}
+
+func countCollection[T any](
+	ctx context.Context,
+	fetch func(metav1.ListOptions) ([]T, metav1.ListMeta, error),
+) (int, error) {
+	items, meta, err := fetch(metav1.ListOptions{Limit: 1})
+	if err != nil {
+		return 0, err
+	}
+	if meta.RemainingItemCount != nil {
+		return len(items) + int(*meta.RemainingItemCount), nil
+	}
+	total := len(items)
+	token := meta.Continue
+	for chunks := 0; token != ""; chunks++ {
+		if chunks >= 10000 {
+			return 0, fmt.Errorf("%w: collection count exceeded safety limit", domain.ErrUnavailable)
+		}
+		chunk, next, fetchErr := fetch(metav1.ListOptions{Limit: overviewChunk, Continue: token})
+		if fetchErr != nil {
+			return 0, fetchErr
+		}
+		total += len(chunk)
+		if next.Continue == token {
+			return 0, fmt.Errorf("%w: collection count returned a repeated cursor", domain.ErrUnavailable)
+		}
+		token = next.Continue
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return 0, ctxErr
+		}
+	}
+	return total, nil
 }

@@ -166,4 +166,22 @@ describe("DataTable", () => {
 
     expect(screen.getByText("已加载 1 条 · 第 3 页 · 还有更多")).toBeInTheDocument();
   });
+
+  it("discloses that sorting a server-paginated table is page-local", () => {
+    const columns = [
+      column.accessor("name", { header: "名称" }),
+      column.accessor("status", { header: "状态" }),
+    ];
+
+    render(<DataTable
+      columns={columns}
+      data={[row]}
+      pagination={{ page: 1, pageSize: 20, total: 45, totalKnown: true, hasMore: true }}
+    />);
+
+    fireEvent.click(screen.getByRole("button", { name: "名称" }));
+
+    expect(screen.getByText("当前排序仅作用于本页；切换分页后会按服务端顺序展示。")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "名称" })).toHaveAttribute("title", "仅对当前页排序");
+  });
 });

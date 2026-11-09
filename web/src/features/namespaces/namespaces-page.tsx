@@ -16,7 +16,7 @@ import { Button } from "@/components/ui/button";
 import { useCapabilities } from "@/features/auth/use-session";
 import { NamespaceDeleteDialog } from "@/features/namespaces/namespace-delete-dialog";
 import { NamespaceFormDialog } from "@/features/namespaces/namespace-form-dialog";
-import { cursorPaginationProps, useCursorPagination } from "@/hooks/use-cursor-pagination";
+import { cursorPaginationProps, retryListQuery, useCursorPagination } from "@/hooks/use-cursor-pagination";
 import { resourceCapabilities } from "@/lib/capabilities";
 import { formatAge } from "@/lib/utils";
 
@@ -40,7 +40,7 @@ export function NamespacesPage() {
     queryKey: ["namespaces", q, pager.page, pager.cursor],
     queryFn: () => api.namespaces({ q, page: pager.page, pageSize: pager.pageSize, cursor: pager.cursor }),
   });
-  if (query.isError) return <ErrorState error={query.error} onRetry={() => void query.refetch()} />;
+  if (query.isError) return <ErrorState error={query.error} onRetry={() => retryListQuery(pager, query.error, query.refetch)} />;
   const actions = (item: NamespaceItem): ResourceAction[] => {
     const protectedNamespace = item.name === "default" || item.name.startsWith("kube-");
     return [

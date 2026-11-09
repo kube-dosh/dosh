@@ -15,7 +15,7 @@ import { Button } from "@/components/ui/button";
 import { eventMessageColumn } from "@/features/events/event-columns";
 import { EventObjectLink } from "@/features/events/event-object-link";
 import { mergeEventRows, useEventStream } from "@/features/events/use-event-stream";
-import { cursorPaginationProps, useCursorPagination } from "@/hooks/use-cursor-pagination";
+import { cursorPaginationProps, retryListQuery, useCursorPagination } from "@/hooks/use-cursor-pagination";
 import { formatDate } from "@/lib/utils";
 
 const column = createColumnHelper<EventItem>();
@@ -42,13 +42,13 @@ export function EventsPage() {
     return mergeEventRows(query.data?.items ?? [], stream.events, 500);
   }, [pager.page, query.data?.items, stream.events]);
   const total = query.data?.meta.totalKnown ? Math.max(query.data.meta.total, items.length) : items.length;
-  if (query.isError) return <ErrorState error={query.error} onRetry={() => void query.refetch()} />;
+  if (query.isError) return <ErrorState error={query.error} onRetry={() => retryListQuery(pager, query.error, query.refetch)} />;
   return (
     <>
       <PageHeader
         title="集群事件"
         breadcrumb="可观测性 / 事件"
-        description="查看 Kubernetes Events，识别调度失败、镜像拉取、探针和资源异常。"
+        description="查看 Kubernetes Events，识别调度失败、镜像拉取、探针和资源异常；列表最多展示最近 500 条事件。"
         actions={<Button variant={live ? "default" : "outline"} onClick={() => setLive((value) => !value)}><Radio className={live ? "h-4 w-4 animate-pulse" : "h-4 w-4"} />{live ? "停止实时流" : "开启实时流"}</Button>}
       />
       <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center"><SearchInput value={q} onChange={(value) => updateSearch({ q: value || undefined })} placeholder="搜索原因、对象或消息" /><NamespaceSelect value={namespace} onChange={(value) => updateSearch({ namespace: value || undefined })} /><span className="text-xs text-muted-foreground sm:ml-auto">{total > items.length ? `共 ${total} 条，已加载最近 ${items.length} 条` : `共 ${items.length} 条事件`}</span></div>

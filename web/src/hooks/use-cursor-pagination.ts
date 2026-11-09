@@ -1,4 +1,5 @@
 import { useCallback, useState } from "react";
+import { ApiError } from "@/api/client";
 import type { ListMeta } from "@/api/types";
 import type { ServerPagination } from "@/components/data/data-table";
 
@@ -68,4 +69,12 @@ export function cursorPaginationProps(pager: CursorPagination, meta: ListMeta | 
     onNext: () => pager.next(meta?.nextCursor),
     warnings: meta?.warnings,
   };
+}
+
+export function retryListQuery(pager: CursorPagination, error: unknown, refetch: () => unknown): void {
+  if (error instanceof ApiError && error.code === "stale_cursor") {
+    pager.reset();
+    return;
+  }
+  void refetch();
 }

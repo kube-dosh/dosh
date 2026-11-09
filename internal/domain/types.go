@@ -228,6 +228,22 @@ type Overview struct {
 	Warnings []string        `json:"warnings,omitempty"`
 }
 
+// NodeOverview is the bounded aggregation consumed by the cluster overview.
+// It deliberately excludes per-node detail so the repository can stream large
+// collections without materializing them in memory.
+type NodeOverview struct {
+	Total    int             `json:"total"`
+	Ready    int             `json:"ready"`
+	Capacity ClusterCapacity `json:"capacity"`
+}
+
+// PodOverview is the bounded aggregation consumed by the cluster overview.
+type PodOverview struct {
+	Total     int `json:"total"`
+	Running   int `json:"running"`
+	Unhealthy int `json:"unhealthy"`
+}
+
 type NodeSummary struct {
 	Name                string    `json:"name"`
 	Status              string    `json:"status"`

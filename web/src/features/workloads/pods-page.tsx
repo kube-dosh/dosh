@@ -15,7 +15,7 @@ import { DeleteResourceDialog } from "@/components/resources/delete-resource-dia
 import { ResourceActionsMenu, type ResourceAction } from "@/components/resources/resource-actions-menu";
 import { YamlDialog } from "@/components/resources/yaml-dialog";
 import { useCapabilities } from "@/features/auth/use-session";
-import { cursorPaginationProps, useCursorPagination } from "@/hooks/use-cursor-pagination";
+import { cursorPaginationProps, retryListQuery, useCursorPagination } from "@/hooks/use-cursor-pagination";
 import { resourceCapabilities } from "@/lib/capabilities";
 import { formatAge, formatCPU, formatMemory } from "@/lib/utils";
 
@@ -40,7 +40,7 @@ export function PodsPage() {
     refetchInterval: 15_000,
   });
   const metricsAvailable = query.data?.items.some((item) => item.hasMetrics) ?? false;
-  if (query.isError) return <ErrorState error={query.error} onRetry={() => void query.refetch()} />;
+  if (query.isError) return <ErrorState error={query.error} onRetry={() => retryListQuery(pager, query.error, query.refetch)} />;
   const actions = (pod: PodSummary): ResourceAction[] => [
     { label: "查看详情", icon: <Eye className="h-4 w-4" />, onSelect: () => void navigate({ to: "/pods/$namespace/$name", params: { namespace: pod.namespace, name: pod.name } }) },
     { label: "查看日志", icon: <ScrollText className="h-4 w-4" />, onSelect: () => void navigate({ to: "/pods/$namespace/$name", params: { namespace: pod.namespace, name: pod.name }, search: { tab: "logs" } }) },

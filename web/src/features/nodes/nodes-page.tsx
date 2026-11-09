@@ -16,7 +16,7 @@ import { ResourceActionsMenu, type ResourceAction } from "@/components/resources
 import { YamlDialog } from "@/components/resources/yaml-dialog";
 import { Badge } from "@/components/ui/badge";
 import { useCapabilities } from "@/features/auth/use-session";
-import { cursorPaginationProps, useCursorPagination } from "@/hooks/use-cursor-pagination";
+import { cursorPaginationProps, retryListQuery, useCursorPagination } from "@/hooks/use-cursor-pagination";
 import { formatAge, formatCPU, formatMemory } from "@/lib/utils";
 
 const column = createColumnHelper<NodeSummary>();
@@ -38,7 +38,7 @@ export function NodesPage() {
     onSuccess: async (_, node) => { toast.success(`${node.name} 已${node.unschedulable ? "恢复调度" : "停止调度"}`); await query.refetch(); },
     onError: (error) => toast.error(error.message),
   });
-  if (query.isError) return <ErrorState error={query.error} onRetry={() => void query.refetch()} />;
+  if (query.isError) return <ErrorState error={query.error} onRetry={() => retryListQuery(pager, query.error, query.refetch)} />;
   const actions = (node: NodeSummary): ResourceAction[] => [
     { label: "查看详情", icon: <Eye className="h-4 w-4" />, onSelect: () => void navigate({ to: "/nodes/$name", params: { name: node.name } }) },
     { label: "标签与污点", icon: <Settings2 className="h-4 w-4" />, onSelect: () => void navigate({ to: "/nodes/$name", params: { name: node.name } }) },

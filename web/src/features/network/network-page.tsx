@@ -22,7 +22,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useCapabilities } from "@/features/auth/use-session";
 import { IngressFormDialog } from "@/features/network/ingress-form-dialog";
 import { ServiceFormDialog } from "@/features/workloads/service-form-dialog";
-import { cursorPaginationProps, useCursorPagination } from "@/hooks/use-cursor-pagination";
+import { cursorPaginationProps, retryListQuery, useCursorPagination } from "@/hooks/use-cursor-pagination";
 import { resourceCapabilities } from "@/lib/capabilities";
 import { formatAge } from "@/lib/utils";
 
@@ -113,7 +113,7 @@ export function NetworkPage() {
       <Tabs value={tab} onValueChange={(value) => updateSearch({ tab: value === "services" ? undefined : value })}>
         <TabsList><TabsTrigger value="services">Service ({services.data?.meta.totalKnown ? services.data.meta.total : services.data?.items.length ?? 0})</TabsTrigger><TabsTrigger value="ingresses">Ingress ({ingresses.data?.meta.totalKnown ? ingresses.data.meta.total : ingresses.data?.items.length ?? 0})</TabsTrigger></TabsList>
         <TabsContent value="services">
-          {services.isError ? <ErrorState error={services.error} onRetry={() => void services.refetch()} /> : <DataTable
+          {services.isError ? <ErrorState error={services.error} onRetry={() => retryListQuery(servicePager, services.error, services.refetch)} /> : <DataTable
             columns={[
               serviceColumn.accessor("name", { header: "名称", cell: (info) => <Link to="/network/services/$namespace/$name" params={{ namespace: info.row.original.namespace, name: info.getValue() }} className="font-medium text-primary hover:underline">{info.getValue()}</Link> }),
               serviceColumn.accessor("namespace", { header: "命名空间" }),
@@ -133,7 +133,7 @@ export function NetworkPage() {
           />}
         </TabsContent>
         <TabsContent value="ingresses">
-          {ingressClasses.isError ? <ErrorState error={ingressClasses.error} onRetry={() => void ingressClasses.refetch()} /> : ingresses.isError ? <ErrorState error={ingresses.error} onRetry={() => void ingresses.refetch()} /> : ingressClasses.isLoading ? <DataTable columns={[]} data={[]} loading empty="正在加载 IngressClass" /> : noIngressClasses ? (
+          {ingressClasses.isError ? <ErrorState error={ingressClasses.error} onRetry={() => void ingressClasses.refetch()} /> : ingresses.isError ? <ErrorState error={ingresses.error} onRetry={() => retryListQuery(ingressPager, ingresses.error, ingresses.refetch)} /> : ingressClasses.isLoading ? <DataTable columns={[]} data={[]} loading empty="正在加载 IngressClass" /> : noIngressClasses ? (
             <EmptyState title="未安装 Ingress Controller" description="当前集群没有 IngressClass。请先安装并注册 Ingress Controller；Dosh 仍可通过 NodePort 32626 访问。" />
           ) : !ingresses.isLoading && !ingresses.data?.items.length ? (
             <EmptyState title="没有 Ingress 资源" description={`已检测到 IngressClass：${detectedClasses}。创建 Ingress 后，路由规则会显示在此页面。`} />

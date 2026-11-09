@@ -21,7 +21,7 @@ import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useCapabilities } from "@/features/auth/use-session";
 import { PersistentVolumeClaimFormDialog } from "@/features/storage/persistent-volume-claim-form-dialog";
-import { cursorPaginationProps, useCursorPagination } from "@/hooks/use-cursor-pagination";
+import { cursorPaginationProps, retryListQuery, useCursorPagination } from "@/hooks/use-cursor-pagination";
 import { resourceCapabilities } from "@/lib/capabilities";
 import { formatAge, formatMemory } from "@/lib/utils";
 
@@ -98,7 +98,7 @@ export function StoragePage() {
       <Tabs value={tab} onValueChange={(value) => updateSearch({ tab: value === "classes" ? undefined : value })}>
         <TabsList><TabsTrigger value="classes">StorageClass ({classes.data?.meta.totalKnown ? classes.data.meta.total : classes.data?.items.length ?? 0})</TabsTrigger><TabsTrigger value="volumes">PV ({volumes.data?.meta.totalKnown ? volumes.data.meta.total : volumes.data?.items.length ?? 0})</TabsTrigger><TabsTrigger value="claims">PVC ({claims.data?.meta.totalKnown ? claims.data.meta.total : claims.data?.items.length ?? 0})</TabsTrigger></TabsList>
         <TabsContent value="classes">
-          {classes.isError ? <ErrorState error={classes.error} onRetry={() => void classes.refetch()} /> : noClasses ? <EmptyState title="没有 StorageClass" description="当前集群未安装动态存储供应器。需要持久卷时请先安装 CSI Driver 并创建 StorageClass。" /> : (
+          {classes.isError ? <ErrorState error={classes.error} onRetry={() => retryListQuery(classPager, classes.error, classes.refetch)} /> : noClasses ? <EmptyState title="没有 StorageClass" description="当前集群未安装动态存储供应器。需要持久卷时请先安装 CSI Driver 并创建 StorageClass。" /> : (
             <DataTable columns={[
               classColumn.accessor("name", { header: "名称", cell: (info) => <Link to="/storage/classes/$name" params={{ name: info.getValue() }} search={{}} className="font-medium text-primary underline underline-offset-2">{info.getValue()}</Link> }),
               classColumn.accessor("provisioner", { header: "Provisioner", cell: (info) => <span className="font-mono text-xs">{info.getValue()}</span> }),
@@ -111,7 +111,7 @@ export function StoragePage() {
           )}
         </TabsContent>
         <TabsContent value="volumes">
-          {volumes.isError ? <ErrorState error={volumes.error} onRetry={() => void volumes.refetch()} /> : !volumes.isLoading && !volumes.data?.items.length ? <EmptyState title="没有 PersistentVolume" description="当前集群没有静态或动态创建的 PV。" /> : (
+          {volumes.isError ? <ErrorState error={volumes.error} onRetry={() => retryListQuery(volumePager, volumes.error, volumes.refetch)} /> : !volumes.isLoading && !volumes.data?.items.length ? <EmptyState title="没有 PersistentVolume" description="当前集群没有静态或动态创建的 PV。" /> : (
             <DataTable columns={[
               pvColumn.accessor("name", { header: "名称", cell: (info) => <Link to="/storage/volumes/$name" params={{ name: info.getValue() }} search={{}} className="font-medium text-primary underline underline-offset-2">{info.getValue()}</Link> }),
               pvColumn.accessor("status", { header: "状态", cell: (info) => <StatusBadge status={info.getValue()} /> }),
@@ -130,7 +130,7 @@ export function StoragePage() {
           )}
         </TabsContent>
         <TabsContent value="claims">
-          {claims.isError ? <ErrorState error={claims.error} onRetry={() => void claims.refetch()} /> : !claims.isLoading && !claims.data?.items.length ? <EmptyState title="没有 PersistentVolumeClaim" description="当前筛选条件下没有 PVC。没有 StorageClass 时，动态卷申请会保持 Pending。" /> : (
+          {claims.isError ? <ErrorState error={claims.error} onRetry={() => retryListQuery(claimPager, claims.error, claims.refetch)} /> : !claims.isLoading && !claims.data?.items.length ? <EmptyState title="没有 PersistentVolumeClaim" description="当前筛选条件下没有 PVC。没有 StorageClass 时，动态卷申请会保持 Pending。" /> : (
             <DataTable columns={[
               pvcColumn.accessor("name", { header: "名称", cell: (info) => <Link to="/storage/claims/$namespace/$name" params={{ namespace: info.row.original.namespace, name: info.getValue() }} search={{}} className="font-medium text-primary underline underline-offset-2">{info.getValue()}</Link> }),
               pvcColumn.accessor("namespace", { header: "命名空间" }),

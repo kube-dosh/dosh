@@ -15,10 +15,10 @@ type Repository interface {
 	Version(ctx context.Context) (string, error)
 	MetricsAvailable(ctx context.Context) bool
 	DetectCNI(ctx context.Context) string
-	ListNodes(ctx context.Context, query domain.ListQuery) ([]domain.NodeSummary, error)
-	ListPods(ctx context.Context, query domain.ListQuery) ([]domain.PodSummary, error)
-	ListWorkloads(ctx context.Context, query domain.ListQuery) ([]domain.WorkloadSummary, error)
-	ListNamespaces(ctx context.Context, query domain.ListQuery) ([]domain.Namespace, error)
+	NodeOverview(ctx context.Context) (domain.NodeOverview, error)
+	PodOverview(ctx context.Context) (domain.PodOverview, error)
+	CountWorkloads(ctx context.Context) (int, error)
+	CountNamespaces(ctx context.Context) (int, error)
 	ListEvents(ctx context.Context, query domain.ListQuery) ([]domain.Event, error)
 }
 
@@ -34,10 +34,10 @@ func New(repository Repository, clusterName string) *Service {
 func (s *Service) Get(ctx context.Context) (domain.Overview, error) {
 	var (
 		version    string
-		nodes      []domain.NodeSummary
-		pods       []domain.PodSummary
-		workloads  []domain.WorkloadSummary
-		namespaces []domain.Namespace
+		nodes      domain.NodeOverview
+		pods       domain.PodOverview
+		workloads  int
+		namespaces int
 		events     []domain.Event
 	)
 	var mu sync.Mutex
@@ -59,7 +59,7 @@ func (s *Service) Get(ctx context.Context) (domain.Overview, error) {
 		return nil
 	})
 	group.Go(func() error {
-		value, err := s.repository.ListNodes(groupCtx, domain.ListQuery{})
+		value, err := s.repository.NodeOverview(groupCtx)
 		if err != nil {
 			mu.Lock()
 			warnings = append(warnings, "node data is unavailable")
@@ -72,7 +72,7 @@ func (s *Service) Get(ctx context.Context) (domain.Overview, error) {
 		return nil
 	})
 	group.Go(func() error {
-		value, err := s.repository.ListPods(groupCtx, domain.ListQuery{})
+		value, err := s.repository.PodOverview(groupCtx)
 		if err != nil {
 			mu.Lock()
 			warnings = append(warnings, "pod data is unavailable")
@@ -85,7 +85,7 @@ func (s *Service) Get(ctx context.Context) (domain.Overview, error) {
 		return nil
 	})
 	group.Go(func() error {
-		value, err := s.repository.ListWorkloads(groupCtx, domain.ListQuery{})
+		value, err := s.repository.CountWorkloads(groupCtx)
 		if err != nil {
 			mu.Lock()
 			warnings = append(warnings, "workload data is unavailable")
@@ -98,7 +98,7 @@ func (s *Service) Get(ctx context.Context) (domain.Overview, error) {
 		return nil
 	})
 	group.Go(func() error {
-		value, err := s.repository.ListNamespaces(groupCtx, domain.ListQuery{})
+		value, err := s.repository.CountNamespaces(groupCtx)
 		if err != nil {
 			mu.Lock()
 			warnings = append(warnings, "namespace data is unavailable")
@@ -123,31 +123,6 @@ func (s *Service) Get(ctx context.Context) (domain.Overview, error) {
 	if !nodesLoaded && !podsLoaded && !workloadsLoaded {
 		return domain.Overview{}, overviewUnavailableError(coreFailures)
 	}
-	readyNodes := 0
-	var capacity domain.ClusterCapacity
-	for _, node := range nodes {
-		if node.Status == "Ready" {
-			readyNodes++
-		}
-		capacity.CPUAllocatableMilli += node.CPUCapacityMilli
-		capacity.MemoryAllocatableBytes += node.MemoryCapacityBytes
-		capacity.PodCapacity += node.PodCapacity
-		capacity.CPURequestsMilli += node.CPURequestsMilli
-		capacity.MemoryRequestsBytes += node.MemoryRequestsBytes
-		capacity.CPUUsageMilli += node.CPUUsageMilli
-		capacity.MemoryUsageBytes += node.MemoryUsageBytes
-	}
-	runningPods := 0
-	unhealthyPods := 0
-	for _, pod := range pods {
-		switch pod.Status {
-		case "Running":
-			runningPods++
-		case "Succeeded", "Completed", "Terminating":
-		default:
-			unhealthyPods++
-		}
-	}
 	warningEvents := 0
 	for _, event := range events {
 		if event.Type == "Warning" {
@@ -160,9 +135,9 @@ func (s *Service) Get(ctx context.Context) (domain.Overview, error) {
 		recent = recent[:8]
 	}
 	status := "Healthy"
-	if len(nodes) == 0 || readyNodes == 0 {
+	if nodes.Total == 0 || nodes.Ready == 0 {
 		status = "Unavailable"
-	} else if readyNodes < len(nodes) {
+	} else if nodes.Ready < nodes.Total {
 		status = "Degraded"
 	}
 	return domain.Overview{
@@ -171,10 +146,10 @@ func (s *Service) Get(ctx context.Context) (domain.Overview, error) {
 			MetricsAvailable: s.repository.MetricsAvailable(ctx),
 		},
 		Counts: domain.OverviewCounts{
-			Nodes: len(nodes), ReadyNodes: readyNodes, Pods: len(pods), RunningPods: runningPods,
-			Workloads: len(workloads), Namespaces: len(namespaces), UnhealthyPods: unhealthyPods, WarningEvents: warningEvents,
+			Nodes: nodes.Total, ReadyNodes: nodes.Ready, Pods: pods.Total, RunningPods: pods.Running,
+			Workloads: workloads, Namespaces: namespaces, UnhealthyPods: pods.Unhealthy, WarningEvents: warningEvents,
 		},
-		Capacity: capacity,
+		Capacity: nodes.Capacity,
 		Events:   recent,
 		Warnings: warnings,
 	}, nil

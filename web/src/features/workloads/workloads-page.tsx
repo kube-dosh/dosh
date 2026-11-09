@@ -26,7 +26,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useCapabilities } from "@/features/auth/use-session";
 import { DeploymentCreateDialog } from "@/features/workloads/deployment-create-dialog";
-import { cursorPaginationProps, useCursorPagination } from "@/hooks/use-cursor-pagination";
+import { cursorPaginationProps, retryListQuery, useCursorPagination } from "@/hooks/use-cursor-pagination";
 import { workloadCapabilities } from "@/lib/capabilities";
 import { formatAge } from "@/lib/utils";
 
@@ -71,7 +71,7 @@ export function WorkloadsPage() {
     onSuccess: async () => { toast.success(`${restarting?.name} 已触发滚动重启`); setRestarting(undefined); await refresh(); },
     onError: (error) => toast.error(error.message),
   });
-  if (query.isError) return <ErrorState error={query.error} onRetry={() => void query.refetch()} />;
+  if (query.isError) return <ErrorState error={query.error} onRetry={() => retryListQuery(pager, query.error, query.refetch)} />;
   const actions = (workload: WorkloadSummary): ResourceAction[] => {
     const normalizedKind = workload.kind.toLowerCase();
     const caps = workloadCapabilities(capabilities, normalizedKind);

@@ -31,17 +31,40 @@ type overviewRepository struct {
 func (r *overviewRepository) Version(context.Context) (string, error) { return r.version, r.versionErr }
 func (r *overviewRepository) MetricsAvailable(context.Context) bool   { return r.metrics }
 func (r *overviewRepository) DetectCNI(context.Context) string        { return r.cni }
-func (r *overviewRepository) ListNodes(context.Context, domain.ListQuery) ([]domain.NodeSummary, error) {
-	return r.nodes, r.nodesErr
+func (r *overviewRepository) NodeOverview(context.Context) (domain.NodeOverview, error) {
+	result := domain.NodeOverview{Total: len(r.nodes)}
+	for _, node := range r.nodes {
+		if node.Status == "Ready" {
+			result.Ready++
+		}
+		result.Capacity.CPUAllocatableMilli += node.CPUCapacityMilli
+		result.Capacity.MemoryAllocatableBytes += node.MemoryCapacityBytes
+		result.Capacity.PodCapacity += node.PodCapacity
+		result.Capacity.CPURequestsMilli += node.CPURequestsMilli
+		result.Capacity.MemoryRequestsBytes += node.MemoryRequestsBytes
+		result.Capacity.CPUUsageMilli += node.CPUUsageMilli
+		result.Capacity.MemoryUsageBytes += node.MemoryUsageBytes
+	}
+	return result, r.nodesErr
 }
-func (r *overviewRepository) ListPods(context.Context, domain.ListQuery) ([]domain.PodSummary, error) {
-	return r.pods, r.podsErr
+func (r *overviewRepository) PodOverview(context.Context) (domain.PodOverview, error) {
+	result := domain.PodOverview{Total: len(r.pods)}
+	for _, pod := range r.pods {
+		switch pod.Status {
+		case "Running":
+			result.Running++
+		case "Succeeded", "Completed", "Terminating":
+		default:
+			result.Unhealthy++
+		}
+	}
+	return result, r.podsErr
 }
-func (r *overviewRepository) ListWorkloads(context.Context, domain.ListQuery) ([]domain.WorkloadSummary, error) {
-	return r.workloads, r.workloadsErr
+func (r *overviewRepository) CountWorkloads(context.Context) (int, error) {
+	return len(r.workloads), r.workloadsErr
 }
-func (r *overviewRepository) ListNamespaces(context.Context, domain.ListQuery) ([]domain.Namespace, error) {
-	return r.namespaces, r.namespacesErr
+func (r *overviewRepository) CountNamespaces(context.Context) (int, error) {
+	return len(r.namespaces), r.namespacesErr
 }
 func (r *overviewRepository) ListEvents(context.Context, domain.ListQuery) ([]domain.Event, error) {
 	return r.events, r.eventsErr

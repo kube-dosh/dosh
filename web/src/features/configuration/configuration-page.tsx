@@ -26,7 +26,7 @@ import { useCapabilities } from "@/features/auth/use-session";
 import { ConfigMapFormDialog } from "@/features/configuration/config-map-form-dialog";
 import { SecretFormDialog } from "@/features/configuration/secret-form-dialog";
 import { ServerCertificatePanel } from "@/features/configuration/server-certificate-panel";
-import { cursorPaginationProps, useCursorPagination } from "@/hooks/use-cursor-pagination";
+import { cursorPaginationProps, retryListQuery, useCursorPagination } from "@/hooks/use-cursor-pagination";
 import { resourceCapabilities } from "@/lib/capabilities";
 import { decodeSecretValue } from "@/lib/secret-value";
 import { formatAge } from "@/lib/utils";
@@ -126,7 +126,7 @@ export function ConfigurationPage() {
       <Tabs value={tab} onValueChange={(value) => updateSearch({ tab: value === "configmaps" ? undefined : value })}>
         <TabsList><TabsTrigger value="configmaps">ConfigMap ({configMaps.data?.meta.totalKnown ? configMaps.data.meta.total : configMaps.data?.items.length ?? 0})</TabsTrigger><TabsTrigger value="secrets">Secret ({secrets.data?.meta.totalKnown ? secrets.data.meta.total : secrets.data?.items.length ?? 0})</TabsTrigger><TabsTrigger value="certificate">服务端证书</TabsTrigger></TabsList>
         <TabsContent value="configmaps">
-          {configMaps.isError ? <ErrorState error={configMaps.error} onRetry={() => void configMaps.refetch()} /> : <DataTable
+          {configMaps.isError ? <ErrorState error={configMaps.error} onRetry={() => retryListQuery(configMapPager, configMaps.error, configMaps.refetch)} /> : <DataTable
             columns={[
               configMapColumn.accessor("name", { header: "名称", cell: (info) => <button type="button" className="font-medium text-primary hover:underline" onClick={() => setConfigMap(info.row.original)}>{info.getValue()}</button> }),
               configMapColumn.accessor("namespace", { header: "命名空间" }),
@@ -142,7 +142,7 @@ export function ConfigurationPage() {
           />}
         </TabsContent>
         <TabsContent value="secrets">
-          {secrets.isError ? <ErrorState error={secrets.error} onRetry={() => void secrets.refetch()} /> : <DataTable
+          {secrets.isError ? <ErrorState error={secrets.error} onRetry={() => retryListQuery(secretPager, secrets.error, secrets.refetch)} /> : <DataTable
             columns={[
               secretColumn.accessor("name", { header: "名称", cell: (info) => <ActionTooltip content={!capabilities?.revealSecrets ? "当前身份没有查看 Secret 数据的权限" : undefined}><button type="button" className="font-medium text-primary hover:underline disabled:pointer-events-none disabled:text-muted-foreground disabled:no-underline" onClick={(event) => { event.stopPropagation(); openSecretData(info.row.original); }} disabled={!capabilities?.revealSecrets}>{info.getValue()}</button></ActionTooltip> }),
               secretColumn.accessor("namespace", { header: "命名空间" }),

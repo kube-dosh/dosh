@@ -36,17 +36,29 @@ func (r *httpOverviewRepository) Version(context.Context) (string, error) {
 }
 func (r *httpOverviewRepository) MetricsAvailable(context.Context) bool { return r.metrics }
 func (r *httpOverviewRepository) DetectCNI(context.Context) string      { return r.cni }
-func (r *httpOverviewRepository) ListNodes(context.Context, domain.ListQuery) ([]domain.NodeSummary, error) {
-	return r.nodes, r.nodesErr
+func (r *httpOverviewRepository) NodeOverview(context.Context) (domain.NodeOverview, error) {
+	result := domain.NodeOverview{Total: len(r.nodes)}
+	for _, node := range r.nodes {
+		if node.Status == "Ready" {
+			result.Ready++
+		}
+	}
+	return result, r.nodesErr
 }
-func (r *httpOverviewRepository) ListPods(context.Context, domain.ListQuery) ([]domain.PodSummary, error) {
-	return r.pods, r.podsErr
+func (r *httpOverviewRepository) PodOverview(context.Context) (domain.PodOverview, error) {
+	result := domain.PodOverview{Total: len(r.pods)}
+	for _, pod := range r.pods {
+		if pod.Status == "Running" {
+			result.Running++
+		}
+	}
+	return result, r.podsErr
 }
-func (r *httpOverviewRepository) ListWorkloads(context.Context, domain.ListQuery) ([]domain.WorkloadSummary, error) {
-	return r.workloads, r.workErr
+func (r *httpOverviewRepository) CountWorkloads(context.Context) (int, error) {
+	return len(r.workloads), r.workErr
 }
-func (r *httpOverviewRepository) ListNamespaces(context.Context, domain.ListQuery) ([]domain.Namespace, error) {
-	return r.namespaces, r.nsErr
+func (r *httpOverviewRepository) CountNamespaces(context.Context) (int, error) {
+	return len(r.namespaces), r.nsErr
 }
 func (r *httpOverviewRepository) ListEvents(context.Context, domain.ListQuery) ([]domain.Event, error) {
 	return r.events, r.eventsErr

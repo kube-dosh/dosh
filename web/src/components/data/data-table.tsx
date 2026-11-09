@@ -42,6 +42,7 @@ export interface ServerPagination {
 
 export function DataTable<T>({ columns, data, loading = false, empty, pageSize = 20, onRowClick, stickyFirstColumn = true, className, pagination }: DataTableProps<T>) {
   const [sorting, setSorting] = useState<SortingState>([]);
+  const pageLocalSorting = Boolean(pagination && sorting.length > 0);
   const minimumWidth = Math.max(640, columns.reduce((width, column) => width + (typeof column.size === "number" ? Math.max(120, column.size) : 120), 0));
   const stickyColumnClass = "sticky left-0 z-20 w-36 min-w-36 max-w-36 overflow-hidden bg-muted shadow-[1px_0_0_hsl(var(--border))] md:static md:z-auto md:w-auto md:min-w-0 md:max-w-none md:overflow-visible md:bg-transparent md:shadow-none";
   const stickyCellClass = "sticky left-0 z-10 w-36 min-w-36 max-w-36 overflow-hidden bg-card shadow-[1px_0_0_hsl(var(--border))] md:static md:z-auto md:w-auto md:min-w-0 md:max-w-none md:overflow-visible md:bg-transparent md:shadow-none";
@@ -76,6 +77,12 @@ export function DataTable<T>({ columns, data, loading = false, empty, pageSize =
           <span>{pagination.warnings.join("；")}</span>
         </div>
       ) : null}
+      {pageLocalSorting ? (
+        <div className="flex items-start gap-2 border-b bg-muted/30 px-4 py-2 text-xs text-muted-foreground">
+          <ArrowUpDown className="mt-0.5 h-4 w-4 shrink-0" />
+          <span>当前排序仅作用于本页；切换分页后会按服务端顺序展示。</span>
+        </div>
+      ) : null}
       <Table style={{ minWidth: `${minimumWidth}px` }}>
         <TableHeader>
           {table.getHeaderGroups().map((headerGroup) => (
@@ -102,6 +109,7 @@ export function DataTable<T>({ columns, data, loading = false, empty, pageSize =
                     {header.isPlaceholder ? null : (
                       <button
                         type="button"
+                        title={pagination ? "仅对当前页排序" : undefined}
                         className={cn("flex min-w-0 max-w-full items-center gap-1", sortable ? "cursor-pointer hover:text-foreground" : "cursor-default")}
                         onClick={sortable ? header.column.getToggleSortingHandler() : undefined}
                       >
