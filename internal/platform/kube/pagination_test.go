@@ -116,3 +116,39 @@ func TestListPageRejectsMalformedCursor(t *testing.T) {
 		t.Fatalf("error = %v, want ErrInvalid", err)
 	}
 }
+
+func TestCountCollectionUsesRemainingItemCountWithoutScanning(t *testing.T) {
+	seen := make([]string, 0)
+	chunks := map[string]paginationChunk{
+		"": {items: []int{1}, next: "p2", remaining: remaining(4)},
+	}
+	total, err := countCollection(context.Background(), paginationFetcher(chunks, &seen))
+	if err != nil {
+		t.Fatalf("countCollection() error = %v", err)
+	}
+	if total != 5 {
+		t.Fatalf("countCollection() = %d, want 5", total)
+	}
+	if len(seen) != 1 || seen[0] != "" {
+		t.Fatalf("countCollection() scanned extra chunks: %#v", seen)
+	}
+}
+
+func TestCountCollectionFallsBackToBoundedChunks(t *testing.T) {
+	seen := make([]string, 0)
+	chunks := map[string]paginationChunk{
+		"":   {items: []int{1}, next: "p2"},
+		"p2": {items: []int{2, 3}, next: "p3"},
+		"p3": {items: []int{4}},
+	}
+	total, err := countCollection(context.Background(), paginationFetcher(chunks, &seen))
+	if err != nil {
+		t.Fatalf("countCollection() error = %v", err)
+	}
+	if total != 4 {
+		t.Fatalf("countCollection() = %d, want 4", total)
+	}
+	if len(seen) != 3 || seen[0] != "" || seen[1] != "p2" || seen[2] != "p3" {
+		t.Fatalf("countCollection() cursors = %#v", seen)
+	}
+}
