@@ -35,16 +35,17 @@ func (h *Handler) List(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		Kind:      httpx.Query(r, "kind"),
 		Status:    httpx.Query(r, "status"),
 	}
-	items, err := h.service.List(r.Context(), query)
+	result, err := h.service.ListPage(r.Context(), query, domain.PageRequest{Number: options.Page, Size: options.PageSize, Cursor: options.Cursor})
 	if err != nil {
 		httpx.Error(w, r, err)
 		return
 	}
-	items, meta := httpx.PageItems(items, options, map[string]string{
+	httpx.SortItems(result.Items, options)
+	meta := httpx.PageMeta(result, options, map[string]string{
 		"namespace": query.Namespace, "search": query.Search, "kind": query.Kind, "status": query.Status,
 	})
 	meta.Namespace, meta.Search, meta.Kind, meta.Status = query.Namespace, query.Search, query.Kind, query.Status
-	httpx.JSONList(w, items, meta)
+	httpx.JSONList(w, result.Items, meta)
 }
 
 func (h *Handler) Get(w stdhttp.ResponseWriter, r *stdhttp.Request) {
@@ -310,14 +311,15 @@ func (h *Handler) ListPods(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		httpx.Error(w, r, err)
 		return
 	}
-	items, err := h.service.ListPods(r.Context(), query)
+	result, err := h.service.ListPodsPage(r.Context(), query, domain.PageRequest{Number: options.Page, Size: options.PageSize, Cursor: options.Cursor})
 	if err != nil {
 		httpx.Error(w, r, err)
 		return
 	}
-	items, meta := httpx.PageItems(items, options, map[string]string{"namespace": query.Namespace, "search": query.Search})
+	httpx.SortItems(result.Items, options)
+	meta := httpx.PageMeta(result, options, map[string]string{"namespace": query.Namespace, "search": query.Search})
 	meta.Namespace, meta.Search = query.Namespace, query.Search
-	httpx.JSONList(w, items, meta)
+	httpx.JSONList(w, result.Items, meta)
 }
 
 func (h *Handler) GetPod(w stdhttp.ResponseWriter, r *stdhttp.Request) {

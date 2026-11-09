@@ -27,6 +27,10 @@ type configurationRepository struct {
 func (r *configurationRepository) ListConfigMaps(context.Context, domain.ListQuery) ([]domain.ConfigMapSummary, error) {
 	return r.configMaps, r.err
 }
+func (r *configurationRepository) ListConfigMapsPage(ctx context.Context, query domain.ListQuery, page domain.PageRequest) (domain.PageResult[domain.ConfigMapSummary], error) {
+	items, err := r.ListConfigMaps(ctx, query)
+	return domain.PaginateSlice(items, page), err
+}
 func (r *configurationRepository) GetConfigMap(context.Context, string, string) (domain.ConfigMapDetail, error) {
 	return r.configMap, r.err
 }
@@ -44,6 +48,10 @@ func (r *configurationRepository) DeleteConfigMap(_ context.Context, _, _ string
 }
 func (r *configurationRepository) ListSecrets(context.Context, domain.ListQuery) ([]domain.SecretSummary, error) {
 	return r.secrets, r.err
+}
+func (r *configurationRepository) ListSecretsPage(ctx context.Context, query domain.ListQuery, page domain.PageRequest) (domain.PageResult[domain.SecretSummary], error) {
+	items, err := r.ListSecrets(ctx, query)
+	return domain.PaginateSlice(items, page), err
 }
 func (r *configurationRepository) RevealSecret(context.Context, string, string) (domain.SecretReveal, error) {
 	r.calls++

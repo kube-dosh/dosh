@@ -67,6 +67,10 @@ func (r *workloadRepo) ListWorkloads(_ context.Context, query domain.ListQuery) 
 	r.lastQuery = query
 	return r.workloads, r.listWorkloadsErr
 }
+func (r *workloadRepo) ListWorkloadsPage(ctx context.Context, query domain.ListQuery, page domain.PageRequest) (domain.PageResult[domain.WorkloadSummary], error) {
+	items, err := r.ListWorkloads(ctx, query)
+	return domain.PaginateSlice(items, page), err
+}
 
 func (r *workloadRepo) GetWorkload(_ context.Context, kind, namespace, name string) (domain.WorkloadDetail, error) {
 	r.lastKind, r.lastNamespace, r.lastName = kind, namespace, name
@@ -131,6 +135,10 @@ func (r *workloadRepo) DeleteWorkload(_ context.Context, kind, namespace, name s
 
 func (r *workloadRepo) ListPods(context.Context, domain.ListQuery) ([]domain.PodSummary, error) {
 	return r.pods, nil
+}
+func (r *workloadRepo) ListPodsPage(ctx context.Context, query domain.ListQuery, page domain.PageRequest) (domain.PageResult[domain.PodSummary], error) {
+	items, err := r.ListPods(ctx, query)
+	return domain.PaginateSlice(items, page), err
 }
 
 func (r *workloadRepo) GetPod(_ context.Context, namespace, name string) (domain.PodDetail, error) {

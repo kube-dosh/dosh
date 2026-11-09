@@ -13,6 +13,7 @@ import { PageHeader } from "@/components/layout/page-header";
 import { SearchInput } from "@/components/layout/search-input";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { cursorPaginationProps, useCursorPagination } from "@/hooks/use-cursor-pagination";
 import { formatDate } from "@/lib/utils";
 
 const column = createColumnHelper<AuditRecord>();
@@ -34,13 +35,14 @@ export function AuditPage() {
   const namespace = search.namespace ?? "";
   const action = search.action ?? "";
   const result = search.result ?? "";
+  const pager = useCursorPagination(`audit|${namespace}|${q}|${action}|${result}`, 20);
   const [selected, setSelected] = useState<AuditRecord | null>(null);
   const updateSearch = (patch: { q?: string; namespace?: string; action?: string; result?: string }) => {
     void navigate({ to: "/audit", search: { ...search, ...patch }, replace: true });
   };
   const query = useQuery({
-    queryKey: ["audit-events", namespace, q, action, result],
-    queryFn: () => api.auditEvents({ namespace, q, action, result }),
+    queryKey: ["audit-events", namespace, q, action, result, pager.page, pager.cursor],
+    queryFn: () => api.auditEvents({ namespace, q, action, result, page: pager.page, pageSize: pager.pageSize, cursor: pager.cursor }),
     refetchInterval: 30_000,
   });
 
@@ -88,6 +90,7 @@ export function AuditPage() {
         ]}
         data={query.data?.items ?? []}
         loading={query.isLoading}
+        pagination={cursorPaginationProps(pager, query.data?.meta, query.data?.items.length ?? 0)}
         onRowClick={setSelected}
         stickyFirstColumn={false}
         empty={<div className="flex flex-col items-center gap-2"><ScrollText className="h-6 w-6" /><span>没有匹配的审计记录</span></div>}

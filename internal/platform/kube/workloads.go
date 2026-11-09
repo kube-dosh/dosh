@@ -2,6 +2,8 @@ package kube
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strconv"
@@ -112,6 +114,197 @@ func (c *Client) ListWorkloads(ctx context.Context, query domain.ListQuery) ([]d
 	}
 	sortWorkloads(out)
 	return out, nil
+}
+
+var workloadPageKinds = []string{"deployment", "statefulset", "daemonset", "job", "cronjob"}
+
+type workloadPageCursor struct {
+	Kind   int    `json:"k"`
+	Cursor string `json:"c,omitempty"`
+	Total  int    `json:"t,omitempty"`
+}
+
+func encodeWorkloadPageCursor(kind int, cursor string, total int) (string, error) {
+	encoded, err := json.Marshal(workloadPageCursor{Kind: kind, Cursor: cursor, Total: total})
+	if err != nil {
+		return "", fmt.Errorf("encode workload cursor: %w", err)
+	}
+	return base64.RawURLEncoding.EncodeToString(encoded), nil
+}
+
+func decodeWorkloadPageCursor(value string) (workloadPageCursor, error) {
+	if value == "" {
+		return workloadPageCursor{}, nil
+	}
+	decoded, err := base64.RawURLEncoding.DecodeString(value)
+	if err != nil {
+		return workloadPageCursor{}, fmt.Errorf("%w: cursor is malformed", domain.ErrInvalid)
+	}
+	var state workloadPageCursor
+	if err := json.Unmarshal(decoded, &state); err != nil || state.Kind < 0 || state.Kind >= len(workloadPageKinds) || state.Total < 0 {
+		return workloadPageCursor{}, fmt.Errorf("%w: cursor is malformed", domain.ErrInvalid)
+	}
+	return state, nil
+}
+
+// ListWorkloadsPage streams one workload kind at a time. This preserves a
+// bounded memory footprint while still supporting the aggregate workload view;
+// only the visible page has restart counts calculated.
+func (c *Client) ListWorkloadsPage(ctx context.Context, query domain.ListQuery, page domain.PageRequest) (domain.PageResult[domain.WorkloadSummary], error) {
+	kind := strings.ToLower(query.Kind)
+	if kind != "" {
+		if err := validateWorkloadKind(kind); err != nil {
+			return domain.PageResult[domain.WorkloadSummary]{}, err
+		}
+		ctx, cancel := c.withTimeout(ctx)
+		defer cancel()
+		return c.listWorkloadKindPage(ctx, kind, query, page)
+	}
+
+	ctx, cancel := c.withTimeout(ctx)
+	defer cancel()
+	page = normalizePage(page)
+	state, err := decodeWorkloadPageCursor(page.Cursor)
+	if err != nil {
+		return domain.PageResult[domain.WorkloadSummary]{}, err
+	}
+	if page.Cursor == "" && page.Number > 1 {
+		return domain.PageResult[domain.WorkloadSummary]{}, fmt.Errorf("%w: cursor is required for workload page navigation", domain.ErrInvalid)
+	}
+
+	result := domain.PageResult[domain.WorkloadSummary]{Items: make([]domain.WorkloadSummary, 0, page.Size)}
+	scanned := 0
+	if page.Cursor != "" {
+		scanned = state.Total
+	}
+	kindIndex := state.Kind
+	childCursor := state.Cursor
+	for kindIndex < len(workloadPageKinds) {
+		remaining := page.Size - len(result.Items)
+		if remaining <= 0 {
+			break
+		}
+		child, childErr := c.listWorkloadKindPage(ctx, workloadPageKinds[kindIndex], query, domain.PageRequest{
+			Number: 1, Size: remaining, Cursor: childCursor,
+		})
+		if childErr != nil {
+			return domain.PageResult[domain.WorkloadSummary]{}, childErr
+		}
+		result.Items = append(result.Items, child.Items...)
+		scanned += len(child.Items)
+		result.Truncated = result.Truncated || child.Truncated
+		result.Warnings = append(result.Warnings, child.Warnings...)
+		if child.HasMore {
+			result.NextCursor, err = encodeWorkloadPageCursor(kindIndex, child.NextCursor, scanned)
+			if err != nil {
+				return domain.PageResult[domain.WorkloadSummary]{}, err
+			}
+			result.HasMore = true
+			result.Total = scanned
+			return result, nil
+		}
+		childCursor = ""
+		if len(result.Items) >= page.Size {
+			if kindIndex+1 < len(workloadPageKinds) {
+				result.NextCursor, err = encodeWorkloadPageCursor(kindIndex+1, "", scanned)
+				if err != nil {
+					return domain.PageResult[domain.WorkloadSummary]{}, err
+				}
+				result.HasMore = true
+			}
+			result.Total = scanned
+			result.TotalKnown = !result.HasMore
+			return result, nil
+		}
+		kindIndex++
+	}
+	result.Total = scanned
+	result.TotalKnown = true
+	return result, nil
+}
+
+func validateWorkloadKind(kind string) error {
+	for _, candidate := range workloadPageKinds {
+		if kind == candidate {
+			return nil
+		}
+	}
+	return fmt.Errorf("%w: workload kind %q", domain.ErrUnsupported, kind)
+}
+
+func (c *Client) listWorkloadKindPage(ctx context.Context, kind string, query domain.ListQuery, page domain.PageRequest) (domain.PageResult[domain.WorkloadSummary], error) {
+	namespace := query.Namespace
+	if namespace == "" {
+		namespace = metav1.NamespaceAll
+	}
+	filtered := query.Search != "" || query.Status != ""
+	selectors := make(map[string]*metav1.LabelSelector)
+	finalize := func(summary domain.WorkloadSummary) domain.WorkloadSummary {
+		key := workloadSelectorKey(kind, summary.Namespace, summary.Name)
+		summary.Restarts = c.restartsForSelector(ctx, summary.Namespace, selectors[key])
+		delete(selectors, key)
+		return summary
+	}
+	switch kind {
+	case "deployment":
+		return listPageWithFinalize(ctx, page, filtered, func(options metav1.ListOptions) ([]appsv1.Deployment, metav1.ListMeta, error) {
+			items, err := c.clientset.AppsV1().Deployments(namespace).List(ctx, options)
+			if err != nil {
+				return nil, metav1.ListMeta{}, mapKubeError(err)
+			}
+			return items.Items, items.ListMeta, nil
+		}, func(item appsv1.Deployment) domain.WorkloadSummary {
+			selectors[workloadSelectorKey(kind, item.Namespace, item.Name)] = item.Spec.Selector
+			return deploymentSummary(item)
+		}, func(summary domain.WorkloadSummary) bool { return matchesWorkloadQuery(summary, query) }, finalize)
+	case "statefulset":
+		return listPageWithFinalize(ctx, page, filtered, func(options metav1.ListOptions) ([]appsv1.StatefulSet, metav1.ListMeta, error) {
+			items, err := c.clientset.AppsV1().StatefulSets(namespace).List(ctx, options)
+			if err != nil {
+				return nil, metav1.ListMeta{}, mapKubeError(err)
+			}
+			return items.Items, items.ListMeta, nil
+		}, func(item appsv1.StatefulSet) domain.WorkloadSummary {
+			selectors[workloadSelectorKey(kind, item.Namespace, item.Name)] = item.Spec.Selector
+			return statefulSetSummary(item)
+		}, func(summary domain.WorkloadSummary) bool { return matchesWorkloadQuery(summary, query) }, finalize)
+	case "daemonset":
+		return listPageWithFinalize(ctx, page, filtered, func(options metav1.ListOptions) ([]appsv1.DaemonSet, metav1.ListMeta, error) {
+			items, err := c.clientset.AppsV1().DaemonSets(namespace).List(ctx, options)
+			if err != nil {
+				return nil, metav1.ListMeta{}, mapKubeError(err)
+			}
+			return items.Items, items.ListMeta, nil
+		}, func(item appsv1.DaemonSet) domain.WorkloadSummary {
+			selectors[workloadSelectorKey(kind, item.Namespace, item.Name)] = item.Spec.Selector
+			return daemonSetSummary(item)
+		}, func(summary domain.WorkloadSummary) bool { return matchesWorkloadQuery(summary, query) }, finalize)
+	case "job":
+		return listPageWithFinalize(ctx, page, filtered, func(options metav1.ListOptions) ([]batchv1.Job, metav1.ListMeta, error) {
+			items, err := c.clientset.BatchV1().Jobs(namespace).List(ctx, options)
+			if err != nil {
+				return nil, metav1.ListMeta{}, mapKubeError(err)
+			}
+			return items.Items, items.ListMeta, nil
+		}, func(item batchv1.Job) domain.WorkloadSummary {
+			selectors[workloadSelectorKey(kind, item.Namespace, item.Name)] = item.Spec.Selector
+			return jobSummary(item)
+		}, func(summary domain.WorkloadSummary) bool { return matchesWorkloadQuery(summary, query) }, finalize)
+	case "cronjob":
+		return listPage(ctx, page, filtered, func(options metav1.ListOptions) ([]batchv1.CronJob, metav1.ListMeta, error) {
+			items, err := c.clientset.BatchV1().CronJobs(namespace).List(ctx, options)
+			if err != nil {
+				return nil, metav1.ListMeta{}, mapKubeError(err)
+			}
+			return items.Items, items.ListMeta, nil
+		}, cronJobSummary, func(summary domain.WorkloadSummary) bool { return matchesWorkloadQuery(summary, query) })
+	default:
+		return domain.PageResult[domain.WorkloadSummary]{}, fmt.Errorf("%w: workload kind %q", domain.ErrUnsupported, kind)
+	}
+}
+
+func workloadSelectorKey(kind, namespace, name string) string {
+	return kind + "/" + namespace + "/" + name
 }
 
 func (c *Client) GetWorkload(ctx context.Context, kind, namespace, name string) (domain.WorkloadDetail, error) {

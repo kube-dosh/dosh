@@ -45,6 +45,44 @@ func (c *Client) ListEvents(ctx context.Context, query domain.ListQuery) ([]doma
 	return out, nil
 }
 
+func (c *Client) ListEventsPage(ctx context.Context, query domain.ListQuery, page domain.PageRequest) (domain.PageResult[domain.Event], error) {
+	ctx, cancel := c.withTimeout(ctx)
+	defer cancel()
+	namespace := query.Namespace
+	if namespace == "" {
+		namespace = metav1.NamespaceAll
+	}
+	items, err := c.clientset.CoreV1().Events(namespace).List(ctx, metav1.ListOptions{Limit: 1000})
+	if err != nil {
+		return domain.PageResult[domain.Event]{}, mapKubeError(err)
+	}
+	out := make([]domain.Event, 0, len(items.Items))
+	for _, item := range items.Items {
+		event := convertEvent(item)
+		if query.ObjectKind != "" && !strings.EqualFold(event.ObjectKind, query.ObjectKind) {
+			continue
+		}
+		if query.ObjectName != "" && event.ObjectName != query.ObjectName {
+			continue
+		}
+		if query.Search != "" && !matchesSearch([]string{event.Namespace, event.Type, event.Reason, event.Message, event.ObjectKind, event.ObjectName}, query.Search) {
+			continue
+		}
+		out = append(out, event)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].LastSeen.After(out[j].LastSeen) })
+	truncated := items.Continue != "" || len(out) > 500
+	if len(out) > 500 {
+		out = out[:500]
+	}
+	result := slicePage(out, page)
+	result.Truncated = truncated
+	if truncated {
+		result.Warnings = []string{"事件列表最多保留最近 500 条，请使用命名空间、对象或关键词缩小范围"}
+	}
+	return result, nil
+}
+
 func (c *Client) WatchEvents(ctx context.Context, namespace string) (<-chan domain.Event, <-chan error, error) {
 	if namespace == "" {
 		namespace = metav1.NamespaceAll

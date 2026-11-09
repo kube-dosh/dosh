@@ -27,6 +27,10 @@ func (r *eventRepo) ListEvents(_ context.Context, query domain.ListQuery) ([]dom
 	r.query = query
 	return r.events, nil
 }
+func (r *eventRepo) ListEventsPage(ctx context.Context, query domain.ListQuery, page domain.PageRequest) (domain.PageResult[domain.Event], error) {
+	items, err := r.ListEvents(ctx, query)
+	return domain.PaginateSlice(items, page), err
+}
 
 func (r *eventRepo) WatchEvents(context.Context, string) (<-chan domain.Event, <-chan error, error) {
 	if r.watchErr != nil {

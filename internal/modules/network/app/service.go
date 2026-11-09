@@ -9,16 +9,19 @@ import (
 
 type Repository interface {
 	ListServices(ctx context.Context, query domain.ListQuery) ([]domain.ServiceSummary, error)
+	ListServicesPage(ctx context.Context, query domain.ListQuery, page domain.PageRequest) (domain.PageResult[domain.ServiceSummary], error)
 	GetService(ctx context.Context, namespace, name string) (domain.ServiceDetail, error)
 	CreateService(ctx context.Context, spec domain.ServiceCreateSpec) (domain.ServiceDetail, error)
 	UpdateService(ctx context.Context, namespace, name string, update domain.ServiceUpdateSpec) (domain.ServiceDetail, error)
 	DeleteService(ctx context.Context, namespace, name, resourceVersion string) error
 	ListIngresses(ctx context.Context, query domain.ListQuery) ([]domain.IngressSummary, error)
+	ListIngressesPage(ctx context.Context, query domain.ListQuery, page domain.PageRequest) (domain.PageResult[domain.IngressSummary], error)
 	GetIngress(ctx context.Context, namespace, name string) (domain.IngressDetail, error)
 	CreateIngress(ctx context.Context, spec domain.IngressCreateSpec) (domain.IngressDetail, error)
 	UpdateIngress(ctx context.Context, namespace, name string, update domain.IngressUpdateSpec) (domain.IngressDetail, error)
 	DeleteIngress(ctx context.Context, namespace, name, resourceVersion string) error
 	ListIngressClasses(ctx context.Context, query domain.ListQuery) ([]domain.IngressClassSummary, error)
+	ListIngressClassesPage(ctx context.Context, query domain.ListQuery, page domain.PageRequest) (domain.PageResult[domain.IngressClassSummary], error)
 }
 
 type Service struct {
@@ -33,6 +36,10 @@ func New(repository Repository, authorizer domain.Authorizer, auditor domain.Aud
 
 func (s *Service) ListServices(ctx context.Context, query domain.ListQuery) ([]domain.ServiceSummary, error) {
 	return s.repository.ListServices(ctx, query)
+}
+
+func (s *Service) ListServicesPage(ctx context.Context, query domain.ListQuery, page domain.PageRequest) (domain.PageResult[domain.ServiceSummary], error) {
+	return s.repository.ListServicesPage(ctx, query, page)
 }
 
 func (s *Service) GetService(ctx context.Context, namespace, name string) (domain.ServiceDetail, error) {
@@ -112,10 +119,18 @@ func (s *Service) ListIngresses(ctx context.Context, query domain.ListQuery) ([]
 	return s.repository.ListIngresses(ctx, query)
 }
 
+func (s *Service) ListIngressesPage(ctx context.Context, query domain.ListQuery, page domain.PageRequest) (domain.PageResult[domain.IngressSummary], error) {
+	return s.repository.ListIngressesPage(ctx, query, page)
+}
+
 func (s *Service) GetIngress(ctx context.Context, namespace, name string) (domain.IngressDetail, error) {
 	return s.repository.GetIngress(ctx, namespace, name)
 }
 
 func (s *Service) ListIngressClasses(ctx context.Context, query domain.ListQuery) ([]domain.IngressClassSummary, error) {
 	return s.repository.ListIngressClasses(ctx, query)
+}
+
+func (s *Service) ListIngressClassesPage(ctx context.Context, query domain.ListQuery, page domain.PageRequest) (domain.PageResult[domain.IngressClassSummary], error) {
+	return s.repository.ListIngressClassesPage(ctx, query, page)
 }

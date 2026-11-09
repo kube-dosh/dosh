@@ -16,6 +16,7 @@ import { ResourceActionsMenu, type ResourceAction } from "@/components/resources
 import { YamlDialog } from "@/components/resources/yaml-dialog";
 import { Badge } from "@/components/ui/badge";
 import { useCapabilities } from "@/features/auth/use-session";
+import { cursorPaginationProps, useCursorPagination } from "@/hooks/use-cursor-pagination";
 import { formatAge, formatCPU, formatMemory } from "@/lib/utils";
 
 const column = createColumnHelper<NodeSummary>();
@@ -25,7 +26,12 @@ export function NodesPage() {
   const navigate = useNavigate();
   const q = search.q ?? "";
   const [yamlTarget, setYamlTarget] = useState<NodeSummary>();
-  const query = useQuery({ queryKey: ["nodes", q], queryFn: () => api.nodes({ q }), refetchInterval: 15_000 });
+  const pager = useCursorPagination(`nodes|${q}`, 20);
+  const query = useQuery({
+    queryKey: ["nodes", q, pager.page, pager.cursor],
+    queryFn: () => api.nodes({ q, page: pager.page, pageSize: pager.pageSize, cursor: pager.cursor }),
+    refetchInterval: 15_000,
+  });
   const capabilities = useCapabilities().data;
   const setScheduling = useMutation({
     mutationFn: (node: NodeSummary) => node.unschedulable ? api.uncordonNode(node.name) : api.cordonNode(node.name),
@@ -57,6 +63,7 @@ export function NodesPage() {
         ]}
         data={query.data?.items ?? []}
         loading={query.isLoading}
+        pagination={cursorPaginationProps(pager, query.data?.meta, query.data?.items.length ?? 0)}
         onRowClick={(row) => void navigate({ to: "/nodes/$name", params: { name: row.name } })}
         empty={<div className="flex flex-col items-center gap-2"><Server className="h-6 w-6" /><span>没有匹配的节点</span></div>}
       />

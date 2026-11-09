@@ -1250,12 +1250,12 @@ describe("dosh application", () => {
     ];
     server.use(http.get("/api/v1/events", ({ request }) => {
       eventQuery = new URL(request.url).searchParams;
-      return HttpResponse.json({ items: events, meta: { total: events.length, page: 1, pageSize: 200, totalPages: 1, filters: {} } });
+      return HttpResponse.json({ items: events, meta: { total: events.length, totalKnown: true, page: 1, pageSize: 50, totalPages: 1, hasMore: false, filters: {} } });
     }));
     renderRoute("/events");
 
     expect(await screen.findByText("共 12 条事件")).toBeInTheDocument();
-    await waitFor(() => expect(eventQuery?.get("pageSize")).toBe("200"));
+    await waitFor(() => expect(eventQuery?.get("pageSize")).toBe("50"));
     expect(eventQuery?.get("sort")).toBe("lastSeen");
     expect(eventQuery?.get("order")).toBe("desc");
     expect(await screen.findByRole("link", { name: "Deployment/web-api" })).toHaveAttribute("href", "/workloads/deployment/default/web-api");

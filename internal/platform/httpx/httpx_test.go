@@ -219,12 +219,12 @@ func TestAccessLogIncludesRequestID(t *testing.T) {
 }
 
 func TestParseListOptionsValidatesPaginationAndSorting(t *testing.T) {
-	request := httptest.NewRequest(http.MethodGet, "/api/v1/pods?page=2&pageSize=2&sort=name&order=desc", nil)
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/pods?page=2&pageSize=2&cursor=opaque&sort=name&order=desc", nil)
 	options, err := ParseListOptions(request, []string{"name"})
 	if err != nil {
 		t.Fatalf("ParseListOptions() error = %v", err)
 	}
-	if options.Page != 2 || options.PageSize != 2 || options.Sort != "name" || options.Order != "desc" {
+	if options.Page != 2 || options.PageSize != 2 || options.Cursor != "opaque" || options.Sort != "name" || options.Order != "desc" {
 		t.Fatalf("options = %#v", options)
 	}
 
@@ -233,6 +233,7 @@ func TestParseListOptionsValidatesPaginationAndSorting(t *testing.T) {
 		"/api/v1/pods?page=0",
 		"/api/v1/pods?pageSize=201",
 		"/api/v1/pods?order=desc",
+		"/api/v1/pods?cursor=" + strings.Repeat("x", 8193),
 	} {
 		request := httptest.NewRequest(http.MethodGet, target, nil)
 		if _, err := ParseListOptions(request, []string{"name"}); !errors.Is(err, domain.ErrInvalid) {

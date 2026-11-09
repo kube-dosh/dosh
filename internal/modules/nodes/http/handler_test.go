@@ -56,6 +56,10 @@ func (r *httpNodesRepository) ListNodes(_ context.Context, query domain.ListQuer
 	r.lastNodeQuery = query
 	return r.nodes, r.listErr
 }
+func (r *httpNodesRepository) ListNodesPage(ctx context.Context, query domain.ListQuery, page domain.PageRequest) (domain.PageResult[domain.NodeSummary], error) {
+	items, err := r.ListNodes(ctx, query)
+	return domain.PaginateSlice(items, page), err
+}
 
 func (r *httpNodesRepository) GetNode(_ context.Context, name string) (domain.NodeDetail, error) {
 	r.lastNodeName = name
@@ -91,6 +95,10 @@ func (r *httpNodesRepository) ListPodsForNode(_ context.Context, name string) ([
 func (r *httpNodesRepository) ListNamespaces(_ context.Context, query domain.ListQuery) ([]domain.Namespace, error) {
 	r.lastNSQuery = query
 	return r.namespaces, r.namespacesErr
+}
+func (r *httpNodesRepository) ListNamespacesPage(ctx context.Context, query domain.ListQuery, page domain.PageRequest) (domain.PageResult[domain.Namespace], error) {
+	items, err := r.ListNamespaces(ctx, query)
+	return domain.PaginateSlice(items, page), err
 }
 
 func (r *httpNodesRepository) CreateNamespace(_ context.Context, spec domain.NamespaceCreateSpec) (domain.Namespace, error) {

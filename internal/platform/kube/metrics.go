@@ -25,6 +25,17 @@ func (c *Client) nodeMetrics(ctx context.Context) map[string]domain.ResourceUsag
 	return out
 }
 
+func (c *Client) nodeMetric(ctx context.Context, name string) (domain.ResourceUsage, bool) {
+	if !c.MetricsAvailable(ctx) {
+		return domain.ResourceUsage{}, false
+	}
+	item, err := c.metrics.MetricsV1beta1().NodeMetricses().Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		return domain.ResourceUsage{}, false
+	}
+	return usageFromQuantity(item.Usage, nil), true
+}
+
 func (c *Client) podMetrics(ctx context.Context, namespace string) map[string]domain.ResourceUsage {
 	if !c.MetricsAvailable(ctx) {
 		return nil

@@ -26,6 +26,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useCapabilities } from "@/features/auth/use-session";
 import { DeploymentCreateDialog } from "@/features/workloads/deployment-create-dialog";
+import { cursorPaginationProps, useCursorPagination } from "@/hooks/use-cursor-pagination";
 import { workloadCapabilities } from "@/lib/capabilities";
 import { formatAge } from "@/lib/utils";
 
@@ -42,6 +43,7 @@ export function WorkloadsPage() {
   const namespace = search.namespace ?? "";
   const kind = search.kind ?? "";
   const status = search.status ?? "";
+  const pager = useCursorPagination(`workloads|${namespace}|${kind}|${status}|${q}`, 20);
   const [createOpen, setCreateOpen] = useState(false);
   const [scaling, setScaling] = useState<WorkloadSummary>();
   const [replicas, setReplicas] = useState("1");
@@ -52,8 +54,8 @@ export function WorkloadsPage() {
     void navigate({ to: "/workloads", search: { ...search, ...patch }, replace: true });
   };
   const query = useQuery({
-    queryKey: ["workloads", namespace, kind, status, q],
-    queryFn: () => api.workloads({ namespace, kind, status, q }),
+    queryKey: ["workloads", namespace, kind, status, q, pager.page, pager.cursor],
+    queryFn: () => api.workloads({ namespace, kind, status, q, page: pager.page, pageSize: pager.pageSize, cursor: pager.cursor }),
     refetchInterval: 20_000,
   });
   const capabilities = useCapabilities(namespace || undefined).data;
@@ -111,7 +113,7 @@ export function WorkloadsPage() {
             {statuses.map((item) => <SelectItem key={item} value={item}>{item}</SelectItem>)}
           </SelectContent>
         </Select>
-        <span className="text-xs text-muted-foreground sm:ml-auto">{query.data?.meta.total ?? 0} 个工作负载</span>
+        <span className="text-xs text-muted-foreground sm:ml-auto">{query.data?.meta.totalKnown ? `共 ${query.data.meta.total} 个工作负载` : `已加载 ${query.data?.items.length ?? 0} 个工作负载`}</span>
       </div>
       <DataTable
         columns={[
@@ -127,6 +129,7 @@ export function WorkloadsPage() {
         ]}
         data={query.data?.items ?? []}
         loading={query.isLoading}
+        pagination={cursorPaginationProps(pager, query.data?.meta, query.data?.items.length ?? 0)}
         onRowClick={(row) => void navigate({ to: "/workloads/$kind/$namespace/$name", params: { kind: row.kind.toLowerCase(), namespace: row.namespace, name: row.name } })}
         empty={<div className="flex flex-col items-center gap-2"><Boxes className="h-6 w-6" /><span>没有匹配的工作负载</span></div>}
       />

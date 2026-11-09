@@ -79,6 +79,7 @@ const problemMessages: Record<string, string> = {
   dependency_unavailable: "集群服务暂不可用，请稍后重试",
   not_supported: "当前资源或操作不受支持",
   rate_limited: "操作过于频繁，请稍后重试",
+  stale_cursor: "列表数据已更新，请刷新后重试",
   internal_error: "服务端处理失败，请稍后重试",
   request_failed: "请求失败，请稍后重试",
 };
@@ -127,10 +128,19 @@ function record<T>(value: Record<string, T> | null | undefined): Record<string, 
 
 function normalizeList<T>(value: ListResponse<T>): ListResponse<T> {
   const items = list(value.items);
+  const pageSize = value.meta?.pageSize ?? Math.max(items.length, 1);
   return {
     ...value,
     items,
-    meta: value.meta ?? { total: items.length, page: 1, pageSize: Math.max(items.length, 1), totalPages: items.length ? 1 : 0 },
+    meta: value.meta ?? {
+      total: items.length,
+      totalKnown: true,
+      page: 1,
+      pageSize,
+      totalPages: items.length ? 1 : 0,
+      hasMore: false,
+      warnings: [],
+    },
   };
 }
 

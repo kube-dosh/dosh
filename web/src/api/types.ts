@@ -66,9 +66,14 @@ export interface AuthConfig {
 
 export interface ListMeta {
   total: number;
+  totalKnown: boolean;
   page: number;
   pageSize: number;
   totalPages: number;
+  hasMore: boolean;
+  nextCursor?: string;
+  truncated?: boolean;
+  warnings?: string[];
   sort?: string;
   order?: "asc" | "desc";
   filters?: Record<string, string>;
@@ -725,6 +730,7 @@ export interface ListParams {
   objectName?: string;
   page?: number;
   pageSize?: number;
+  cursor?: string;
   sort?: string;
   order?: "asc" | "desc";
 }

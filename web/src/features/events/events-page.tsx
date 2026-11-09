@@ -15,6 +15,7 @@ import { Button } from "@/components/ui/button";
 import { eventMessageColumn } from "@/features/events/event-columns";
 import { EventObjectLink } from "@/features/events/event-object-link";
 import { mergeEventRows, useEventStream } from "@/features/events/use-event-stream";
+import { cursorPaginationProps, useCursorPagination } from "@/hooks/use-cursor-pagination";
 import { formatDate } from "@/lib/utils";
 
 const column = createColumnHelper<EventItem>();
@@ -24,17 +25,23 @@ export function EventsPage() {
   const navigate = useNavigate();
   const namespace = search.namespace ?? "";
   const q = search.q ?? "";
+  const pager = useCursorPagination(`events|${namespace}|${q}`, 50);
   const updateSearch = (patch: { q?: string; namespace?: string }) => {
     void navigate({ to: "/events", search: { ...search, ...patch }, replace: true });
   };
   const [live, setLive] = useState(false);
   const stream = useEventStream(namespace, live);
-  const query = useQuery({ queryKey: ["events", namespace, q], queryFn: () => api.events({ namespace, q, pageSize: 200, sort: "lastSeen", order: "desc" }), refetchInterval: live ? false : 20_000 });
+  const query = useQuery({
+    queryKey: ["events", namespace, q, pager.page, pager.cursor],
+    queryFn: () => api.events({ namespace, q, page: pager.page, pageSize: pager.pageSize, cursor: pager.cursor, sort: "lastSeen", order: "desc" }),
+    refetchInterval: live ? false : 20_000,
+  });
 
   const items = useMemo(() => {
+    if (pager.page > 1) return query.data?.items ?? [];
     return mergeEventRows(query.data?.items ?? [], stream.events, 500);
-  }, [query.data?.items, stream.events]);
-  const total = Math.max(query.data?.meta.total ?? 0, items.length);
+  }, [pager.page, query.data?.items, stream.events]);
+  const total = query.data?.meta.totalKnown ? Math.max(query.data.meta.total, items.length) : items.length;
   if (query.isError) return <ErrorState error={query.error} onRetry={() => void query.refetch()} />;
   return (
     <>
@@ -59,6 +66,7 @@ export function EventsPage() {
         ]}
         data={items}
         loading={query.isLoading}
+        pagination={cursorPaginationProps(pager, query.data?.meta, items.length)}
         stickyFirstColumn={false}
         empty={<div className="flex flex-col items-center gap-2"><Activity className="h-6 w-6" /><span>没有匹配的事件</span></div>}
         pageSize={50}

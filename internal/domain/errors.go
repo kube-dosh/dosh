@@ -13,6 +13,7 @@ var (
 	ErrUnavailable   = errors.New("dependency unavailable")
 	ErrUnsupported   = errors.New("operation not supported")
 	ErrRateLimited   = errors.New("too many requests")
+	ErrStaleCursor   = errors.New("pagination cursor expired")
 )
 
 // ValidationError carries a stable field-level reason for HTTP adapters.

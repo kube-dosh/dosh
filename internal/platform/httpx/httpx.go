@@ -39,9 +39,14 @@ func SetMaxBodyBytes(limit int64) {
 
 type ListMeta struct {
 	Total      int               `json:"total"`
+	TotalKnown bool              `json:"totalKnown"`
 	Page       int               `json:"page"`
 	PageSize   int               `json:"pageSize"`
 	TotalPages int               `json:"totalPages"`
+	HasMore    bool              `json:"hasMore"`
+	NextCursor string            `json:"nextCursor,omitempty"`
+	Truncated  bool              `json:"truncated,omitempty"`
+	Warnings   []string          `json:"warnings,omitempty"`
 	Sort       string            `json:"sort,omitempty"`
 	Order      string            `json:"order,omitempty"`
 	Filters    map[string]string `json:"filters,omitempty"`
@@ -57,6 +62,7 @@ type ListMeta struct {
 type ListOptions struct {
 	Page     int
 	PageSize int
+	Cursor   string
 	Sort     string
 	Order    string
 }
@@ -67,9 +73,10 @@ const (
 )
 
 func ParseListOptions(r *http.Request, allowedSorts []string) (ListOptions, error) {
-	options := ListOptions{Page: 1, Order: "asc"}
+	options := ListOptions{Page: 1, PageSize: defaultPageSize, Order: "asc"}
 	pageRaw := Query(r, "page")
 	pageSizeRaw := Query(r, "pageSize")
+	cursorRaw := Query(r, "cursor")
 	sortRaw := Query(r, "sort")
 	orderRaw := strings.ToLower(Query(r, "order"))
 
@@ -86,8 +93,12 @@ func ParseListOptions(r *http.Request, allowedSorts []string) (ListOptions, erro
 			return options, Validation("pageSize", "pageSize must be between 1 and 200")
 		}
 		options.PageSize = pageSize
-	} else if pageRaw != "" {
-		options.PageSize = defaultPageSize
+	}
+	if cursorRaw != "" {
+		if len(cursorRaw) > 8192 {
+			return options, Validation("cursor", "cursor is too long")
+		}
+		options.Cursor = cursorRaw
 	}
 
 	if sortRaw != "" {
@@ -117,16 +128,7 @@ func ParseListOptions(r *http.Request, allowedSorts []string) (ListOptions, erro
 
 func PageItems[T any](items []T, options ListOptions, filters map[string]string) ([]T, ListMeta) {
 	total := len(items)
-	if options.Sort != "" {
-		sort.SliceStable(items, func(i, j int) bool {
-			left := sortableField(items[i], options.Sort)
-			right := sortableField(items[j], options.Sort)
-			if options.Order == "desc" {
-				return left > right
-			}
-			return left < right
-		})
-	}
+	SortItems(items, options)
 
 	pageSize := options.PageSize
 	if pageSize <= 0 {
@@ -153,9 +155,50 @@ func PageItems[T any](items []T, options ListOptions, filters map[string]string)
 	}
 	return items[start:end], ListMeta{
 		Total:      total,
+		TotalKnown: true,
 		Page:       page,
 		PageSize:   pageSize,
 		TotalPages: totalPages,
+		HasMore:    end < total,
+		Sort:       options.Sort,
+		Order:      options.Order,
+		Filters:    filters,
+	}
+}
+
+// SortItems applies an allow-listed sort field to a bounded page. Kubernetes
+// pagination is opaque, so sorting is intentionally page-local; callers that
+// need a globally sorted collection must materialize it explicitly.
+func SortItems[T any](items []T, options ListOptions) {
+	if options.Sort == "" {
+		return
+	}
+	sort.SliceStable(items, func(i, j int) bool {
+		left := sortableField(items[i], options.Sort)
+		right := sortableField(items[j], options.Sort)
+		if options.Order == "desc" {
+			return left > right
+		}
+		return left < right
+	})
+}
+
+// PageMeta converts a repository page into the stable HTTP list contract.
+func PageMeta[T any](page domain.PageResult[T], options ListOptions, filters map[string]string) ListMeta {
+	totalPages := 0
+	if page.TotalKnown && page.Total > 0 && options.PageSize > 0 {
+		totalPages = (page.Total + options.PageSize - 1) / options.PageSize
+	}
+	return ListMeta{
+		Total:      page.Total,
+		TotalKnown: page.TotalKnown,
+		Page:       options.Page,
+		PageSize:   options.PageSize,
+		TotalPages: totalPages,
+		HasMore:    page.HasMore,
+		NextCursor: page.NextCursor,
+		Truncated:  page.Truncated,
+		Warnings:   page.Warnings,
 		Sort:       options.Sort,
 		Order:      options.Order,
 		Filters:    filters,
@@ -367,6 +410,8 @@ func ProblemFor(err error, requestID string) (int, Problem) {
 		status, code, message = http.StatusNotImplemented, "not_supported", "operation is not supported"
 	case errors.Is(err, domain.ErrRateLimited):
 		status, code, message = http.StatusTooManyRequests, "rate_limited", "too many requests; try again later"
+	case errors.Is(err, domain.ErrStaleCursor):
+		status, code, message = http.StatusBadRequest, "stale_cursor", "pagination cursor expired; refresh the list"
 	}
 	return status, Problem{Code: code, Message: message, RequestID: requestID, FieldErrors: fieldErrs}
 }

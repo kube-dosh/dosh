@@ -44,6 +44,10 @@ func (r *httpNetworkRepository) ListServices(_ context.Context, query domain.Lis
 	r.lastServiceQry = query
 	return r.services, r.servicesErr
 }
+func (r *httpNetworkRepository) ListServicesPage(ctx context.Context, query domain.ListQuery, page domain.PageRequest) (domain.PageResult[domain.ServiceSummary], error) {
+	items, err := r.ListServices(ctx, query)
+	return domain.PaginateSlice(items, page), err
+}
 
 func (r *httpNetworkRepository) GetService(_ context.Context, namespace, name string) (domain.ServiceDetail, error) {
 	r.lastServiceParams = [2]string{namespace, name}
@@ -74,6 +78,10 @@ func (r *httpNetworkRepository) ListIngresses(_ context.Context, query domain.Li
 	r.lastIngressQry = query
 	return r.ingresses, r.ingressesErr
 }
+func (r *httpNetworkRepository) ListIngressesPage(ctx context.Context, query domain.ListQuery, page domain.PageRequest) (domain.PageResult[domain.IngressSummary], error) {
+	items, err := r.ListIngresses(ctx, query)
+	return domain.PaginateSlice(items, page), err
+}
 
 func (r *httpNetworkRepository) GetIngress(_ context.Context, namespace, name string) (domain.IngressDetail, error) {
 	r.lastIngressParams = [2]string{namespace, name}
@@ -94,6 +102,10 @@ func (r *httpNetworkRepository) DeleteIngress(_ context.Context, namespace, name
 func (r *httpNetworkRepository) ListIngressClasses(_ context.Context, query domain.ListQuery) ([]domain.IngressClassSummary, error) {
 	r.lastIngressClassQry = query
 	return r.ingressClasses, r.ingressClassesErr
+}
+func (r *httpNetworkRepository) ListIngressClassesPage(ctx context.Context, query domain.ListQuery, page domain.PageRequest) (domain.PageResult[domain.IngressClassSummary], error) {
+	items, err := r.ListIngressClasses(ctx, query)
+	return domain.PaginateSlice(items, page), err
 }
 
 func networkTestRouter(repo *httpNetworkRepository) http.Handler {

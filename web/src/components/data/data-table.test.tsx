@@ -1,7 +1,7 @@
 import { render, screen } from "@testing-library/react";
 import { fireEvent } from "@testing-library/react";
 import { createColumnHelper } from "@tanstack/react-table";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { DataTable } from "@/components/data/data-table";
 
 interface Row {
@@ -116,5 +116,54 @@ describe("DataTable", () => {
     fireEvent.click(screen.getByRole("button", { name: "下一页" }));
     expect(screen.getByText("共 21 条 · 第 2 / 2 页")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "下一页" })).toBeDisabled();
+  });
+
+  it("delegates server pagination without slicing the current page again", () => {
+    const columns = [
+      column.accessor("name", { header: "名称" }),
+      column.accessor("status", { header: "状态" }),
+    ];
+    const onNext = vi.fn();
+    const onPrevious = vi.fn();
+
+    render(<DataTable
+      columns={columns}
+      data={[row]}
+      pageSize={20}
+      pagination={{
+        page: 2,
+        pageSize: 20,
+        total: 45,
+        totalKnown: true,
+        hasMore: true,
+        canPrevious: true,
+        onNext,
+        onPrevious,
+        warnings: ["结果已按单次扫描上限截断"],
+      }}
+    />);
+
+    expect(screen.getByRole("cell", { name: row.name })).toBeInTheDocument();
+    expect(screen.getByText("共 45 条 · 第 2 / 3 页")).toBeInTheDocument();
+    expect(screen.getByText("结果已按单次扫描上限截断")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "上一页" }));
+    fireEvent.click(screen.getByRole("button", { name: "下一页" }));
+    expect(onPrevious).toHaveBeenCalledOnce();
+    expect(onNext).toHaveBeenCalledOnce();
+  });
+
+  it("describes a lower-bound count for filtered cursor scans", () => {
+    const columns = [
+      column.accessor("name", { header: "名称" }),
+      column.accessor("status", { header: "状态" }),
+    ];
+
+    render(<DataTable
+      columns={columns}
+      data={[row]}
+      pagination={{ page: 3, pageSize: 20, total: 41, totalKnown: false, hasMore: true, canPrevious: true }}
+    />);
+
+    expect(screen.getByText("已加载 1 条 · 第 3 页 · 还有更多")).toBeInTheDocument();
   });
 });

@@ -55,6 +55,40 @@ func (c *Client) ListServices(ctx context.Context, query domain.ListQuery) ([]do
 	return out, nil
 }
 
+func (c *Client) ListServicesPage(ctx context.Context, query domain.ListQuery, page domain.PageRequest) (domain.PageResult[domain.ServiceSummary], error) {
+	ctx, cancel := c.withTimeout(ctx)
+	defer cancel()
+	namespace := query.Namespace
+	if namespace == "" {
+		namespace = metav1.NamespaceAll
+	}
+	endpointSlices, err := c.clientset.DiscoveryV1().EndpointSlices(namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return domain.PageResult[domain.ServiceSummary]{}, mapKubeError(err)
+	}
+	endpointCounts := readyEndpointCounts(endpointSlices.Items)
+	return listPage(ctx, page, query.Search != "", func(options metav1.ListOptions) ([]corev1.Service, metav1.ListMeta, error) {
+		items, err := c.clientset.CoreV1().Services(namespace).List(ctx, options)
+		if err != nil {
+			return nil, metav1.ListMeta{}, mapKubeError(err)
+		}
+		return items.Items, items.ListMeta, nil
+	}, func(item corev1.Service) domain.ServiceSummary {
+		summary := serviceSummary(item)
+		summary.EndpointCount = endpointCounts[serviceEndpointKey(item.Namespace, item.Name)]
+		return summary
+	}, func(summary domain.ServiceSummary) bool {
+		if query.Search == "" {
+			return true
+		}
+		fields := []string{summary.Name, summary.Namespace, summary.Type, summary.ClusterIP, summary.ExternalIP}
+		if summary.Headless {
+			fields = append(fields, "Headless")
+		}
+		return matchesSearch(fields, query.Search)
+	})
+}
+
 func (c *Client) GetService(ctx context.Context, namespace, name string) (domain.ServiceDetail, error) {
 	ctx, cancel := c.withTimeout(ctx)
 	defer cancel()
@@ -318,6 +352,40 @@ func (c *Client) ListIngresses(ctx context.Context, query domain.ListQuery) ([]d
 	return out, nil
 }
 
+func (c *Client) ListIngressesPage(ctx context.Context, query domain.ListQuery, page domain.PageRequest) (domain.PageResult[domain.IngressSummary], error) {
+	ctx, cancel := c.withTimeout(ctx)
+	defer cancel()
+	namespace := query.Namespace
+	if namespace == "" {
+		namespace = metav1.NamespaceAll
+	}
+	services, err := c.clientset.CoreV1().Services(namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return domain.PageResult[domain.IngressSummary]{}, mapKubeError(err)
+	}
+	endpointSlices, err := c.clientset.DiscoveryV1().EndpointSlices(namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return domain.PageResult[domain.IngressSummary]{}, mapKubeError(err)
+	}
+	servicePorts := servicePortIndexes(services.Items)
+	endpointCounts := readyEndpointCounts(endpointSlices.Items)
+	return listPage(ctx, page, query.Search != "", func(options metav1.ListOptions) ([]networkingv1.Ingress, metav1.ListMeta, error) {
+		items, err := c.clientset.NetworkingV1().Ingresses(namespace).List(ctx, options)
+		if err != nil {
+			return nil, metav1.ListMeta{}, mapKubeError(err)
+		}
+		return items.Items, items.ListMeta, nil
+	}, func(item networkingv1.Ingress) domain.IngressSummary {
+		summary := ingressSummary(item)
+		for index := range summary.Paths {
+			summary.Paths[index].TargetStatus = ingressTargetStatus(item.Namespace, summary.Paths[index], servicePorts, endpointCounts)
+		}
+		return summary
+	}, func(summary domain.IngressSummary) bool {
+		return query.Search == "" || matchesSearch(append([]string{summary.Name, summary.Namespace, summary.Class}, ingressHosts(summary)...), query.Search)
+	})
+}
+
 func (c *Client) GetIngress(ctx context.Context, namespace, name string) (domain.IngressDetail, error) {
 	ctx, cancel := c.withTimeout(ctx)
 	defer cancel()
@@ -545,4 +613,25 @@ func (c *Client) ListIngressClasses(ctx context.Context, query domain.ListQuery)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out, nil
+}
+
+func (c *Client) ListIngressClassesPage(ctx context.Context, query domain.ListQuery, page domain.PageRequest) (domain.PageResult[domain.IngressClassSummary], error) {
+	ctx, cancel := c.withTimeout(ctx)
+	defer cancel()
+	return listPage(ctx, page, query.Search != "", func(options metav1.ListOptions) ([]networkingv1.IngressClass, metav1.ListMeta, error) {
+		items, err := c.clientset.NetworkingV1().IngressClasses().List(ctx, options)
+		if err != nil {
+			return nil, metav1.ListMeta{}, mapKubeError(err)
+		}
+		return items.Items, items.ListMeta, nil
+	}, func(item networkingv1.IngressClass) domain.IngressClassSummary {
+		return domain.IngressClassSummary{
+			Name:       item.Name,
+			Controller: item.Spec.Controller,
+			Default:    item.Annotations["ingressclass.kubernetes.io/is-default-class"] == "true",
+			CreatedAt:  item.CreationTimestamp.Time,
+		}
+	}, func(summary domain.IngressClassSummary) bool {
+		return query.Search == "" || matchesSearch([]string{summary.Name, summary.Controller}, query.Search)
+	})
 }

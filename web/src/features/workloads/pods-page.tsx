@@ -15,6 +15,7 @@ import { DeleteResourceDialog } from "@/components/resources/delete-resource-dia
 import { ResourceActionsMenu, type ResourceAction } from "@/components/resources/resource-actions-menu";
 import { YamlDialog } from "@/components/resources/yaml-dialog";
 import { useCapabilities } from "@/features/auth/use-session";
+import { cursorPaginationProps, useCursorPagination } from "@/hooks/use-cursor-pagination";
 import { resourceCapabilities } from "@/lib/capabilities";
 import { formatAge, formatCPU, formatMemory } from "@/lib/utils";
 
@@ -25,6 +26,7 @@ export function PodsPage() {
   const navigate = useNavigate();
   const q = search.q ?? "";
   const namespace = search.namespace ?? "";
+  const pager = useCursorPagination(`pods|${namespace}|${q}`, 20);
   const [deleting, setDeleting] = useState<PodSummary>();
   const [yamlTarget, setYamlTarget] = useState<PodSummary>();
   const capabilities = useCapabilities(namespace || undefined).data;
@@ -33,8 +35,8 @@ export function PodsPage() {
     void navigate({ to: "/pods", search: { ...search, ...patch }, replace: true });
   };
   const query = useQuery({
-    queryKey: ["pods", namespace, q],
-    queryFn: () => api.pods({ namespace, q }),
+    queryKey: ["pods", namespace, q, pager.page, pager.cursor],
+    queryFn: () => api.pods({ namespace, q, page: pager.page, pageSize: pager.pageSize, cursor: pager.cursor }),
     refetchInterval: 15_000,
   });
   const metricsAvailable = query.data?.items.some((item) => item.hasMetrics) ?? false;
@@ -51,7 +53,7 @@ export function PodsPage() {
       <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center">
         <SearchInput value={q} onChange={(value) => updateSearch({ q: value || undefined })} placeholder="搜索 Pod 名称" />
         <NamespaceSelect value={namespace} onChange={(value) => updateSearch({ namespace: value || undefined })} />
-        <span className="text-xs text-muted-foreground sm:ml-auto">{query.data?.meta.total ?? 0} 个 Pod</span>
+        <span className="text-xs text-muted-foreground sm:ml-auto">{query.data?.meta.totalKnown ? `共 ${query.data.meta.total} 个 Pod` : `已加载 ${query.data?.items.length ?? 0} 个 Pod`}</span>
       </div>
       <DataTable
         columns={[
@@ -72,6 +74,7 @@ export function PodsPage() {
         ]}
         data={query.data?.items ?? []}
         loading={query.isLoading}
+        pagination={cursorPaginationProps(pager, query.data?.meta, query.data?.items.length ?? 0)}
         onRowClick={(row) => void navigate({ to: "/pods/$namespace/$name", params: { namespace: row.namespace, name: row.name } })}
         empty={<div className="flex flex-col items-center gap-2"><CircleDot className="h-6 w-6" /><span>没有匹配的 Pod</span></div>}
       />

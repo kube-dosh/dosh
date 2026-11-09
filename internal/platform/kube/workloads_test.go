@@ -242,6 +242,50 @@ func TestListWorkloadsAggregatesFiltersSortsAndCountsRestarts(t *testing.T) {
 	}
 }
 
+func TestListWorkloadsPageFillsAcrossKindsAndTracksExactTotal(t *testing.T) {
+	replicas := int32(1)
+	client, _ := newFakeKubeClient(
+		&appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "deployment-a", Namespace: "prod"}, Spec: appsv1.DeploymentSpec{Replicas: &replicas}},
+		&appsv1.StatefulSet{ObjectMeta: metav1.ObjectMeta{Name: "statefulset-a", Namespace: "prod"}, Spec: appsv1.StatefulSetSpec{Replicas: &replicas}},
+		&appsv1.DaemonSet{ObjectMeta: metav1.ObjectMeta{Name: "daemonset-a", Namespace: "prod"}},
+		&batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: "job-a", Namespace: "prod"}},
+		&batchv1.CronJob{ObjectMeta: metav1.ObjectMeta{Name: "cronjob-a", Namespace: "prod"}},
+	)
+
+	first, err := client.ListWorkloadsPage(context.Background(), domain.ListQuery{Namespace: "prod"}, domain.PageRequest{Number: 1, Size: 2})
+	if err != nil {
+		t.Fatalf("first page: %v", err)
+	}
+	if len(first.Items) != 2 || first.Items[0].Name != "deployment-a" || first.Items[1].Name != "statefulset-a" {
+		t.Fatalf("first page items = %#v", first.Items)
+	}
+	if first.TotalKnown || first.Total != 2 || !first.HasMore || first.NextCursor == "" {
+		t.Fatalf("first page metadata = %#v", first)
+	}
+
+	second, err := client.ListWorkloadsPage(context.Background(), domain.ListQuery{Namespace: "prod"}, domain.PageRequest{Number: 2, Size: 2, Cursor: first.NextCursor})
+	if err != nil {
+		t.Fatalf("second page: %v", err)
+	}
+	if len(second.Items) != 2 || second.Items[0].Name != "daemonset-a" || second.Items[1].Name != "job-a" {
+		t.Fatalf("second page items = %#v", second.Items)
+	}
+	if second.TotalKnown || second.Total != 4 || !second.HasMore {
+		t.Fatalf("second page metadata = %#v", second)
+	}
+
+	third, err := client.ListWorkloadsPage(context.Background(), domain.ListQuery{Namespace: "prod"}, domain.PageRequest{Number: 3, Size: 2, Cursor: second.NextCursor})
+	if err != nil {
+		t.Fatalf("third page: %v", err)
+	}
+	if len(third.Items) != 1 || third.Items[0].Name != "cronjob-a" {
+		t.Fatalf("third page items = %#v", third.Items)
+	}
+	if third.HasMore || !third.TotalKnown || third.Total != 5 {
+		t.Fatalf("third page metadata = %#v", third)
+	}
+}
+
 func TestWorkloadSummaryStatusBranches(t *testing.T) {
 	completed := batchv1.Job{Status: batchv1.JobStatus{Conditions: []batchv1.JobCondition{{Type: batchv1.JobComplete, Status: corev1.ConditionTrue}}}}
 	if summary := jobSummary(completed); summary.Status != "Complete" {

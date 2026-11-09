@@ -16,7 +16,7 @@ import { useOverviewQuery } from "@/features/overview/use-overview-query";
 
 export function OverviewPage() {
   const overview = useOverviewQuery();
-  const nodes = useQuery({ queryKey: ["nodes", "overview"], queryFn: () => api.nodes(), staleTime: 15_000 });
+  const nodes = useQuery({ queryKey: ["nodes", "overview"], queryFn: () => api.nodes({ pageSize: 200 }), staleTime: 15_000 });
   if (overview.isLoading) return <LoadingState label="正在加载集群总览" className="min-h-[60vh]" />;
   if (overview.isError) return <ErrorState error={overview.error} onRetry={() => void overview.refetch()} />;
   const data = overview.data!;

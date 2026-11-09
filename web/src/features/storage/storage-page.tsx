@@ -21,6 +21,7 @@ import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useCapabilities } from "@/features/auth/use-session";
 import { PersistentVolumeClaimFormDialog } from "@/features/storage/persistent-volume-claim-form-dialog";
+import { cursorPaginationProps, useCursorPagination } from "@/hooks/use-cursor-pagination";
 import { resourceCapabilities } from "@/lib/capabilities";
 import { formatAge, formatMemory } from "@/lib/utils";
 
@@ -35,6 +36,9 @@ export function StoragePage() {
   const q = search.q ?? "";
   const namespace = search.namespace ?? "";
   const tab = search.tab === "volumes" || search.tab === "claims" ? search.tab : "classes";
+  const classPager = useCursorPagination(`storageclasses|${q}`, 20);
+  const volumePager = useCursorPagination(`persistentvolumes|${q}`, 20);
+  const claimPager = useCursorPagination(`persistentvolumeclaims|${namespace}|${q}`, 20);
   const [claimFormOpen, setClaimFormOpen] = useState(false);
   const [editingClaim, setEditingClaim] = useState<PersistentVolumeClaimDetail>();
   const [deletingClaim, setDeletingClaim] = useState<PersistentVolumeClaim>();
@@ -42,9 +46,18 @@ export function StoragePage() {
   const updateSearch = (patch: { q?: string; namespace?: string; tab?: string }) => {
     void navigate({ to: "/storage", search: { ...search, ...patch }, replace: true });
   };
-  const classes = useQuery({ queryKey: ["storageclasses", q], queryFn: () => api.storageclasses({ q }) });
-  const volumes = useQuery({ queryKey: ["persistentvolumes", q], queryFn: () => api.persistentvolumes({ q }) });
-  const claims = useQuery({ queryKey: ["persistentvolumeclaims", namespace, q], queryFn: () => api.persistentvolumeclaims({ namespace, q }) });
+  const classes = useQuery({
+    queryKey: ["storageclasses", q, classPager.page, classPager.cursor],
+    queryFn: () => api.storageclasses({ q, page: classPager.page, pageSize: classPager.pageSize, cursor: classPager.cursor }),
+  });
+  const volumes = useQuery({
+    queryKey: ["persistentvolumes", q, volumePager.page, volumePager.cursor],
+    queryFn: () => api.persistentvolumes({ q, page: volumePager.page, pageSize: volumePager.pageSize, cursor: volumePager.cursor }),
+  });
+  const claims = useQuery({
+    queryKey: ["persistentvolumeclaims", namespace, q, claimPager.page, claimPager.cursor],
+    queryFn: () => api.persistentvolumeclaims({ namespace, q, page: claimPager.page, pageSize: claimPager.pageSize, cursor: claimPager.cursor }),
+  });
   const capabilities = useCapabilities(namespace || undefined).data;
   const claimCaps = resourceCapabilities(capabilities, "persistentvolumeclaims");
   const noClasses = !classes.isLoading && !classes.isError && !classes.data?.items.length;
@@ -83,7 +96,7 @@ export function StoragePage() {
       {noClasses ? <div className="mb-4 rounded-lg border border-warning/35 bg-warning/10 px-4 py-3 text-sm text-warning"><HardDrive className="mr-2 inline h-4 w-4" />当前集群没有 StorageClass，不支持动态持久化卷申请。已有 PV/PVC 仍可正常查看。</div> : null}
       <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center"><SearchInput value={q} onChange={(value) => updateSearch({ q: value || undefined })} placeholder="搜索存储资源" /><NamespaceSelect value={namespace} onChange={(value) => updateSearch({ namespace: value || undefined })} /></div>
       <Tabs value={tab} onValueChange={(value) => updateSearch({ tab: value === "classes" ? undefined : value })}>
-        <TabsList><TabsTrigger value="classes">StorageClass ({classes.data?.meta.total ?? 0})</TabsTrigger><TabsTrigger value="volumes">PV ({volumes.data?.meta.total ?? 0})</TabsTrigger><TabsTrigger value="claims">PVC ({claims.data?.meta.total ?? 0})</TabsTrigger></TabsList>
+        <TabsList><TabsTrigger value="classes">StorageClass ({classes.data?.meta.totalKnown ? classes.data.meta.total : classes.data?.items.length ?? 0})</TabsTrigger><TabsTrigger value="volumes">PV ({volumes.data?.meta.totalKnown ? volumes.data.meta.total : volumes.data?.items.length ?? 0})</TabsTrigger><TabsTrigger value="claims">PVC ({claims.data?.meta.totalKnown ? claims.data.meta.total : claims.data?.items.length ?? 0})</TabsTrigger></TabsList>
         <TabsContent value="classes">
           {classes.isError ? <ErrorState error={classes.error} onRetry={() => void classes.refetch()} /> : noClasses ? <EmptyState title="没有 StorageClass" description="当前集群未安装动态存储供应器。需要持久卷时请先安装 CSI Driver 并创建 StorageClass。" /> : (
             <DataTable columns={[
@@ -94,7 +107,7 @@ export function StoragePage() {
               classColumn.accessor("volumeBinding", { header: "绑定模式" }),
               classColumn.accessor("createdAt", { header: "年龄", cell: (info) => formatAge(info.getValue()) }),
               classColumn.display({ id: "actions", header: "操作", size: 56, cell: (info) => <ResourceActionsMenu resource={`StorageClass ${info.row.original.name}`} actions={classActions(info.row.original)} /> }),
-            ]} data={classes.data?.items ?? []} loading={classes.isLoading} empty="没有 StorageClass" />
+            ]} data={classes.data?.items ?? []} loading={classes.isLoading} pagination={cursorPaginationProps(classPager, classes.data?.meta, classes.data?.items.length ?? 0)} empty="没有 StorageClass" />
           )}
         </TabsContent>
         <TabsContent value="volumes">
@@ -113,7 +126,7 @@ export function StoragePage() {
               pvColumn.accessor("reclaimPolicy", { header: "回收策略" }),
               pvColumn.accessor("createdAt", { header: "年龄", cell: (info) => formatAge(info.getValue()) }),
               pvColumn.display({ id: "actions", header: "操作", size: 56, cell: (info) => <ResourceActionsMenu resource={`PersistentVolume ${info.row.original.name}`} actions={volumeActions(info.row.original)} /> }),
-            ]} data={volumes.data?.items ?? []} loading={volumes.isLoading} empty="没有 PersistentVolume" />
+            ]} data={volumes.data?.items ?? []} loading={volumes.isLoading} pagination={cursorPaginationProps(volumePager, volumes.data?.meta, volumes.data?.items.length ?? 0)} empty="没有 PersistentVolume" />
           )}
         </TabsContent>
         <TabsContent value="claims">
@@ -128,7 +141,7 @@ export function StoragePage() {
               pvcColumn.accessor("accessModes", { header: "访问模式", enableSorting: false, cell: (info) => <span className="font-mono text-xs">{info.getValue().join(", ")}</span> }),
               pvcColumn.accessor("createdAt", { header: "年龄", cell: (info) => formatAge(info.getValue()) }),
               pvcColumn.display({ id: "actions", header: "操作", size: 56, cell: (info) => <ResourceActionsMenu resource={`PVC ${info.row.original.namespace}/${info.row.original.name}`} actions={claimActions(info.row.original)} /> }),
-            ]} data={claims.data?.items ?? []} loading={claims.isLoading} empty={<div className="flex flex-col items-center gap-2"><Database className="h-6 w-6" /><span>没有 PVC</span></div>} />
+            ]} data={claims.data?.items ?? []} loading={claims.isLoading} pagination={cursorPaginationProps(claimPager, claims.data?.meta, claims.data?.items.length ?? 0)} empty={<div className="flex flex-col items-center gap-2"><Database className="h-6 w-6" /><span>没有 PVC</span></div>} />
           )}
         </TabsContent>
       </Tabs>

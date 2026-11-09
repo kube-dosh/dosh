@@ -21,14 +21,15 @@ func (h *Handler) StorageClasses(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		httpx.Error(w, r, err)
 		return
 	}
-	items, err := h.service.ListStorageClasses(r.Context(), query)
+	result, err := h.service.ListStorageClassesPage(r.Context(), query, domain.PageRequest{Number: options.Page, Size: options.PageSize, Cursor: options.Cursor})
 	if err != nil {
 		httpx.Error(w, r, err)
 		return
 	}
-	items, meta := httpx.PageItems(items, options, map[string]string{"search": query.Search})
+	httpx.SortItems(result.Items, options)
+	meta := httpx.PageMeta(result, options, map[string]string{"search": query.Search})
 	meta.Search = query.Search
-	httpx.JSONList(w, items, meta)
+	httpx.JSONList(w, result.Items, meta)
 }
 
 func (h *Handler) PersistentVolumes(w stdhttp.ResponseWriter, r *stdhttp.Request) {
@@ -38,14 +39,15 @@ func (h *Handler) PersistentVolumes(w stdhttp.ResponseWriter, r *stdhttp.Request
 		httpx.Error(w, r, err)
 		return
 	}
-	items, err := h.service.ListPersistentVolumes(r.Context(), query)
+	result, err := h.service.ListPersistentVolumesPage(r.Context(), query, domain.PageRequest{Number: options.Page, Size: options.PageSize, Cursor: options.Cursor})
 	if err != nil {
 		httpx.Error(w, r, err)
 		return
 	}
-	items, meta := httpx.PageItems(items, options, map[string]string{"search": query.Search})
+	httpx.SortItems(result.Items, options)
+	meta := httpx.PageMeta(result, options, map[string]string{"search": query.Search})
 	meta.Search = query.Search
-	httpx.JSONList(w, items, meta)
+	httpx.JSONList(w, result.Items, meta)
 }
 
 func (h *Handler) PersistentVolumeClaims(w stdhttp.ResponseWriter, r *stdhttp.Request) {
@@ -55,14 +57,15 @@ func (h *Handler) PersistentVolumeClaims(w stdhttp.ResponseWriter, r *stdhttp.Re
 		httpx.Error(w, r, err)
 		return
 	}
-	items, err := h.service.ListPersistentVolumeClaims(r.Context(), query)
+	result, err := h.service.ListPersistentVolumeClaimsPage(r.Context(), query, domain.PageRequest{Number: options.Page, Size: options.PageSize, Cursor: options.Cursor})
 	if err != nil {
 		httpx.Error(w, r, err)
 		return
 	}
-	items, meta := httpx.PageItems(items, options, map[string]string{"namespace": query.Namespace, "search": query.Search})
+	httpx.SortItems(result.Items, options)
+	meta := httpx.PageMeta(result, options, map[string]string{"namespace": query.Namespace, "search": query.Search})
 	meta.Namespace, meta.Search = query.Namespace, query.Search
-	httpx.JSONList(w, items, meta)
+	httpx.JSONList(w, result.Items, meta)
 }
 
 func (h *Handler) StorageClass(w stdhttp.ResponseWriter, r *stdhttp.Request) {

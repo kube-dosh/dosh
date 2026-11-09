@@ -52,6 +52,10 @@ func (f *fakeRepository) ListWorkloads(_ context.Context, query domain.ListQuery
 	f.lastListQuery = query
 	return f.workloads, f.workloadsErr
 }
+func (f *fakeRepository) ListWorkloadsPage(ctx context.Context, query domain.ListQuery, page domain.PageRequest) (domain.PageResult[domain.WorkloadSummary], error) {
+	items, err := f.ListWorkloads(ctx, query)
+	return domain.PaginateSlice(items, page), err
+}
 func (f *fakeRepository) GetWorkload(_ context.Context, kind, namespace, name string) (domain.WorkloadDetail, error) {
 	f.lastKind, f.lastNamespace, f.lastName = kind, namespace, name
 	return f.workloadDetail, f.workloadErr
@@ -101,6 +105,10 @@ func (f *fakeRepository) DeleteWorkload(_ context.Context, _ string, _ string, _
 func (f *fakeRepository) ListPods(_ context.Context, query domain.ListQuery) ([]domain.PodSummary, error) {
 	f.lastListQuery = query
 	return f.pods, f.podsErr
+}
+func (f *fakeRepository) ListPodsPage(ctx context.Context, query domain.ListQuery, page domain.PageRequest) (domain.PageResult[domain.PodSummary], error) {
+	items, err := f.ListPods(ctx, query)
+	return domain.PaginateSlice(items, page), err
 }
 func (f *fakeRepository) GetPod(_ context.Context, namespace, name string) (domain.PodDetail, error) {
 	f.lastNamespace, f.lastName = namespace, name

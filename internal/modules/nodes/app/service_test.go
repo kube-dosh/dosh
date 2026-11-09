@@ -46,6 +46,10 @@ type nodesRepository struct {
 func (r *nodesRepository) ListNodes(context.Context, domain.ListQuery) ([]domain.NodeSummary, error) {
 	return r.nodes, r.nodesErr
 }
+func (r *nodesRepository) ListNodesPage(ctx context.Context, query domain.ListQuery, page domain.PageRequest) (domain.PageResult[domain.NodeSummary], error) {
+	items, err := r.ListNodes(ctx, query)
+	return domain.PaginateSlice(items, page), err
+}
 func (r *nodesRepository) GetNode(context.Context, string) (domain.NodeDetail, error) {
 	return r.detail, r.detailErr
 }
@@ -70,6 +74,10 @@ func (r *nodesRepository) ListPodsForNode(context.Context, string) ([]domain.Pod
 }
 func (r *nodesRepository) ListNamespaces(context.Context, domain.ListQuery) ([]domain.Namespace, error) {
 	return r.namespaces, r.nsErr
+}
+func (r *nodesRepository) ListNamespacesPage(ctx context.Context, query domain.ListQuery, page domain.PageRequest) (domain.PageResult[domain.Namespace], error) {
+	items, err := r.ListNamespaces(ctx, query)
+	return domain.PaginateSlice(items, page), err
 }
 func (r *nodesRepository) CreateNamespace(_ context.Context, spec domain.NamespaceCreateSpec) (domain.Namespace, error) {
 	r.createNSCalls++

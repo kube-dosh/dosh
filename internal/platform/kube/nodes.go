@@ -8,6 +8,7 @@ import (
 
 	"dosh/internal/domain"
 
+	"golang.org/x/sync/errgroup"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -58,6 +59,60 @@ func (c *Client) ListNodes(ctx context.Context, query domain.ListQuery) ([]domai
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out, nil
+}
+
+func (c *Client) ListNodesPage(ctx context.Context, query domain.ListQuery, page domain.PageRequest) (domain.PageResult[domain.NodeSummary], error) {
+	ctx, cancel := c.withTimeout(ctx)
+	defer cancel()
+	result, err := listPage(ctx, page, query.Search != "", func(options metav1.ListOptions) ([]corev1.Node, metav1.ListMeta, error) {
+		items, err := c.clientset.CoreV1().Nodes().List(ctx, options)
+		if err != nil {
+			return nil, metav1.ListMeta{}, mapKubeError(err)
+		}
+		return items.Items, items.ListMeta, nil
+	}, func(node corev1.Node) domain.NodeSummary {
+		return nodeSummary(node, nodeUsage{})
+	}, func(summary domain.NodeSummary) bool {
+		return query.Search == "" || matchesSearch([]string{summary.Name, summary.InternalIP, summary.OSImage}, query.Search)
+	})
+	if err != nil {
+		return domain.PageResult[domain.NodeSummary]{}, err
+	}
+	if err := c.enrichNodePage(ctx, result.Items); err != nil {
+		return domain.PageResult[domain.NodeSummary]{}, err
+	}
+	return result, nil
+}
+
+func (c *Client) enrichNodePage(ctx context.Context, nodes []domain.NodeSummary) error {
+	group, groupCtx := errgroup.WithContext(ctx)
+	group.SetLimit(4)
+	for index := range nodes {
+		index := index
+		group.Go(func() error {
+			pods, err := c.clientset.CoreV1().Pods(metav1.NamespaceAll).List(groupCtx, metav1.ListOptions{
+				FieldSelector: nodeFieldSelector(nodes[index].Name),
+			})
+			if err != nil {
+				return mapKubeError(err)
+			}
+			nodes[index] = nodeSummaryFromSummary(nodes[index], nodeUsageFromPods(pods.Items))
+			if usage, ok := c.nodeMetric(groupCtx, nodes[index].Name); ok {
+				nodes[index].CPUUsageMilli = usage.CPUUsageMilli
+				nodes[index].MemoryUsageBytes = usage.MemoryUsageBytes
+				nodes[index].HasMetrics = true
+			}
+			return nil
+		})
+	}
+	return group.Wait()
+}
+
+func nodeSummaryFromSummary(base domain.NodeSummary, usage nodeUsage) domain.NodeSummary {
+	base.PodCount = usage.count
+	base.CPURequestsMilli = usage.cpuRequestsMilli
+	base.MemoryRequestsBytes = usage.memRequestsBytes
+	return base
 }
 
 func (c *Client) GetNode(ctx context.Context, name string) (domain.NodeDetail, error) {
@@ -309,6 +364,25 @@ func (c *Client) ListNamespaces(ctx context.Context, query domain.ListQuery) ([]
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out, nil
+}
+
+func (c *Client) ListNamespacesPage(ctx context.Context, query domain.ListQuery, page domain.PageRequest) (domain.PageResult[domain.Namespace], error) {
+	ctx, cancel := c.withTimeout(ctx)
+	defer cancel()
+	return listPage(ctx, page, query.Search != "", func(options metav1.ListOptions) ([]corev1.Namespace, metav1.ListMeta, error) {
+		items, err := c.clientset.CoreV1().Namespaces().List(ctx, options)
+		if err != nil {
+			return nil, metav1.ListMeta{}, mapKubeError(err)
+		}
+		return items.Items, items.ListMeta, nil
+	}, func(item corev1.Namespace) domain.Namespace {
+		return domain.Namespace{
+			Name: item.Name, Status: string(item.Status.Phase), ResourceVersion: item.ResourceVersion, Labels: item.Labels,
+			Annotations: item.Annotations, CreatedAt: item.CreationTimestamp.Time,
+		}
+	}, func(item domain.Namespace) bool {
+		return query.Search == "" || matchesSearch([]string{item.Name, item.Status}, query.Search)
+	})
 }
 
 func (c *Client) CreateNamespace(ctx context.Context, spec domain.NamespaceCreateSpec) (domain.Namespace, error) {

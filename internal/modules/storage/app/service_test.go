@@ -27,11 +27,23 @@ type storageRepository struct {
 func (r *storageRepository) ListStorageClasses(context.Context, domain.ListQuery) ([]domain.StorageClass, error) {
 	return r.classes, r.err
 }
+func (r *storageRepository) ListStorageClassesPage(ctx context.Context, query domain.ListQuery, page domain.PageRequest) (domain.PageResult[domain.StorageClass], error) {
+	items, err := r.ListStorageClasses(ctx, query)
+	return domain.PaginateSlice(items, page), err
+}
 func (r *storageRepository) ListPersistentVolumes(context.Context, domain.ListQuery) ([]domain.PersistentVolume, error) {
 	return r.volumes, r.err
 }
+func (r *storageRepository) ListPersistentVolumesPage(ctx context.Context, query domain.ListQuery, page domain.PageRequest) (domain.PageResult[domain.PersistentVolume], error) {
+	items, err := r.ListPersistentVolumes(ctx, query)
+	return domain.PaginateSlice(items, page), err
+}
 func (r *storageRepository) ListPersistentVolumeClaims(context.Context, domain.ListQuery) ([]domain.PersistentVolumeClaim, error) {
 	return r.claims, r.err
+}
+func (r *storageRepository) ListPersistentVolumeClaimsPage(ctx context.Context, query domain.ListQuery, page domain.PageRequest) (domain.PageResult[domain.PersistentVolumeClaim], error) {
+	items, err := r.ListPersistentVolumeClaims(ctx, query)
+	return domain.PaginateSlice(items, page), err
 }
 func (r *storageRepository) GetStorageClass(context.Context, string) (domain.StorageClassDetail, error) {
 	return r.classDetail, r.err

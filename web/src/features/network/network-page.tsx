@@ -22,6 +22,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useCapabilities } from "@/features/auth/use-session";
 import { IngressFormDialog } from "@/features/network/ingress-form-dialog";
 import { ServiceFormDialog } from "@/features/workloads/service-form-dialog";
+import { cursorPaginationProps, useCursorPagination } from "@/hooks/use-cursor-pagination";
 import { resourceCapabilities } from "@/lib/capabilities";
 import { formatAge } from "@/lib/utils";
 
@@ -37,6 +38,8 @@ export function NetworkPage() {
   const namespace = search.namespace ?? "";
   const q = search.q ?? "";
   const tab = search.tab === "ingresses" ? "ingresses" : "services";
+  const servicePager = useCursorPagination(`services|${namespace}|${q}`, 20);
+  const ingressPager = useCursorPagination(`ingresses|${namespace}|${q}`, 20);
   const [serviceFormOpen, setServiceFormOpen] = useState(false);
   const [editingService, setEditingService] = useState<ServiceSummary>();
   const [deletingService, setDeletingService] = useState<ServiceSummary>();
@@ -47,9 +50,15 @@ export function NetworkPage() {
   const updateSearch = (patch: { q?: string; namespace?: string; tab?: string }) => {
     void navigate({ to: "/network", search: { ...search, ...patch }, replace: true });
   };
-  const services = useQuery({ queryKey: ["services", namespace, q], queryFn: () => api.services({ namespace, q }) });
-  const ingresses = useQuery({ queryKey: ["ingresses", namespace, q], queryFn: () => api.ingresses({ namespace, q }) });
-  const ingressClasses = useQuery({ queryKey: ["ingressclasses", q], queryFn: () => api.ingressClasses({ q }) });
+  const services = useQuery({
+    queryKey: ["services", namespace, q, servicePager.page, servicePager.cursor],
+    queryFn: () => api.services({ namespace, q, page: servicePager.page, pageSize: servicePager.pageSize, cursor: servicePager.cursor }),
+  });
+  const ingresses = useQuery({
+    queryKey: ["ingresses", namespace, q, ingressPager.page, ingressPager.cursor],
+    queryFn: () => api.ingresses({ namespace, q, page: ingressPager.page, pageSize: ingressPager.pageSize, cursor: ingressPager.cursor }),
+  });
+  const ingressClasses = useQuery({ queryKey: ["ingressclasses", q], queryFn: () => api.ingressClasses({ q, pageSize: 200 }) });
   const capabilities = useCapabilities(namespace || undefined).data;
   const serviceCaps = resourceCapabilities(capabilities, "services");
   const ingressCaps = resourceCapabilities(capabilities, "ingresses");
@@ -102,7 +111,7 @@ export function NetworkPage() {
       />
       <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center"><SearchInput value={q} onChange={(value) => updateSearch({ q: value || undefined })} placeholder="搜索名称" /><NamespaceSelect value={namespace} onChange={(value) => updateSearch({ namespace: value || undefined })} /></div>
       <Tabs value={tab} onValueChange={(value) => updateSearch({ tab: value === "services" ? undefined : value })}>
-        <TabsList><TabsTrigger value="services">Service ({services.data?.meta.total ?? 0})</TabsTrigger><TabsTrigger value="ingresses">Ingress ({ingresses.data?.meta.total ?? 0})</TabsTrigger></TabsList>
+        <TabsList><TabsTrigger value="services">Service ({services.data?.meta.totalKnown ? services.data.meta.total : services.data?.items.length ?? 0})</TabsTrigger><TabsTrigger value="ingresses">Ingress ({ingresses.data?.meta.totalKnown ? ingresses.data.meta.total : ingresses.data?.items.length ?? 0})</TabsTrigger></TabsList>
         <TabsContent value="services">
           {services.isError ? <ErrorState error={services.error} onRetry={() => void services.refetch()} /> : <DataTable
             columns={[
@@ -119,6 +128,7 @@ export function NetworkPage() {
             ]}
             data={services.data?.items ?? []}
             loading={services.isLoading}
+            pagination={cursorPaginationProps(servicePager, services.data?.meta, services.data?.items.length ?? 0)}
             empty="当前筛选条件下没有 Service"
           />}
         </TabsContent>
@@ -140,6 +150,7 @@ export function NetworkPage() {
               ]}
               data={ingresses.data?.items ?? []}
               loading={ingresses.isLoading}
+              pagination={cursorPaginationProps(ingressPager, ingresses.data?.meta, ingresses.data?.items.length ?? 0)}
               empty={<div className="flex flex-col items-center gap-2"><Route className="h-6 w-6" /><span>没有 Ingress</span></div>}
             />
           )}

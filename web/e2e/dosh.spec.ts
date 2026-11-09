@@ -327,7 +327,7 @@ function json(route: Route, value: unknown, status = 200) {
 }
 
 function list<T>(items: T[]): ListResponse<T> {
-  return { items, meta: { total: items.length, page: 1, pageSize: Math.max(items.length, 1), totalPages: items.length ? 1 : 0, filters: {} } };
+  return { items, meta: { total: items.length, totalKnown: true, page: 1, pageSize: Math.max(items.length, 1), totalPages: items.length ? 1 : 0, hasMore: false, warnings: [], filters: {} } };
 }
 
 async function openResourceMenu(page: Page, resource: string) {

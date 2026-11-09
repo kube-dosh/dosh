@@ -33,17 +33,18 @@ func (h *Handler) List(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		ObjectKind: httpx.Query(r, "objectKind"),
 		ObjectName: httpx.Query(r, "objectName"),
 	}
-	items, err := h.service.List(r.Context(), query)
+	result, err := h.service.ListPage(r.Context(), query, domain.PageRequest{Number: options.Page, Size: options.PageSize, Cursor: options.Cursor})
 	if err != nil {
 		httpx.Error(w, r, err)
 		return
 	}
-	items, meta := httpx.PageItems(items, options, map[string]string{
+	httpx.SortItems(result.Items, options)
+	meta := httpx.PageMeta(result, options, map[string]string{
 		"namespace": query.Namespace, "search": query.Search,
 		"objectKind": query.ObjectKind, "objectName": query.ObjectName,
 	})
 	meta.Namespace, meta.Search = query.Namespace, query.Search
-	httpx.JSONList(w, items, meta)
+	httpx.JSONList(w, result.Items, meta)
 }
 
 func (h *Handler) Stream(w stdhttp.ResponseWriter, r *stdhttp.Request) {

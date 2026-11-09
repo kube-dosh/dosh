@@ -792,7 +792,6 @@ type ListQuery struct {
 	Status     string
 	ObjectKind string
 	ObjectName string
-	Limit      int
 }
 
 type DeletionPropagation string

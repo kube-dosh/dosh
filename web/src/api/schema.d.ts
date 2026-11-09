@@ -354,6 +354,8 @@ export interface paths {
                     q?: components["parameters"]["Search"];
                     page?: components["parameters"]["Page"];
                     pageSize?: components["parameters"]["PageSize"];
+                    /** @description Opaque continuation cursor returned in meta.nextCursor. Use it for the next page; do not construct or modify it. */
+                    cursor?: components["parameters"]["Cursor"];
                     /** @description Resource-specific sort field. Unsupported fields return 400. */
                     sort?: components["parameters"]["Sort"];
                     /** @description Sort direction; requires sort. */
@@ -625,6 +627,8 @@ export interface paths {
                     q?: components["parameters"]["Search"];
                     page?: components["parameters"]["Page"];
                     pageSize?: components["parameters"]["PageSize"];
+                    /** @description Opaque continuation cursor returned in meta.nextCursor. Use it for the next page; do not construct or modify it. */
+                    cursor?: components["parameters"]["Cursor"];
                     /** @description Resource-specific sort field. Unsupported fields return 400. */
                     sort?: components["parameters"]["Sort"];
                     /** @description Sort direction; requires sort. */
@@ -781,6 +785,8 @@ export interface paths {
                     status?: components["parameters"]["WorkloadStatus"];
                     page?: components["parameters"]["Page"];
                     pageSize?: components["parameters"]["PageSize"];
+                    /** @description Opaque continuation cursor returned in meta.nextCursor. Use it for the next page; do not construct or modify it. */
+                    cursor?: components["parameters"]["Cursor"];
                     /** @description Resource-specific sort field. Unsupported fields return 400. */
                     sort?: components["parameters"]["Sort"];
                     /** @description Sort direction; requires sort. */
@@ -1245,6 +1251,8 @@ export interface paths {
                     q?: components["parameters"]["Search"];
                     page?: components["parameters"]["Page"];
                     pageSize?: components["parameters"]["PageSize"];
+                    /** @description Opaque continuation cursor returned in meta.nextCursor. Use it for the next page; do not construct or modify it. */
+                    cursor?: components["parameters"]["Cursor"];
                     /** @description Resource-specific sort field. Unsupported fields return 400. */
                     sort?: components["parameters"]["Sort"];
                     /** @description Sort direction; requires sort. */
@@ -1420,6 +1428,8 @@ export interface paths {
                     objectName?: components["parameters"]["ObjectName"];
                     page?: components["parameters"]["Page"];
                     pageSize?: components["parameters"]["PageSize"];
+                    /** @description Opaque continuation cursor returned in meta.nextCursor. Use it for the next page; do not construct or modify it. */
+                    cursor?: components["parameters"]["Cursor"];
                     /** @description Resource-specific sort field. Unsupported fields return 400. */
                     sort?: components["parameters"]["Sort"];
                     /** @description Sort direction; requires sort. */
@@ -1517,6 +1527,8 @@ export interface paths {
                     result?: "success" | "failure" | "denied";
                     page?: components["parameters"]["Page"];
                     pageSize?: components["parameters"]["PageSize"];
+                    /** @description Opaque continuation cursor returned in meta.nextCursor. Use it for the next page; do not construct or modify it. */
+                    cursor?: components["parameters"]["Cursor"];
                     /** @description Resource-specific sort field. Unsupported fields return 400. */
                     sort?: components["parameters"]["Sort"];
                     /** @description Sort direction; requires sort. */
@@ -1565,6 +1577,8 @@ export interface paths {
                     q?: components["parameters"]["Search"];
                     page?: components["parameters"]["Page"];
                     pageSize?: components["parameters"]["PageSize"];
+                    /** @description Opaque continuation cursor returned in meta.nextCursor. Use it for the next page; do not construct or modify it. */
+                    cursor?: components["parameters"]["Cursor"];
                     /** @description Resource-specific sort field. Unsupported fields return 400. */
                     sort?: components["parameters"]["Sort"];
                     /** @description Sort direction; requires sort. */
@@ -1756,6 +1770,8 @@ export interface paths {
                     q?: components["parameters"]["Search"];
                     page?: components["parameters"]["Page"];
                     pageSize?: components["parameters"]["PageSize"];
+                    /** @description Opaque continuation cursor returned in meta.nextCursor. Use it for the next page; do not construct or modify it. */
+                    cursor?: components["parameters"]["Cursor"];
                     /** @description Resource-specific sort field. Unsupported fields return 400. */
                     sort?: components["parameters"]["Sort"];
                     /** @description Sort direction; requires sort. */
@@ -1938,6 +1954,8 @@ export interface paths {
                     q?: components["parameters"]["Search"];
                     page?: components["parameters"]["Page"];
                     pageSize?: components["parameters"]["PageSize"];
+                    /** @description Opaque continuation cursor returned in meta.nextCursor. Use it for the next page; do not construct or modify it. */
+                    cursor?: components["parameters"]["Cursor"];
                     /** @description Resource-specific sort field. Unsupported fields return 400. */
                     sort?: components["parameters"]["Sort"];
                     /** @description Sort direction; requires sort. */
@@ -2060,6 +2078,8 @@ export interface paths {
                     q?: components["parameters"]["Search"];
                     page?: components["parameters"]["Page"];
                     pageSize?: components["parameters"]["PageSize"];
+                    /** @description Opaque continuation cursor returned in meta.nextCursor. Use it for the next page; do not construct or modify it. */
+                    cursor?: components["parameters"]["Cursor"];
                     /** @description Resource-specific sort field. Unsupported fields return 400. */
                     sort?: components["parameters"]["Sort"];
                     /** @description Sort direction; requires sort. */
@@ -2239,6 +2259,8 @@ export interface paths {
                     q?: components["parameters"]["Search"];
                     page?: components["parameters"]["Page"];
                     pageSize?: components["parameters"]["PageSize"];
+                    /** @description Opaque continuation cursor returned in meta.nextCursor. Use it for the next page; do not construct or modify it. */
+                    cursor?: components["parameters"]["Cursor"];
                     /** @description Resource-specific sort field. Unsupported fields return 400. */
                     sort?: components["parameters"]["Sort"];
                     /** @description Sort direction; requires sort. */
@@ -2435,6 +2457,8 @@ export interface paths {
                     q?: components["parameters"]["Search"];
                     page?: components["parameters"]["Page"];
                     pageSize?: components["parameters"]["PageSize"];
+                    /** @description Opaque continuation cursor returned in meta.nextCursor. Use it for the next page; do not construct or modify it. */
+                    cursor?: components["parameters"]["Cursor"];
                     /** @description Resource-specific sort field. Unsupported fields return 400. */
                     sort?: components["parameters"]["Sort"];
                     /** @description Sort direction; requires sort. */
@@ -2523,6 +2547,8 @@ export interface paths {
                     q?: components["parameters"]["Search"];
                     page?: components["parameters"]["Page"];
                     pageSize?: components["parameters"]["PageSize"];
+                    /** @description Opaque continuation cursor returned in meta.nextCursor. Use it for the next page; do not construct or modify it. */
+                    cursor?: components["parameters"]["Cursor"];
                     /** @description Resource-specific sort field. Unsupported fields return 400. */
                     sort?: components["parameters"]["Sort"];
                     /** @description Sort direction; requires sort. */
@@ -2612,6 +2638,8 @@ export interface paths {
                     q?: components["parameters"]["Search"];
                     page?: components["parameters"]["Page"];
                     pageSize?: components["parameters"]["PageSize"];
+                    /** @description Opaque continuation cursor returned in meta.nextCursor. Use it for the next page; do not construct or modify it. */
+                    cursor?: components["parameters"]["Cursor"];
                     /** @description Resource-specific sort field. Unsupported fields return 400. */
                     sort?: components["parameters"]["Sort"];
                     /** @description Sort direction; requires sort. */
@@ -2893,9 +2921,17 @@ export interface components {
         };
         ListMeta: {
             total: number;
+            /** @description True when total is exact. False means the count is a lower bound for a filtered cursor scan. */
+            totalKnown: boolean;
             page: number;
             pageSize: number;
             totalPages: number;
+            hasMore: boolean;
+            /** @description Opaque cursor for the next page. Absent on the last page. */
+            nextCursor?: string;
+            /** @description True when a bounded event window or scan cap limited the result set. */
+            truncated?: boolean;
+            warnings?: string[];
             sort?: string;
             /** @enum {string} */
             order?: "asc" | "desc";
@@ -3815,6 +3851,8 @@ export interface components {
         Search: string;
         Page: number;
         PageSize: number;
+        /** @description Opaque continuation cursor returned in meta.nextCursor. Use it for the next page; do not construct or modify it. */
+        Cursor: string;
         /** @description Resource-specific sort field. Unsupported fields return 400. */
         Sort: string;
         /** @description Sort direction; requires sort. */

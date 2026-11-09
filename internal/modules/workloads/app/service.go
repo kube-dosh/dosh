@@ -14,6 +14,7 @@ const maxNonStreamLogBytes int64 = 1 << 20
 
 type Repository interface {
 	ListWorkloads(ctx context.Context, query domain.ListQuery) ([]domain.WorkloadSummary, error)
+	ListWorkloadsPage(ctx context.Context, query domain.ListQuery, page domain.PageRequest) (domain.PageResult[domain.WorkloadSummary], error)
 	GetWorkload(ctx context.Context, kind, namespace, name string) (domain.WorkloadDetail, error)
 	CreateDeployment(ctx context.Context, spec domain.DeploymentCreateSpec, dryRun bool) (domain.WorkloadSummary, error)
 	PreviewDeployment(ctx context.Context, spec domain.DeploymentCreateSpec) (string, error)
@@ -24,6 +25,7 @@ type Repository interface {
 	SetCronJobSuspend(ctx context.Context, namespace, name string, update domain.CronJobSuspendUpdate) error
 	DeleteWorkload(ctx context.Context, kind, namespace, name string, propagation domain.DeletionPropagation) error
 	ListPods(ctx context.Context, query domain.ListQuery) ([]domain.PodSummary, error)
+	ListPodsPage(ctx context.Context, query domain.ListQuery, page domain.PageRequest) (domain.PageResult[domain.PodSummary], error)
 	GetPod(ctx context.Context, namespace, name string) (domain.PodDetail, error)
 	DeletePod(ctx context.Context, namespace, name string) error
 	StreamPodLogs(ctx context.Context, namespace, name, container string, follow bool, tailLines int64, timestamps bool, limitBytes int64) (io.ReadCloser, error)
@@ -57,6 +59,15 @@ func (s *Service) List(ctx context.Context, query domain.ListQuery) ([]domain.Wo
 		}
 	}
 	return s.repository.ListWorkloads(ctx, query)
+}
+
+func (s *Service) ListPage(ctx context.Context, query domain.ListQuery, page domain.PageRequest) (domain.PageResult[domain.WorkloadSummary], error) {
+	if query.Kind != "" {
+		if err := ValidateKind(query.Kind); err != nil {
+			return domain.PageResult[domain.WorkloadSummary]{}, err
+		}
+	}
+	return s.repository.ListWorkloadsPage(ctx, query, page)
 }
 
 func (s *Service) Get(ctx context.Context, kind, namespace, name string) (domain.WorkloadDetail, error) {
@@ -132,6 +143,10 @@ func (s *Service) Delete(ctx context.Context, actor domain.Actor, kind, namespac
 
 func (s *Service) ListPods(ctx context.Context, query domain.ListQuery) ([]domain.PodSummary, error) {
 	return s.repository.ListPods(ctx, query)
+}
+
+func (s *Service) ListPodsPage(ctx context.Context, query domain.ListQuery, page domain.PageRequest) (domain.PageResult[domain.PodSummary], error) {
+	return s.repository.ListPodsPage(ctx, query, page)
 }
 
 func (s *Service) GetPod(ctx context.Context, namespace, name string) (domain.PodDetail, error) {

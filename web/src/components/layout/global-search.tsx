@@ -14,9 +14,9 @@ export function GlobalSearch({ open, onOpenChange }: { open: boolean; onOpenChan
   const deferred = useDeferredValue(term.trim());
   const navigate = useNavigate();
   const enabled = open && deferred.length >= 2;
-  const nodes = useQuery({ queryKey: ["search", "nodes", deferred], queryFn: () => api.nodes({ q: deferred }), enabled, staleTime: 10_000 });
-  const workloads = useQuery({ queryKey: ["search", "workloads", deferred], queryFn: () => api.workloads({ q: deferred }), enabled, staleTime: 10_000 });
-  const pods = useQuery({ queryKey: ["search", "pods", deferred], queryFn: () => api.pods({ q: deferred }), enabled, staleTime: 10_000 });
+  const nodes = useQuery({ queryKey: ["search", "nodes", deferred], queryFn: () => api.nodes({ q: deferred, pageSize: 50 }), enabled, staleTime: 10_000 });
+  const workloads = useQuery({ queryKey: ["search", "workloads", deferred], queryFn: () => api.workloads({ q: deferred, pageSize: 50 }), enabled, staleTime: 10_000 });
+  const pods = useQuery({ queryKey: ["search", "pods", deferred], queryFn: () => api.pods({ q: deferred, pageSize: 50 }), enabled, staleTime: 10_000 });
   const loading = enabled && (nodes.isLoading || workloads.isLoading || pods.isLoading);
   const failedGroups = [
     nodes.isError ? "节点" : "",

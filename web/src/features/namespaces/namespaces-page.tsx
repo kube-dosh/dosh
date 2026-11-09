@@ -16,6 +16,7 @@ import { Button } from "@/components/ui/button";
 import { useCapabilities } from "@/features/auth/use-session";
 import { NamespaceDeleteDialog } from "@/features/namespaces/namespace-delete-dialog";
 import { NamespaceFormDialog } from "@/features/namespaces/namespace-form-dialog";
+import { cursorPaginationProps, useCursorPagination } from "@/hooks/use-cursor-pagination";
 import { resourceCapabilities } from "@/lib/capabilities";
 import { formatAge } from "@/lib/utils";
 
@@ -31,10 +32,14 @@ export function NamespacesPage() {
   const namespaceCaps = resourceCapabilities(capabilities, "namespaces");
   const canDelete = namespaceCaps.delete || Boolean(capabilities?.deleteNamespace);
   const q = search.q ?? "";
+  const pager = useCursorPagination(`namespaces|${q}`, 20);
   const updateSearch = (value: string) => {
     void navigate({ to: "/namespaces", search: { ...search, q: value || undefined }, replace: true });
   };
-  const query = useQuery({ queryKey: ["namespaces", q], queryFn: () => api.namespaces({ q }) });
+  const query = useQuery({
+    queryKey: ["namespaces", q, pager.page, pager.cursor],
+    queryFn: () => api.namespaces({ q, page: pager.page, pageSize: pager.pageSize, cursor: pager.cursor }),
+  });
   if (query.isError) return <ErrorState error={query.error} onRetry={() => void query.refetch()} />;
   const actions = (item: NamespaceItem): ResourceAction[] => {
     const protectedNamespace = item.name === "default" || item.name.startsWith("kube-");
@@ -57,6 +62,7 @@ export function NamespacesPage() {
         ]}
         data={query.data?.items ?? []}
         loading={query.isLoading}
+        pagination={cursorPaginationProps(pager, query.data?.meta, query.data?.items.length ?? 0)}
         empty={<div className="flex flex-col items-center gap-2"><FolderTree className="h-6 w-6" /><span>没有匹配的命名空间</span></div>}
       />
       <NamespaceDeleteDialog

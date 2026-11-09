@@ -36,6 +36,28 @@ func (c *Client) ListPods(ctx context.Context, query domain.ListQuery) ([]domain
 	return out, nil
 }
 
+func (c *Client) ListPodsPage(ctx context.Context, query domain.ListQuery, page domain.PageRequest) (domain.PageResult[domain.PodSummary], error) {
+	ctx, cancel := c.withTimeout(ctx)
+	defer cancel()
+	namespace := query.Namespace
+	if namespace == "" {
+		namespace = metav1.NamespaceAll
+	}
+	actual := c.podMetrics(ctx, namespace)
+	return listPage(ctx, page, query.Search != "", func(options metav1.ListOptions) ([]corev1.Pod, metav1.ListMeta, error) {
+		items, err := c.clientset.CoreV1().Pods(namespace).List(ctx, options)
+		if err != nil {
+			return nil, metav1.ListMeta{}, mapKubeError(err)
+		}
+		return items.Items, items.ListMeta, nil
+	}, func(pod corev1.Pod) domain.PodSummary {
+		usage, hasMetrics := actual[pod.Namespace+"/"+pod.Name]
+		return podSummaryWithUsage(pod, usage, hasMetrics)
+	}, func(summary domain.PodSummary) bool {
+		return query.Search == "" || matchesSearch([]string{summary.Name, summary.Namespace, summary.Status, summary.Node, summary.OwnerName}, query.Search)
+	})
+}
+
 func (c *Client) GetPod(ctx context.Context, namespace, name string) (domain.PodDetail, error) {
 	ctx, cancel := c.withTimeout(ctx)
 	defer cancel()

@@ -40,6 +40,24 @@ func (c *Client) ListConfigMaps(ctx context.Context, query domain.ListQuery) ([]
 	return out, nil
 }
 
+func (c *Client) ListConfigMapsPage(ctx context.Context, query domain.ListQuery, page domain.PageRequest) (domain.PageResult[domain.ConfigMapSummary], error) {
+	ctx, cancel := c.withTimeout(ctx)
+	defer cancel()
+	namespace := query.Namespace
+	if namespace == "" {
+		namespace = metav1.NamespaceAll
+	}
+	return listPage(ctx, page, query.Search != "", func(options metav1.ListOptions) ([]corev1.ConfigMap, metav1.ListMeta, error) {
+		items, err := c.clientset.CoreV1().ConfigMaps(namespace).List(ctx, options)
+		if err != nil {
+			return nil, metav1.ListMeta{}, mapKubeError(err)
+		}
+		return items.Items, items.ListMeta, nil
+	}, configMapSummary, func(summary domain.ConfigMapSummary) bool {
+		return query.Search == "" || matchesSearch(append([]string{summary.Name, summary.Namespace}, summary.Keys...), query.Search)
+	})
+}
+
 func configMapSummary(item corev1.ConfigMap) domain.ConfigMapSummary {
 	keys := make([]string, 0, len(item.Data)+len(item.BinaryData))
 	bytes := 0
@@ -145,6 +163,28 @@ func (c *Client) ListSecrets(ctx context.Context, query domain.ListQuery) ([]dom
 		return out[i].Namespace < out[j].Namespace
 	})
 	return out, nil
+}
+
+func (c *Client) ListSecretsPage(ctx context.Context, query domain.ListQuery, page domain.PageRequest) (domain.PageResult[domain.SecretSummary], error) {
+	ctx, cancel := c.withTimeout(ctx)
+	defer cancel()
+	namespace := query.Namespace
+	if namespace == "" {
+		namespace = metav1.NamespaceAll
+	}
+	return listPage(ctx, page, query.Search != "", func(options metav1.ListOptions) ([]corev1.Secret, metav1.ListMeta, error) {
+		items, err := c.clientset.CoreV1().Secrets(namespace).List(ctx, options)
+		if err != nil {
+			return nil, metav1.ListMeta{}, mapKubeError(err)
+		}
+		return items.Items, items.ListMeta, nil
+	}, secretSummary, func(summary domain.SecretSummary) bool {
+		keyNames := make([]string, 0, len(summary.Keys))
+		for _, key := range summary.Keys {
+			keyNames = append(keyNames, key.Key)
+		}
+		return query.Search == "" || matchesSearch(append([]string{summary.Name, summary.Namespace, summary.Type}, keyNames...), query.Search)
+	})
 }
 
 func secretSummary(item corev1.Secret) domain.SecretSummary {

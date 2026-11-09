@@ -21,14 +21,15 @@ func (h *Handler) ConfigMaps(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		httpx.Error(w, r, err)
 		return
 	}
-	items, err := h.service.ListConfigMaps(r.Context(), query)
+	result, err := h.service.ListConfigMapsPage(r.Context(), query, domain.PageRequest{Number: options.Page, Size: options.PageSize, Cursor: options.Cursor})
 	if err != nil {
 		httpx.Error(w, r, err)
 		return
 	}
-	items, meta := httpx.PageItems(items, options, map[string]string{"namespace": query.Namespace, "search": query.Search})
+	httpx.SortItems(result.Items, options)
+	meta := httpx.PageMeta(result, options, map[string]string{"namespace": query.Namespace, "search": query.Search})
 	meta.Namespace, meta.Search = query.Namespace, query.Search
-	httpx.JSONList(w, items, meta)
+	httpx.JSONList(w, result.Items, meta)
 }
 
 func (h *Handler) ConfigMap(w stdhttp.ResponseWriter, r *stdhttp.Request) {
@@ -84,14 +85,15 @@ func (h *Handler) Secrets(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		httpx.Error(w, r, err)
 		return
 	}
-	items, err := h.service.ListSecrets(r.Context(), query)
+	result, err := h.service.ListSecretsPage(r.Context(), query, domain.PageRequest{Number: options.Page, Size: options.PageSize, Cursor: options.Cursor})
 	if err != nil {
 		httpx.Error(w, r, err)
 		return
 	}
-	items, meta := httpx.PageItems(items, options, map[string]string{"namespace": query.Namespace, "search": query.Search})
+	httpx.SortItems(result.Items, options)
+	meta := httpx.PageMeta(result, options, map[string]string{"namespace": query.Namespace, "search": query.Search})
 	meta.Namespace, meta.Search = query.Namespace, query.Search
-	httpx.JSONList(w, items, meta)
+	httpx.JSONList(w, result.Items, meta)
 }
 
 func (h *Handler) RevealSecret(w stdhttp.ResponseWriter, r *stdhttp.Request) {

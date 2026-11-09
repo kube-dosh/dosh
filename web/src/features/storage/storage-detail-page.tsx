@@ -238,7 +238,7 @@ export function PersistentVolumeClaimDetailPage() {
   const capabilities = useCapabilities(params.namespace).data;
   const claimCaps = resourceCapabilities(capabilities, "persistentvolumeclaims");
   const query = useQuery({ queryKey: ["persistentvolumeclaim", params.namespace, params.name], queryFn: () => api.persistentvolumeclaim(params.namespace, params.name), refetchInterval: 20_000 });
-  const storageClasses = useQuery({ queryKey: ["storageclasses"], queryFn: () => api.storageclasses(), enabled: resizeOpen });
+  const storageClasses = useQuery({ queryKey: ["storageclasses"], queryFn: () => api.storageclasses({ pageSize: 200 }), enabled: resizeOpen });
   if (query.isLoading) return <LoadingState label="正在加载 PersistentVolumeClaim 详情" className="min-h-[60vh]" />;
   if (query.isError) return <ErrorState error={query.error} onRetry={() => void query.refetch()} />;
   const item = query.data!;

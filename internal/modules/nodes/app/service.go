@@ -12,12 +12,14 @@ import (
 
 type Repository interface {
 	ListNodes(ctx context.Context, query domain.ListQuery) ([]domain.NodeSummary, error)
+	ListNodesPage(ctx context.Context, query domain.ListQuery, page domain.PageRequest) (domain.PageResult[domain.NodeSummary], error)
 	GetNode(ctx context.Context, name string) (domain.NodeDetail, error)
 	SetNodeScheduling(ctx context.Context, name string, unschedulable bool) (domain.NodeSummary, error)
 	SetNodeLabels(ctx context.Context, name string, update domain.NodeLabelUpdate) (domain.NodeDetail, error)
 	SetNodeTaints(ctx context.Context, name string, update domain.NodeTaintUpdate) (domain.NodeDetail, error)
 	ListPodsForNode(ctx context.Context, node string) ([]domain.PodSummary, error)
 	ListNamespaces(ctx context.Context, query domain.ListQuery) ([]domain.Namespace, error)
+	ListNamespacesPage(ctx context.Context, query domain.ListQuery, page domain.PageRequest) (domain.PageResult[domain.Namespace], error)
 	CreateNamespace(ctx context.Context, spec domain.NamespaceCreateSpec) (domain.Namespace, error)
 	GetNamespace(ctx context.Context, name string) (domain.NamespaceDetail, error)
 	DeleteNamespace(ctx context.Context, name, resourceVersion string) error
@@ -37,6 +39,10 @@ func New(repository Repository, authorizer domain.Authorizer, auditor domain.Aud
 
 func (s *Service) List(ctx context.Context, query domain.ListQuery) ([]domain.NodeSummary, error) {
 	return s.repository.ListNodes(ctx, query)
+}
+
+func (s *Service) ListPage(ctx context.Context, query domain.ListQuery, page domain.PageRequest) (domain.PageResult[domain.NodeSummary], error) {
+	return s.repository.ListNodesPage(ctx, query, page)
 }
 
 func (s *Service) Get(ctx context.Context, name string) (domain.NodeDetail, error) {
@@ -117,6 +123,10 @@ func (s *Service) audit(ctx context.Context, actor domain.Actor, action, name st
 
 func (s *Service) ListNamespaces(ctx context.Context, query domain.ListQuery) ([]domain.Namespace, error) {
 	return s.repository.ListNamespaces(ctx, query)
+}
+
+func (s *Service) ListNamespacesPage(ctx context.Context, query domain.ListQuery, page domain.PageRequest) (domain.PageResult[domain.Namespace], error) {
+	return s.repository.ListNamespacesPage(ctx, query, page)
 }
 
 func (s *Service) CreateNamespace(ctx context.Context, actor domain.Actor, spec domain.NamespaceCreateSpec) (domain.Namespace, error) {

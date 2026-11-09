@@ -152,6 +152,7 @@ paths:
         - { $ref: "#/components/parameters/Search" }
         - { $ref: "#/components/parameters/Page" }
         - { $ref: "#/components/parameters/PageSize" }
+        - { $ref: "#/components/parameters/Cursor" }
         - { $ref: "#/components/parameters/Sort" }
         - { $ref: "#/components/parameters/Order" }
       responses:
@@ -283,6 +284,7 @@ paths:
         - { $ref: "#/components/parameters/Search" }
         - { $ref: "#/components/parameters/Page" }
         - { $ref: "#/components/parameters/PageSize" }
+        - { $ref: "#/components/parameters/Cursor" }
         - { $ref: "#/components/parameters/Sort" }
         - { $ref: "#/components/parameters/Order" }
       responses:
@@ -367,6 +369,7 @@ paths:
         - { $ref: "#/components/parameters/WorkloadStatus" }
         - { $ref: "#/components/parameters/Page" }
         - { $ref: "#/components/parameters/PageSize" }
+        - { $ref: "#/components/parameters/Cursor" }
         - { $ref: "#/components/parameters/Sort" }
         - { $ref: "#/components/parameters/Order" }
       responses:
@@ -631,6 +634,7 @@ paths:
         - { $ref: "#/components/parameters/Search" }
         - { $ref: "#/components/parameters/Page" }
         - { $ref: "#/components/parameters/PageSize" }
+        - { $ref: "#/components/parameters/Cursor" }
         - { $ref: "#/components/parameters/Sort" }
         - { $ref: "#/components/parameters/Order" }
       responses:
@@ -726,6 +730,7 @@ paths:
         - { $ref: "#/components/parameters/ObjectName" }
         - { $ref: "#/components/parameters/Page" }
         - { $ref: "#/components/parameters/PageSize" }
+        - { $ref: "#/components/parameters/Cursor" }
         - { $ref: "#/components/parameters/Sort" }
         - { $ref: "#/components/parameters/Order" }
       responses:
@@ -776,6 +781,7 @@ paths:
           schema: { type: string, enum: [success, failure, denied] }
         - { $ref: "#/components/parameters/Page" }
         - { $ref: "#/components/parameters/PageSize" }
+        - { $ref: "#/components/parameters/Cursor" }
         - { $ref: "#/components/parameters/Sort" }
         - { $ref: "#/components/parameters/Order" }
       responses:
@@ -796,6 +802,7 @@ paths:
         - { $ref: "#/components/parameters/Search" }
         - { $ref: "#/components/parameters/Page" }
         - { $ref: "#/components/parameters/PageSize" }
+        - { $ref: "#/components/parameters/Cursor" }
         - { $ref: "#/components/parameters/Sort" }
         - { $ref: "#/components/parameters/Order" }
       responses:
@@ -901,6 +908,7 @@ paths:
         - { $ref: "#/components/parameters/Search" }
         - { $ref: "#/components/parameters/Page" }
         - { $ref: "#/components/parameters/PageSize" }
+        - { $ref: "#/components/parameters/Cursor" }
         - { $ref: "#/components/parameters/Sort" }
         - { $ref: "#/components/parameters/Order" }
       responses:
@@ -1006,6 +1014,7 @@ paths:
         - { $ref: "#/components/parameters/Search" }
         - { $ref: "#/components/parameters/Page" }
         - { $ref: "#/components/parameters/PageSize" }
+        - { $ref: "#/components/parameters/Cursor" }
         - { $ref: "#/components/parameters/Sort" }
         - { $ref: "#/components/parameters/Order" }
       responses:
@@ -1051,6 +1060,7 @@ paths:
         - { $ref: "#/components/parameters/Search" }
         - { $ref: "#/components/parameters/Page" }
         - { $ref: "#/components/parameters/PageSize" }
+        - { $ref: "#/components/parameters/Cursor" }
         - { $ref: "#/components/parameters/Sort" }
         - { $ref: "#/components/parameters/Order" }
       responses:
@@ -1155,6 +1165,7 @@ paths:
         - { $ref: "#/components/parameters/Search" }
         - { $ref: "#/components/parameters/Page" }
         - { $ref: "#/components/parameters/PageSize" }
+        - { $ref: "#/components/parameters/Cursor" }
         - { $ref: "#/components/parameters/Sort" }
         - { $ref: "#/components/parameters/Order" }
       responses:
@@ -1266,6 +1277,7 @@ paths:
         - { $ref: "#/components/parameters/Search" }
         - { $ref: "#/components/parameters/Page" }
         - { $ref: "#/components/parameters/PageSize" }
+        - { $ref: "#/components/parameters/Cursor" }
         - { $ref: "#/components/parameters/Sort" }
         - { $ref: "#/components/parameters/Order" }
       responses:
@@ -1304,6 +1316,7 @@ paths:
         - { $ref: "#/components/parameters/Search" }
         - { $ref: "#/components/parameters/Page" }
         - { $ref: "#/components/parameters/PageSize" }
+        - { $ref: "#/components/parameters/Cursor" }
         - { $ref: "#/components/parameters/Sort" }
         - { $ref: "#/components/parameters/Order" }
       responses:
@@ -1343,6 +1356,7 @@ paths:
         - { $ref: "#/components/parameters/Search" }
         - { $ref: "#/components/parameters/Page" }
         - { $ref: "#/components/parameters/PageSize" }
+        - { $ref: "#/components/parameters/Cursor" }
         - { $ref: "#/components/parameters/Sort" }
         - { $ref: "#/components/parameters/Order" }
       responses:
@@ -1534,6 +1548,11 @@ components:
       name: pageSize
       in: query
       schema: { type: integer, minimum: 1, maximum: 200 }
+    Cursor:
+      name: cursor
+      in: query
+      description: Opaque continuation cursor returned in meta.nextCursor. Use it for the next page; do not construct or modify it.
+      schema: { type: string, maxLength: 8192 }
     Sort:
       name: sort
       in: query
@@ -1632,12 +1651,25 @@ components:
           additionalProperties: { type: string }
     ListMeta:
       type: object
-      required: [total, page, pageSize, totalPages]
+      required: [total, totalKnown, page, pageSize, totalPages, hasMore]
       properties:
         total: { type: integer, minimum: 0 }
+        totalKnown:
+          type: boolean
+          description: True when total is exact. False means the count is a lower bound for a filtered cursor scan.
         page: { type: integer, minimum: 1 }
         pageSize: { type: integer, minimum: 1 }
         totalPages: { type: integer, minimum: 0 }
+        hasMore: { type: boolean }
+        nextCursor:
+          type: string
+          description: Opaque cursor for the next page. Absent on the last page.
+        truncated:
+          type: boolean
+          description: True when a bounded event window or scan cap limited the result set.
+        warnings:
+          type: array
+          items: { type: string }
         sort: { type: string }
         order: { type: string, enum: [asc, desc] }
         filters:

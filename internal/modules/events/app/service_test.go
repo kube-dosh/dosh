@@ -18,6 +18,10 @@ type eventsRepository struct {
 func (r *eventsRepository) ListEvents(context.Context, domain.ListQuery) ([]domain.Event, error) {
 	return r.events, r.err
 }
+func (r *eventsRepository) ListEventsPage(ctx context.Context, query domain.ListQuery, page domain.PageRequest) (domain.PageResult[domain.Event], error) {
+	items, err := r.ListEvents(ctx, query)
+	return domain.PaginateSlice(items, page), err
+}
 func (r *eventsRepository) WatchEvents(context.Context, string) (<-chan domain.Event, <-chan error, error) {
 	if r.err != nil {
 		return nil, nil, r.err

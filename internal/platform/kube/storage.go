@@ -32,6 +32,20 @@ func (c *Client) ListStorageClasses(ctx context.Context, query domain.ListQuery)
 	return out, nil
 }
 
+func (c *Client) ListStorageClassesPage(ctx context.Context, query domain.ListQuery, page domain.PageRequest) (domain.PageResult[domain.StorageClass], error) {
+	ctx, cancel := c.withTimeout(ctx)
+	defer cancel()
+	return listPage(ctx, page, query.Search != "", func(options metav1.ListOptions) ([]storagev1.StorageClass, metav1.ListMeta, error) {
+		items, err := c.clientset.StorageV1().StorageClasses().List(ctx, options)
+		if err != nil {
+			return nil, metav1.ListMeta{}, mapKubeError(err)
+		}
+		return items.Items, items.ListMeta, nil
+	}, storageClassSummary, func(summary domain.StorageClass) bool {
+		return query.Search == "" || matchesSearch([]string{summary.Name, summary.Provisioner}, query.Search)
+	})
+}
+
 func storageClassSummary(item storagev1.StorageClass) domain.StorageClass {
 	reclaim := "Delete"
 	if item.ReclaimPolicy != nil {
@@ -86,6 +100,20 @@ func (c *Client) ListPersistentVolumes(ctx context.Context, query domain.ListQue
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out, nil
+}
+
+func (c *Client) ListPersistentVolumesPage(ctx context.Context, query domain.ListQuery, page domain.PageRequest) (domain.PageResult[domain.PersistentVolume], error) {
+	ctx, cancel := c.withTimeout(ctx)
+	defer cancel()
+	return listPage(ctx, page, query.Search != "", func(options metav1.ListOptions) ([]corev1.PersistentVolume, metav1.ListMeta, error) {
+		items, err := c.clientset.CoreV1().PersistentVolumes().List(ctx, options)
+		if err != nil {
+			return nil, metav1.ListMeta{}, mapKubeError(err)
+		}
+		return items.Items, items.ListMeta, nil
+	}, persistentVolumeSummary, func(summary domain.PersistentVolume) bool {
+		return query.Search == "" || matchesSearch([]string{summary.Name, summary.StorageClass, summary.Claim, summary.Status}, query.Search)
+	})
 }
 
 func persistentVolumeSummary(item corev1.PersistentVolume) domain.PersistentVolume {
@@ -154,6 +182,24 @@ func (c *Client) ListPersistentVolumeClaims(ctx context.Context, query domain.Li
 		return out[i].Namespace < out[j].Namespace
 	})
 	return out, nil
+}
+
+func (c *Client) ListPersistentVolumeClaimsPage(ctx context.Context, query domain.ListQuery, page domain.PageRequest) (domain.PageResult[domain.PersistentVolumeClaim], error) {
+	ctx, cancel := c.withTimeout(ctx)
+	defer cancel()
+	namespace := query.Namespace
+	if namespace == "" {
+		namespace = metav1.NamespaceAll
+	}
+	return listPage(ctx, page, query.Search != "", func(options metav1.ListOptions) ([]corev1.PersistentVolumeClaim, metav1.ListMeta, error) {
+		items, err := c.clientset.CoreV1().PersistentVolumeClaims(namespace).List(ctx, options)
+		if err != nil {
+			return nil, metav1.ListMeta{}, mapKubeError(err)
+		}
+		return items.Items, items.ListMeta, nil
+	}, persistentVolumeClaimSummary, func(summary domain.PersistentVolumeClaim) bool {
+		return query.Search == "" || matchesSearch([]string{summary.Name, summary.Namespace, summary.Status, summary.StorageClass, summary.VolumeName}, query.Search)
+	})
 }
 
 func persistentVolumeClaimSummary(item corev1.PersistentVolumeClaim) domain.PersistentVolumeClaim {

@@ -191,6 +191,8 @@ func mapKubeError(err error) error {
 		return fmt.Errorf("%w: %s", domain.ErrNotFound, s.Message)
 	case 409:
 		return fmt.Errorf("%w: %s", domain.ErrConflict, s.Message)
+	case 410:
+		return fmt.Errorf("%w: %s", domain.ErrStaleCursor, s.Message)
 	case 403:
 		return fmt.Errorf("%w: %s", domain.ErrForbidden, s.Message)
 	case 400:

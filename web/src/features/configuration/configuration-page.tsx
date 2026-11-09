@@ -26,6 +26,7 @@ import { useCapabilities } from "@/features/auth/use-session";
 import { ConfigMapFormDialog } from "@/features/configuration/config-map-form-dialog";
 import { SecretFormDialog } from "@/features/configuration/secret-form-dialog";
 import { ServerCertificatePanel } from "@/features/configuration/server-certificate-panel";
+import { cursorPaginationProps, useCursorPagination } from "@/hooks/use-cursor-pagination";
 import { resourceCapabilities } from "@/lib/capabilities";
 import { decodeSecretValue } from "@/lib/secret-value";
 import { formatAge } from "@/lib/utils";
@@ -56,6 +57,8 @@ export function ConfigurationPage() {
   const namespace = search.namespace ?? "";
   const q = search.q ?? "";
   const tab = search.tab === "secrets" ? "secrets" : search.tab === "certificate" ? "certificate" : "configmaps";
+  const configMapPager = useCursorPagination(`configmaps|${namespace}|${q}`, 20);
+  const secretPager = useCursorPagination(`secrets|${namespace}|${q}`, 20);
   const updateSearch = (patch: { q?: string; namespace?: string; tab?: string }) => {
     void navigate({ to: "/configuration", search: { ...search, ...patch }, replace: true });
   };
@@ -68,8 +71,16 @@ export function ConfigurationPage() {
   const [deletingSecret, setDeletingSecret] = useState<SecretSummary>();
   const [yamlTarget, setYamlTarget] = useState<YamlTarget>();
   const [revealResult, setRevealResult] = useState<SecretReveal | null>(null);
-  const configMaps = useQuery({ queryKey: ["configmaps", namespace, q], queryFn: () => api.configmaps({ namespace, q }), enabled: tab !== "certificate" });
-  const secrets = useQuery({ queryKey: ["secrets", namespace, q], queryFn: () => api.secrets({ namespace, q }), enabled: tab !== "certificate" });
+  const configMaps = useQuery({
+    queryKey: ["configmaps", namespace, q, configMapPager.page, configMapPager.cursor],
+    queryFn: () => api.configmaps({ namespace, q, page: configMapPager.page, pageSize: configMapPager.pageSize, cursor: configMapPager.cursor }),
+    enabled: tab !== "certificate",
+  });
+  const secrets = useQuery({
+    queryKey: ["secrets", namespace, q, secretPager.page, secretPager.cursor],
+    queryFn: () => api.secrets({ namespace, q, page: secretPager.page, pageSize: secretPager.pageSize, cursor: secretPager.cursor }),
+    enabled: tab !== "certificate",
+  });
   const capabilities = useCapabilities(namespace || undefined).data;
   const configMapCaps = resourceCapabilities(capabilities, "configmaps");
   const secretCaps = resourceCapabilities(capabilities, "secrets");
@@ -113,7 +124,7 @@ export function ConfigurationPage() {
       />
       <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center"><SearchInput value={q} onChange={(value) => updateSearch({ q: value || undefined })} placeholder="搜索名称" /><NamespaceSelect value={namespace} onChange={(value) => updateSearch({ namespace: value || undefined })} /></div>
       <Tabs value={tab} onValueChange={(value) => updateSearch({ tab: value === "configmaps" ? undefined : value })}>
-        <TabsList><TabsTrigger value="configmaps">ConfigMap ({configMaps.data?.meta.total ?? 0})</TabsTrigger><TabsTrigger value="secrets">Secret ({secrets.data?.meta.total ?? 0})</TabsTrigger><TabsTrigger value="certificate">服务端证书</TabsTrigger></TabsList>
+        <TabsList><TabsTrigger value="configmaps">ConfigMap ({configMaps.data?.meta.totalKnown ? configMaps.data.meta.total : configMaps.data?.items.length ?? 0})</TabsTrigger><TabsTrigger value="secrets">Secret ({secrets.data?.meta.totalKnown ? secrets.data.meta.total : secrets.data?.items.length ?? 0})</TabsTrigger><TabsTrigger value="certificate">服务端证书</TabsTrigger></TabsList>
         <TabsContent value="configmaps">
           {configMaps.isError ? <ErrorState error={configMaps.error} onRetry={() => void configMaps.refetch()} /> : <DataTable
             columns={[
@@ -125,6 +136,7 @@ export function ConfigurationPage() {
             ]}
             data={configMaps.data?.items ?? []}
             loading={configMaps.isLoading}
+            pagination={cursorPaginationProps(configMapPager, configMaps.data?.meta, configMaps.data?.items.length ?? 0)}
             empty={<div className="flex flex-col items-center gap-2"><Settings2 className="h-6 w-6" /><span>没有 ConfigMap</span></div>}
             onRowClick={(row) => setConfigMap(row)}
           />}
@@ -140,6 +152,7 @@ export function ConfigurationPage() {
             ]}
             data={secrets.data?.items ?? []}
             loading={secrets.isLoading}
+            pagination={cursorPaginationProps(secretPager, secrets.data?.meta, secrets.data?.items.length ?? 0)}
             empty={<div className="flex flex-col items-center gap-2"><LockKeyhole className="h-6 w-6" /><span>没有 Secret</span></div>}
             onRowClick={capabilities?.revealSecrets ? openSecretData : undefined}
           />}
