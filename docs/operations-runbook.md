@@ -236,6 +236,34 @@ kubectl get all,configmap,secret,pvc -n <name>
 `default`、`kube-*`、`dosh` 或 `dosh-preview`。local 模式 ClusterRole 除只读权限外仅增加
 `namespaces delete` 以及既有的受控写权限；Token/OIDC 模式仍由用户自身 RBAC 决定。
 
+### 2.1.7 列表分页与事件窗口
+
+除总览等聚合接口外，资源列表统一使用有界服务端分页。首次请求只传 `pageSize`；响应
+`meta.nextCursor` 非空时，后续请求携带该 `cursor`，不要从 `page` 推算 Kubernetes 的
+continue token。游标是不透明值，长度上限为 8192 字节；Kubernetes 因资源版本过期返回 410
+时，Dosh 返回 400 `stale_cursor`，此时应重新加载第一页。
+
+```bash
+curl -sS -H "Authorization: Bearer $TOKEN" \
+  "https://dosh.example.test/api/v1/pods?namespace=default&pageSize=20"
+
+curl -sS -H "Authorization: Bearer $TOKEN" \
+  "https://dosh.example.test/api/v1/pods?namespace=default&pageSize=20&cursor=$NEXT_CURSOR"
+```
+
+`meta.totalKnown=true` 表示 `total` 是精确值；当搜索或状态过滤需要跨多个 Kubernetes chunk
+扫描时，未完成全量扫描前 `totalKnown=false`，`total` 只是当前已确认的下界。页面应使用
+`hasMore` 和 `nextCursor` 翻页，不能把下界当作最终总数。单次请求最多扫描 50 个 chunk，
+达到上限时返回 `truncated=true` 和 `warnings`，但仍保留可继续使用的游标。
+
+工作负载聚合列表按 Deployment、StatefulSet、DaemonSet、Job、CronJob 顺序流式读取，只在
+当前页计算重启次数。Service 和 Ingress 只补全当前页引用的 EndpointSlice；Pod 只补全当前页
+的 Metrics API 数据。详情接口仍按单资源读取，不受列表分页窗口影响。
+
+事件接口保留最近 1000 条候选事件，过滤并排序后最多展示 500 条，因此它不是无限历史查询。
+命中窗口上限时返回 `truncated=true` 和提示，应使用命名空间、对象或关键词缩小范围；实时流
+只补充已加载页面的新事件，不改变历史窗口上限。
+
 ## 3. 发布
 
 ```bash

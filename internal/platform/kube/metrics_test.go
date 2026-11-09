@@ -65,6 +65,13 @@ func TestMetricsUsageIsAttachedToNodesAndPods(t *testing.T) {
 	if len(pods) != 1 || pods[0].CPUUsageMilli != 125 || pods[0].MemoryUsageBytes != 256*1024*1024 || !pods[0].HasMetrics {
 		t.Fatalf("pod metrics = %#v", pods)
 	}
+	podPage, err := client.ListPodsPage(context.Background(), domain.ListQuery{Namespace: "prod"}, domain.PageRequest{Number: 1, Size: 20})
+	if err != nil {
+		t.Fatalf("ListPodsPage() error = %v", err)
+	}
+	if len(podPage.Items) != 1 || podPage.Items[0].CPUUsageMilli != 125 || podPage.Items[0].MemoryUsageBytes != 256*1024*1024 || !podPage.Items[0].HasMetrics {
+		t.Fatalf("pod page metrics = %#v", podPage.Items)
+	}
 	detail, err := client.GetPod(context.Background(), "prod", "api-0")
 	if err != nil {
 		t.Fatalf("GetPod() error = %v", err)

@@ -75,7 +75,10 @@ func (c *Client) ListEventsPage(ctx context.Context, query domain.ListQuery, pag
 	if len(out) > 500 {
 		out = out[:500]
 	}
-	result := slicePage(out, page)
+	result, err := slicePage(out, page)
+	if err != nil {
+		return domain.PageResult[domain.Event]{}, err
+	}
 	result.Truncated = truncated
 	if truncated {
 		result.Warnings = []string{"事件列表最多保留最近 500 条，请使用命名空间、对象或关键词缩小范围"}

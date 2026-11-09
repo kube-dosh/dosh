@@ -40,10 +40,14 @@ func (h *Handler) List(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		httpx.Error(w, r, err)
 		return
 	}
-	records, meta := httpx.PageItems(records, options, map[string]string{
+	records, meta, err := httpx.PageItems(records, options, map[string]string{
 		"namespace": query.Namespace, "search": query.Search,
 		"action": query.Action, "result": query.Result,
 	})
+	if err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
 	meta.Namespace, meta.Search = query.Namespace, query.Search
 	httpx.JSONList(w, records, meta)
 }

@@ -126,44 +126,17 @@ func ParseListOptions(r *http.Request, allowedSorts []string) (ListOptions, erro
 	return options, nil
 }
 
-func PageItems[T any](items []T, options ListOptions, filters map[string]string) ([]T, ListMeta) {
-	total := len(items)
+func PageItems[T any](items []T, options ListOptions, filters map[string]string) ([]T, ListMeta, error) {
 	SortItems(items, options)
-
-	pageSize := options.PageSize
-	if pageSize <= 0 {
-		pageSize = total
-		if pageSize == 0 {
-			pageSize = 1
-		}
+	result, err := domain.PaginateSliceWithCursor(items, domain.PageRequest{
+		Number: options.Page,
+		Size:   options.PageSize,
+		Cursor: options.Cursor,
+	})
+	if err != nil {
+		return nil, ListMeta{}, err
 	}
-	totalPages := 0
-	if total > 0 {
-		totalPages = (total + pageSize - 1) / pageSize
-	}
-	page := options.Page
-	if page < 1 {
-		page = 1
-	}
-	start := (page - 1) * pageSize
-	if start > total {
-		start = total
-	}
-	end := start + pageSize
-	if end > total {
-		end = total
-	}
-	return items[start:end], ListMeta{
-		Total:      total,
-		TotalKnown: true,
-		Page:       page,
-		PageSize:   pageSize,
-		TotalPages: totalPages,
-		HasMore:    end < total,
-		Sort:       options.Sort,
-		Order:      options.Order,
-		Filters:    filters,
-	}
+	return result.Items, PageMeta(result, options, filters), nil
 }
 
 // SortItems applies an allow-listed sort field to a bounded page. Kubernetes

@@ -62,8 +62,8 @@ func decodeCursor(value string) (cursorPayload, error) {
 	return payload, nil
 }
 
-func slicePage[T any](items []T, page domain.PageRequest) domain.PageResult[T] {
-	return domain.PaginateSlice(items, normalizePage(page))
+func slicePage[T any](items []T, page domain.PageRequest) (domain.PageResult[T], error) {
+	return domain.PaginateSliceWithCursor(items, normalizePage(page))
 }
 
 // listPage reads Kubernetes collections in bounded chunks. The Kubernetes

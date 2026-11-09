@@ -10,9 +10,11 @@ import (
 
 	"dosh/internal/domain"
 
+	"golang.org/x/sync/errgroup"
 	corev1 "k8s.io/api/core/v1"
 	discoveryv1 "k8s.io/api/discovery/v1"
 	networkingv1 "k8s.io/api/networking/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
 )
@@ -62,22 +64,13 @@ func (c *Client) ListServicesPage(ctx context.Context, query domain.ListQuery, p
 	if namespace == "" {
 		namespace = metav1.NamespaceAll
 	}
-	endpointSlices, err := c.clientset.DiscoveryV1().EndpointSlices(namespace).List(ctx, metav1.ListOptions{})
-	if err != nil {
-		return domain.PageResult[domain.ServiceSummary]{}, mapKubeError(err)
-	}
-	endpointCounts := readyEndpointCounts(endpointSlices.Items)
-	return listPage(ctx, page, query.Search != "", func(options metav1.ListOptions) ([]corev1.Service, metav1.ListMeta, error) {
+	result, err := listPage(ctx, page, query.Search != "", func(options metav1.ListOptions) ([]corev1.Service, metav1.ListMeta, error) {
 		items, err := c.clientset.CoreV1().Services(namespace).List(ctx, options)
 		if err != nil {
 			return nil, metav1.ListMeta{}, mapKubeError(err)
 		}
 		return items.Items, items.ListMeta, nil
-	}, func(item corev1.Service) domain.ServiceSummary {
-		summary := serviceSummary(item)
-		summary.EndpointCount = endpointCounts[serviceEndpointKey(item.Namespace, item.Name)]
-		return summary
-	}, func(summary domain.ServiceSummary) bool {
+	}, serviceSummary, func(summary domain.ServiceSummary) bool {
 		if query.Search == "" {
 			return true
 		}
@@ -87,6 +80,21 @@ func (c *Client) ListServicesPage(ctx context.Context, query domain.ListQuery, p
 		}
 		return matchesSearch(fields, query.Search)
 	})
+	if err != nil {
+		return domain.PageResult[domain.ServiceSummary]{}, err
+	}
+	refs := make([]serviceRef, 0, len(result.Items))
+	for _, item := range result.Items {
+		refs = append(refs, serviceRef{namespace: item.Namespace, name: item.Name})
+	}
+	endpointCounts, err := c.endpointCountsForServiceRefs(ctx, refs)
+	if err != nil {
+		return domain.PageResult[domain.ServiceSummary]{}, err
+	}
+	for index := range result.Items {
+		result.Items[index].EndpointCount = endpointCounts[serviceEndpointKey(result.Items[index].Namespace, result.Items[index].Name)]
+	}
+	return result, nil
 }
 
 func (c *Client) GetService(ctx context.Context, namespace, name string) (domain.ServiceDetail, error) {
@@ -276,6 +284,117 @@ func readyEndpointCounts(slices []discoveryv1.EndpointSlice) map[string]int {
 	return counts
 }
 
+func (c *Client) endpointCountsForServiceRefs(ctx context.Context, refs []serviceRef) (map[string]int, error) {
+	byNamespace := make(map[string]map[string]struct{})
+	for _, ref := range refs {
+		if ref.namespace == "" || ref.name == "" {
+			continue
+		}
+		if byNamespace[ref.namespace] == nil {
+			byNamespace[ref.namespace] = make(map[string]struct{})
+		}
+		byNamespace[ref.namespace][ref.name] = struct{}{}
+	}
+	if len(byNamespace) == 0 {
+		return map[string]int{}, nil
+	}
+	namespaces := make([]string, 0, len(byNamespace))
+	for namespace := range byNamespace {
+		namespaces = append(namespaces, namespace)
+	}
+	sort.Strings(namespaces)
+	results := make([]map[string]int, len(namespaces))
+	group, groupCtx := errgroup.WithContext(ctx)
+	group.SetLimit(4)
+	for index, namespace := range namespaces {
+		index, namespace := index, namespace
+		group.Go(func() error {
+			values := make([]string, 0, len(byNamespace[namespace]))
+			for name := range byNamespace[namespace] {
+				values = append(values, name)
+			}
+			sort.Strings(values)
+			slices, err := c.clientset.DiscoveryV1().EndpointSlices(namespace).List(groupCtx, metav1.ListOptions{
+				LabelSelector: fmt.Sprintf("%s in (%s)", discoveryv1.LabelServiceName, strings.Join(values, ",")),
+			})
+			if err != nil {
+				return mapKubeError(err)
+			}
+			results[index] = readyEndpointCounts(slices.Items)
+			return nil
+		})
+	}
+	if err := group.Wait(); err != nil {
+		return nil, err
+	}
+	counts := make(map[string]int)
+	for _, result := range results {
+		for key, count := range result {
+			counts[key] += count
+		}
+	}
+	return counts, nil
+}
+
+type serviceRef struct {
+	namespace string
+	name      string
+}
+
+func ingressServiceRefs(ingresses []domain.IngressSummary) []serviceRef {
+	unique := make(map[serviceRef]struct{})
+	for _, ingress := range ingresses {
+		for _, path := range ingress.Paths {
+			if path.Service != "" {
+				unique[serviceRef{namespace: ingress.Namespace, name: path.Service}] = struct{}{}
+			}
+		}
+	}
+	refs := make([]serviceRef, 0, len(unique))
+	for ref := range unique {
+		refs = append(refs, ref)
+	}
+	sort.Slice(refs, func(i, j int) bool {
+		if refs[i].namespace == refs[j].namespace {
+			return refs[i].name < refs[j].name
+		}
+		return refs[i].namespace < refs[j].namespace
+	})
+	return refs
+}
+
+func (c *Client) servicesForRefs(ctx context.Context, refs []serviceRef) ([]corev1.Service, error) {
+	services := make([]corev1.Service, len(refs))
+	found := make([]bool, len(refs))
+	group, groupCtx := errgroup.WithContext(ctx)
+	group.SetLimit(4)
+	for index := range refs {
+		index := index
+		group.Go(func() error {
+			item, err := c.clientset.CoreV1().Services(refs[index].namespace).Get(groupCtx, refs[index].name, metav1.GetOptions{})
+			if apierrors.IsNotFound(err) {
+				return nil
+			}
+			if err != nil {
+				return mapKubeError(err)
+			}
+			services[index] = *item
+			found[index] = true
+			return nil
+		})
+	}
+	if err := group.Wait(); err != nil {
+		return nil, err
+	}
+	result := make([]corev1.Service, 0, len(services))
+	for index, item := range services {
+		if found[index] {
+			result = append(result, item)
+		}
+	}
+	return result, nil
+}
+
 func serviceEndpointKey(namespace, name string) string { return namespace + "/" + name }
 
 func serviceSummary(item corev1.Service) domain.ServiceSummary {
@@ -359,31 +478,34 @@ func (c *Client) ListIngressesPage(ctx context.Context, query domain.ListQuery, 
 	if namespace == "" {
 		namespace = metav1.NamespaceAll
 	}
-	services, err := c.clientset.CoreV1().Services(namespace).List(ctx, metav1.ListOptions{})
-	if err != nil {
-		return domain.PageResult[domain.IngressSummary]{}, mapKubeError(err)
-	}
-	endpointSlices, err := c.clientset.DiscoveryV1().EndpointSlices(namespace).List(ctx, metav1.ListOptions{})
-	if err != nil {
-		return domain.PageResult[domain.IngressSummary]{}, mapKubeError(err)
-	}
-	servicePorts := servicePortIndexes(services.Items)
-	endpointCounts := readyEndpointCounts(endpointSlices.Items)
-	return listPage(ctx, page, query.Search != "", func(options metav1.ListOptions) ([]networkingv1.Ingress, metav1.ListMeta, error) {
+	result, err := listPage(ctx, page, query.Search != "", func(options metav1.ListOptions) ([]networkingv1.Ingress, metav1.ListMeta, error) {
 		items, err := c.clientset.NetworkingV1().Ingresses(namespace).List(ctx, options)
 		if err != nil {
 			return nil, metav1.ListMeta{}, mapKubeError(err)
 		}
 		return items.Items, items.ListMeta, nil
-	}, func(item networkingv1.Ingress) domain.IngressSummary {
-		summary := ingressSummary(item)
-		for index := range summary.Paths {
-			summary.Paths[index].TargetStatus = ingressTargetStatus(item.Namespace, summary.Paths[index], servicePorts, endpointCounts)
-		}
-		return summary
-	}, func(summary domain.IngressSummary) bool {
+	}, ingressSummary, func(summary domain.IngressSummary) bool {
 		return query.Search == "" || matchesSearch(append([]string{summary.Name, summary.Namespace, summary.Class}, ingressHosts(summary)...), query.Search)
 	})
+	if err != nil {
+		return domain.PageResult[domain.IngressSummary]{}, err
+	}
+	refs := ingressServiceRefs(result.Items)
+	services, err := c.servicesForRefs(ctx, refs)
+	if err != nil {
+		return domain.PageResult[domain.IngressSummary]{}, err
+	}
+	endpointCounts, err := c.endpointCountsForServiceRefs(ctx, refs)
+	if err != nil {
+		return domain.PageResult[domain.IngressSummary]{}, err
+	}
+	servicePorts := servicePortIndexes(services)
+	for index := range result.Items {
+		for pathIndex := range result.Items[index].Paths {
+			result.Items[index].Paths[pathIndex].TargetStatus = ingressTargetStatus(result.Items[index].Namespace, result.Items[index].Paths[pathIndex], servicePorts, endpointCounts)
+		}
+	}
+	return result, nil
 }
 
 func (c *Client) GetIngress(ctx context.Context, namespace, name string) (domain.IngressDetail, error) {

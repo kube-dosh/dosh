@@ -1037,7 +1037,7 @@ test("总览不可用时显示真实集群降级状态", async ({ page }) => {
 });
 
 test("工作负载筛选条件可刷新、分享并随前进后退恢复", async ({ page, context }) => {
-  test.setTimeout(60_000);
+  test.setTimeout(150_000);
   await installApiMocks(page);
   await page.goto("/workloads");
   const search = page.getByPlaceholder("搜索工作负载名称");

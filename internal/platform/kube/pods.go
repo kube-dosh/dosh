@@ -7,6 +7,7 @@ import (
 
 	"dosh/internal/domain"
 
+	"golang.org/x/sync/errgroup"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -43,19 +44,42 @@ func (c *Client) ListPodsPage(ctx context.Context, query domain.ListQuery, page 
 	if namespace == "" {
 		namespace = metav1.NamespaceAll
 	}
-	actual := c.podMetrics(ctx, namespace)
-	return listPage(ctx, page, query.Search != "", func(options metav1.ListOptions) ([]corev1.Pod, metav1.ListMeta, error) {
+	result, err := listPage(ctx, page, query.Search != "", func(options metav1.ListOptions) ([]corev1.Pod, metav1.ListMeta, error) {
 		items, err := c.clientset.CoreV1().Pods(namespace).List(ctx, options)
 		if err != nil {
 			return nil, metav1.ListMeta{}, mapKubeError(err)
 		}
 		return items.Items, items.ListMeta, nil
-	}, func(pod corev1.Pod) domain.PodSummary {
-		usage, hasMetrics := actual[pod.Namespace+"/"+pod.Name]
-		return podSummaryWithUsage(pod, usage, hasMetrics)
-	}, func(summary domain.PodSummary) bool {
+	}, podSummary, func(summary domain.PodSummary) bool {
 		return query.Search == "" || matchesSearch([]string{summary.Name, summary.Namespace, summary.Status, summary.Node, summary.OwnerName}, query.Search)
 	})
+	if err != nil {
+		return domain.PageResult[domain.PodSummary]{}, err
+	}
+	c.enrichPodMetrics(ctx, result.Items)
+	return result, nil
+}
+
+func (c *Client) enrichPodMetrics(ctx context.Context, pods []domain.PodSummary) {
+	if len(pods) == 0 || !c.MetricsAvailable(ctx) {
+		return
+	}
+	group, groupCtx := errgroup.WithContext(ctx)
+	group.SetLimit(8)
+	for index := range pods {
+		index := index
+		group.Go(func() error {
+			item, err := c.metrics.MetricsV1beta1().PodMetricses(pods[index].Namespace).Get(groupCtx, pods[index].Name, metav1.GetOptions{})
+			if err == nil {
+				usage := usageFromQuantity(nil, item.Containers)
+				pods[index].CPUUsageMilli = usage.CPUUsageMilli
+				pods[index].MemoryUsageBytes = usage.MemoryUsageBytes
+				pods[index].HasMetrics = true
+			}
+			return nil
+		})
+	}
+	_ = group.Wait()
 }
 
 func (c *Client) GetPod(ctx context.Context, namespace, name string) (domain.PodDetail, error) {

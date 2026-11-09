@@ -245,7 +245,10 @@ func TestParseListOptionsValidatesPaginationAndSorting(t *testing.T) {
 func TestPageItemsReturnsStablePaginationAndFilterMetadata(t *testing.T) {
 	items := []testPayload{{Name: "zeta"}, {Name: "alpha"}, {Name: "middle"}}
 	options := ListOptions{Page: 2, PageSize: 1, Sort: "name", Order: "asc"}
-	page, meta := PageItems(items, options, map[string]string{"namespace": "prod"})
+	page, meta, err := PageItems(items, options, map[string]string{"namespace": "prod"})
+	if err != nil {
+		t.Fatalf("PageItems() error = %v", err)
+	}
 	if len(page) != 1 || page[0].Name != "middle" {
 		t.Fatalf("page = %#v", page)
 	}

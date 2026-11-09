@@ -117,6 +117,28 @@ func TestGetServiceMapsNotFound(t *testing.T) {
 	}
 }
 
+func TestListServicePageEnrichesOnlyTheVisiblePage(t *testing.T) {
+	client, clientset := newFakeKubeClient(testService(), testServiceEndpointSlice())
+	endpointNamespaces := make([]string, 0, 1)
+	clientset.PrependReactor("list", "endpointslices", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		endpointNamespaces = append(endpointNamespaces, action.GetNamespace())
+		return false, nil, nil
+	})
+	page, err := client.ListServicesPage(context.Background(), domain.ListQuery{Namespace: "prod"}, domain.PageRequest{Number: 1, Size: 20})
+	if err != nil {
+		t.Fatalf("ListServicesPage() error = %v", err)
+	}
+	if len(page.Items) != 1 || page.Items[0].Name != "web" || page.Items[0].EndpointCount != 1 {
+		t.Fatalf("services page = %#v", page.Items)
+	}
+	if !page.TotalKnown || page.Total != 1 || page.HasMore {
+		t.Fatalf("services metadata = %#v", page)
+	}
+	if len(endpointNamespaces) != 1 || endpointNamespaces[0] != "prod" {
+		t.Fatalf("endpoint slice namespace scope = %#v", endpointNamespaces)
+	}
+}
+
 func TestGetIngressIncludesDefaultBackendTLSAndTargetStatus(t *testing.T) {
 	client, _ := newFakeKubeClient(testIngress(), testService(), testServiceEndpointSlice())
 	detail, err := client.GetIngress(context.Background(), "prod", "web")
@@ -142,6 +164,17 @@ func TestGetIngressMapsNotFound(t *testing.T) {
 	_, err := client.GetIngress(context.Background(), "prod", "missing")
 	if !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("GetIngress() error = %v, want ErrNotFound", err)
+	}
+}
+
+func TestListIngressPageResolvesTargetStatusFromPageReferences(t *testing.T) {
+	client, _ := newFakeKubeClient(testIngress(), testService(), testServiceEndpointSlice())
+	page, err := client.ListIngressesPage(context.Background(), domain.ListQuery{Namespace: "prod"}, domain.PageRequest{Number: 1, Size: 20})
+	if err != nil {
+		t.Fatalf("ListIngressesPage() error = %v", err)
+	}
+	if len(page.Items) != 1 || len(page.Items[0].Paths) != 1 || page.Items[0].Paths[0].TargetStatus != domain.IngressTargetReady {
+		t.Fatalf("ingresses page = %#v", page.Items)
 	}
 }
 
