@@ -103,7 +103,8 @@ build_artifacts() {
     mkdir -p "dist/stage/${artifact_arch}"
     cp "$binary" "dist/stage/${artifact_arch}/dosh"
     cp README.md "dist/stage/${artifact_arch}/README.md"
-    tar -C "dist/stage/${artifact_arch}" -czf "dist/dosh_${version}_linux_${artifact_arch}.tar.gz" dosh README.md
+    cp README.zh-CN.md "dist/stage/${artifact_arch}/README.zh-CN.md"
+    tar -C "dist/stage/${artifact_arch}" -czf "dist/dosh_${version}_linux_${artifact_arch}.tar.gz" dosh README.md README.zh-CN.md
   done
 
   helm lint deploy/helm/dosh

@@ -57,6 +57,7 @@ git push origin v0.1.7
 | Helm OCI Chart | GHCR | `oci://ghcr.io/kube-dosh/charts/dosh:<chart-version>` |
 
 预发布版本（版本号包含 `-`）只发布版本标签，不更新 `latest`。
+Linux 压缩包同时包含英文默认文档 `README.md` 和中文文档 `README.zh-CN.md`，离线包内的语言切换链接仍然有效。
 
 ## 使用发布产物
 
