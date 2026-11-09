@@ -36,7 +36,7 @@ func (h *spaHandler) ServeHTTP(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		} else {
 			w.Header().Set("Cache-Control", cacheControl(false))
 		}
-		stdhttp.ServeContent(w, r, requestPath, info.ModTime(), mustOpen(h.content, requestPath))
+		stdhttp.ServeFileFS(w, r, h.content, requestPath)
 		return
 	}
 	index, err := fs.ReadFile(h.content, "index.html")
@@ -49,27 +49,3 @@ func (h *spaHandler) ServeHTTP(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	w.WriteHeader(stdhttp.StatusOK)
 	_, _ = w.Write(index)
 }
-
-func mustOpen(content fs.FS, name string) *readSeekCloser {
-	file, err := content.Open(name)
-	if err != nil {
-		panic(err)
-	}
-	return &readSeekCloser{file: file}
-}
-
-type readSeekCloser struct {
-	file fs.File
-}
-
-func (r *readSeekCloser) Read(p []byte) (int, error) { return r.file.Read(p) }
-func (r *readSeekCloser) Seek(offset int64, whence int) (int64, error) {
-	seeker, ok := r.file.(interface {
-		Seek(int64, int) (int64, error)
-	})
-	if !ok {
-		return 0, fs.ErrInvalid
-	}
-	return seeker.Seek(offset, whence)
-}
-func (r *readSeekCloser) Close() error { return r.file.Close() }

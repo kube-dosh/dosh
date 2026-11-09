@@ -62,12 +62,17 @@ export function OverviewPage() {
         <Card>
           <CardHeader><div className="flex items-center justify-between"><div><CardTitle>节点状态</CardTitle><CardDescription>节点 Ready 状态与资源压力</CardDescription></div><Button variant="ghost" size="sm" asChild><Link to="/nodes">全部节点</Link></Button></div></CardHeader>
           <CardContent className="space-y-2">
-            {nodes.isLoading ? <LoadingState className="h-40" /> : nodes.data?.items.slice(0, 6).map((node) => (
+            {nodes.isLoading ? <LoadingState className="h-40" /> : nodes.isError ? (
+              <div role="alert" className="flex flex-col items-center gap-2 rounded-md border border-destructive/25 bg-destructive/5 px-3 py-6 text-center text-sm text-muted-foreground">
+                <span>节点列表加载失败</span>
+                <Button variant="outline" size="sm" onClick={() => void nodes.refetch()}>重试</Button>
+              </div>
+            ) : nodes.data?.items.length ? nodes.data.items.slice(0, 6).map((node) => (
               <Link key={node.name} to="/nodes/$name" params={{ name: node.name }} className="flex items-center justify-between rounded-md border px-3 py-2.5 transition-colors hover:bg-muted/40">
                 <div className="min-w-0"><p className="truncate text-sm font-medium">{node.name}</p><p className="text-xs text-muted-foreground">{node.roles.join(", ")} · {node.internalIP}</p></div>
                 <StatusBadge status={node.unschedulable ? "SchedulingDisabled" : node.status} />
               </Link>
-            ))}
+            )) : <p className="py-8 text-center text-sm text-muted-foreground">当前没有节点数据</p>}
           </CardContent>
         </Card>
       </div>

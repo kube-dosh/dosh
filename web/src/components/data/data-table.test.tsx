@@ -1,4 +1,5 @@
 import { render, screen } from "@testing-library/react";
+import { fireEvent } from "@testing-library/react";
 import { createColumnHelper } from "@tanstack/react-table";
 import { describe, expect, it } from "vitest";
 import { DataTable } from "@/components/data/data-table";
@@ -99,5 +100,21 @@ describe("DataTable", () => {
 
     expect(screen.getByRole("columnheader", { name: "时间" })).not.toHaveClass("sticky");
     expect(screen.getByRole("cell", { name: row.age })).not.toHaveClass("sticky");
+  });
+
+  it("provides labelled pagination controls and announces the current page", () => {
+    const columns = [
+      column.accessor("name", { header: "名称" }),
+      column.accessor("status", { header: "状态" }),
+    ];
+    const rows = Array.from({ length: 21 }, (_, index) => ({ ...row, name: `pod-${index}` }));
+
+    render(<DataTable columns={columns} data={rows} pageSize={20} />);
+
+    expect(screen.getByText("共 21 条 · 第 1 / 2 页")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "上一页" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "下一页" }));
+    expect(screen.getByText("共 21 条 · 第 2 / 2 页")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "下一页" })).toBeDisabled();
   });
 });

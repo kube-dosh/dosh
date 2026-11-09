@@ -97,8 +97,6 @@ export function ConfigurationPage() {
     { label: "查看 YAML", icon: <FileCode2 className="h-4 w-4" />, onSelect: () => setYamlTarget({ type: "secret", namespace: item.namespace, name: item.name }) },
     { label: "删除 Secret", icon: <Trash2 className="h-4 w-4" />, onSelect: () => setDeletingSecret(item), destructive: true, disabled: !secretCaps.delete, separatorBefore: true },
   ];
-  const error = tab === "certificate" ? null : configMaps.error || secrets.error;
-  if (error) return <ErrorState error={error} onRetry={() => { void configMaps.refetch(); void secrets.refetch(); }} />;
   const configMapCreateHint = !namespace ? "请先选择命名空间，再创建 ConfigMap" : !configMapCaps.create ? "当前身份没有创建 ConfigMap 的权限" : undefined;
   const secretCreateHint = !namespace ? "请先选择命名空间，再创建 Secret" : !secretCaps.create ? "当前身份没有创建 Secret 的权限" : undefined;
   return (
@@ -117,7 +115,7 @@ export function ConfigurationPage() {
       <Tabs value={tab} onValueChange={(value) => updateSearch({ tab: value === "configmaps" ? undefined : value })}>
         <TabsList><TabsTrigger value="configmaps">ConfigMap ({configMaps.data?.meta.total ?? 0})</TabsTrigger><TabsTrigger value="secrets">Secret ({secrets.data?.meta.total ?? 0})</TabsTrigger><TabsTrigger value="certificate">服务端证书</TabsTrigger></TabsList>
         <TabsContent value="configmaps">
-          <DataTable
+          {configMaps.isError ? <ErrorState error={configMaps.error} onRetry={() => void configMaps.refetch()} /> : <DataTable
             columns={[
               configMapColumn.accessor("name", { header: "名称", cell: (info) => <button type="button" className="font-medium text-primary hover:underline" onClick={() => setConfigMap(info.row.original)}>{info.getValue()}</button> }),
               configMapColumn.accessor("namespace", { header: "命名空间" }),
@@ -129,10 +127,10 @@ export function ConfigurationPage() {
             loading={configMaps.isLoading}
             empty={<div className="flex flex-col items-center gap-2"><Settings2 className="h-6 w-6" /><span>没有 ConfigMap</span></div>}
             onRowClick={(row) => setConfigMap(row)}
-          />
+          />}
         </TabsContent>
         <TabsContent value="secrets">
-          <DataTable
+          {secrets.isError ? <ErrorState error={secrets.error} onRetry={() => void secrets.refetch()} /> : <DataTable
             columns={[
               secretColumn.accessor("name", { header: "名称", cell: (info) => <ActionTooltip content={!capabilities?.revealSecrets ? "当前身份没有查看 Secret 数据的权限" : undefined}><button type="button" className="font-medium text-primary hover:underline disabled:pointer-events-none disabled:text-muted-foreground disabled:no-underline" onClick={(event) => { event.stopPropagation(); openSecretData(info.row.original); }} disabled={!capabilities?.revealSecrets}>{info.getValue()}</button></ActionTooltip> }),
               secretColumn.accessor("namespace", { header: "命名空间" }),
@@ -144,7 +142,7 @@ export function ConfigurationPage() {
             loading={secrets.isLoading}
             empty={<div className="flex flex-col items-center gap-2"><LockKeyhole className="h-6 w-6" /><span>没有 Secret</span></div>}
             onRowClick={capabilities?.revealSecrets ? openSecretData : undefined}
-          />
+          />}
         </TabsContent>
         <TabsContent value="certificate"><ServerCertificatePanel /></TabsContent>
       </Tabs>

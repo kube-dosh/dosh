@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, Outlet, useNavigate, useRouterState } from "@tanstack/react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import {
@@ -6,7 +6,7 @@ import {
   LayoutDashboard, LogOut, Menu, Moon, Network, ScrollText, Search, Server, Settings2, Sun, X,
   type LucideIcon,
 } from "lucide-react";
-import { api } from "@/api/client";
+import { ApiError, api } from "@/api/client";
 import type { Overview } from "@/api/types";
 import { sessionQueryKey, useSessionQuery } from "@/features/auth/use-session";
 import { useOverviewQuery } from "@/features/overview/use-overview-query";
@@ -38,8 +38,17 @@ type ClusterPresentation = {
   dotClass: string;
 };
 
-function clusterPresentation(data: Overview | undefined, isError: boolean): ClusterPresentation {
-  if (isError) {
+function clusterPresentation(data: Overview | undefined, error: unknown): ClusterPresentation {
+  if (error instanceof ApiError && error.status === 403) {
+    return {
+      name: "权限不足",
+      label: "无权限",
+      connectionLabel: "集群权限不足",
+      detail: "当前身份无法读取集群总览数据",
+      dotClass: "bg-destructive",
+    };
+  }
+  if (error) {
     return {
       name: "集群状态不可用",
       label: "连接失败",
@@ -81,8 +90,37 @@ export function AppShell() {
   const [mobileOpen, setMobileOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
-  const cluster = clusterPresentation(overview.data, overview.isError);
+  const cluster = clusterPresentation(overview.data, overview.error);
   const { theme, toggleTheme } = useTheme();
+
+  useEffect(() => {
+    const handleShortcut = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && !event.altKey && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        setSearchOpen(true);
+      }
+    };
+    window.addEventListener("keydown", handleShortcut);
+    return () => window.removeEventListener("keydown", handleShortcut);
+  }, []);
+
+  useEffect(() => {
+    setMobileOpen(false);
+  }, [pathname]);
+
+  useEffect(() => {
+    if (!mobileOpen) return;
+    const previousOverflow = document.body.style.overflow;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setMobileOpen(false);
+    };
+    document.body.style.overflow = "hidden";
+    document.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [mobileOpen]);
 
   const localLogout = async () => {
     try { await api.logout(); } finally {
@@ -95,7 +133,7 @@ export function AppShell() {
     <div className="min-h-screen w-full min-w-0 max-w-full overflow-x-clip bg-background">
       <header className="sticky top-0 z-40 flex h-14 w-full min-w-0 max-w-full items-center overflow-x-clip border-b bg-card/95 px-4 backdrop-blur md:px-5">
         <Button variant="ghost" size="icon" className="mr-2 shrink-0 lg:hidden" onClick={() => setMobileOpen(true)} aria-label="打开导航" aria-expanded={mobileOpen} aria-controls="app-navigation"><Menu className="h-5 w-5" /></Button>
-        <Link to="/" className="flex shrink-0 items-center gap-2.5">
+        <Link to="/" aria-label="Dosh Console 首页" className="flex shrink-0 items-center gap-2.5">
           <div className="grid h-8 w-8 place-items-center rounded-lg bg-primary text-sm font-bold text-primary-foreground shadow-sm">D</div>
           <div className="hidden sm:block">
             <p className="text-sm font-semibold leading-4">Dosh Console</p>
@@ -109,8 +147,8 @@ export function AppShell() {
           <span className="text-muted-foreground">/ {cluster.label}</span>
         </div>
         <div className="ml-auto flex min-w-0 shrink-0 items-center gap-1 sm:gap-1.5">
-          <button type="button" onClick={() => setSearchOpen(true)} className="hidden h-9 w-64 items-center gap-2 rounded-md border bg-muted/35 px-3 text-sm text-muted-foreground transition-colors hover:bg-muted lg:flex">
-            <Search className="h-3.5 w-3.5" /><span>搜索资源</span><kbd className="ml-auto rounded border bg-card px-1.5 py-0.5 text-[10px]">⌘ K</kbd>
+          <button type="button" onClick={() => setSearchOpen(true)} aria-keyshortcuts="Meta+K Control+K" className="hidden h-9 w-64 items-center gap-2 rounded-md border bg-muted/35 px-3 text-sm text-muted-foreground transition-colors hover:bg-muted lg:flex">
+            <Search className="h-3.5 w-3.5" /><span>搜索资源</span><kbd className="ml-auto rounded border bg-card px-1.5 py-0.5 text-[10px]">⌘/Ctrl K</kbd>
           </button>
           <Button variant="ghost" size="icon" className="lg:hidden" onClick={() => setSearchOpen(true)} aria-label="搜索"><Search className="h-4 w-4" /></Button>
           <Button variant="ghost" size="icon" asChild aria-label="事件" className="hidden sm:inline-flex"><Link to="/events"><Bell className="h-4 w-4" /></Link></Button>
@@ -144,7 +182,7 @@ export function AppShell() {
       </header>
 
       <div className="flex min-h-[calc(100vh-3.5rem)] w-full min-w-0 max-w-full">
-        <aside id="app-navigation" aria-label="主导航" className={cn("fixed inset-y-0 left-0 z-50 flex w-60 flex-col border-r bg-card transition-transform lg:sticky lg:top-14 lg:z-30 lg:h-[calc(100vh-3.5rem)] lg:translate-x-0", mobileOpen ? "translate-x-0" : "-translate-x-full")}>
+        <aside id="app-navigation" aria-label="主导航" className={cn("fixed inset-y-0 left-0 z-50 flex w-60 flex-col border-r bg-card transition-transform lg:sticky lg:top-14 lg:z-30 lg:h-[calc(100vh-3.5rem)] lg:translate-x-0", mobileOpen ? "visible translate-x-0" : "invisible -translate-x-full lg:visible")}>
           <div className="flex h-14 shrink-0 items-center justify-between border-b px-4 lg:hidden">
             <span className="font-semibold">导航</span>
             <Button variant="ghost" size="icon" onClick={() => setMobileOpen(false)} aria-label="关闭导航"><X className="h-4 w-4" /></Button>
@@ -155,7 +193,7 @@ export function AppShell() {
               const active = item.match(pathname);
               const Icon = item.icon;
               return (
-                <Link key={item.href} to={item.href} onClick={() => setMobileOpen(false)} className={cn("flex h-9 items-center gap-3 rounded-md px-3 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring", active ? "bg-primary/10 font-medium text-primary" : "text-muted-foreground hover:bg-muted hover:text-foreground")}>
+                <Link key={item.href} to={item.href} aria-current={active ? "page" : undefined} onClick={() => setMobileOpen(false)} className={cn("flex h-9 items-center gap-3 rounded-md px-3 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring", active ? "bg-primary/10 font-medium text-primary" : "text-muted-foreground hover:bg-muted hover:text-foreground")}>
                   <Icon className="h-4 w-4" />{item.label}
                 </Link>
               );

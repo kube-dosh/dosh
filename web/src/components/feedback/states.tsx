@@ -5,7 +5,7 @@ import { cn } from "@/lib/utils";
 
 export function LoadingState({ label = "正在加载", className }: { label?: string; className?: string }) {
   return (
-    <div className={cn("flex h-40 flex-col items-center justify-center gap-3 text-sm text-muted-foreground", className)}>
+    <div role="status" aria-live="polite" className={cn("flex h-40 flex-col items-center justify-center gap-3 text-sm text-muted-foreground", className)}>
       <Loader2 className="h-5 w-5 animate-spin text-primary" />
       <span>{label}</span>
     </div>
@@ -35,7 +35,7 @@ export function ErrorState({ error, onRetry, className }: { error: unknown; onRe
   const forbidden = apiError?.status === 403;
   const Icon = forbidden ? ShieldAlert : AlertTriangle;
   return (
-    <div className={cn("flex min-h-52 flex-col items-center justify-center gap-3 rounded-lg border border-destructive/25 bg-destructive/5 px-6 py-10 text-center", className)}>
+    <div role="alert" className={cn("flex min-h-52 flex-col items-center justify-center gap-3 rounded-lg border border-destructive/25 bg-destructive/5 px-6 py-10 text-center", className)}>
       <div className="rounded-full bg-destructive/10 p-3 text-destructive-strong"><Icon className="h-5 w-5" /></div>
       <div>
         <p className="font-medium text-foreground">{forbidden ? "没有访问权限" : "加载失败"}</p>

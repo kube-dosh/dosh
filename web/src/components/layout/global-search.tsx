@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import { Boxes, CircleDot, Search, Server } from "lucide-react";
 import { api } from "@/api/client";
+import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -17,7 +18,12 @@ export function GlobalSearch({ open, onOpenChange }: { open: boolean; onOpenChan
   const workloads = useQuery({ queryKey: ["search", "workloads", deferred], queryFn: () => api.workloads({ q: deferred }), enabled, staleTime: 10_000 });
   const pods = useQuery({ queryKey: ["search", "pods", deferred], queryFn: () => api.pods({ q: deferred }), enabled, staleTime: 10_000 });
   const loading = enabled && (nodes.isLoading || workloads.isLoading || pods.isLoading);
-  const empty = enabled && !loading && !nodes.data?.items.length && !workloads.data?.items.length && !pods.data?.items.length;
+  const failedGroups = [
+    nodes.isError ? "节点" : "",
+    workloads.isError ? "工作负载" : "",
+    pods.isError ? "Pod" : "",
+  ].filter(Boolean);
+  const empty = enabled && !loading && failedGroups.length === 0 && !nodes.data?.items.length && !workloads.data?.items.length && !pods.data?.items.length;
 
   const closeAndNavigate = (action: () => void) => {
     onOpenChange(false);
@@ -25,8 +31,13 @@ export function GlobalSearch({ open, onOpenChange }: { open: boolean; onOpenChan
     action();
   };
 
+  const handleOpenChange = (next: boolean) => {
+    onOpenChange(next);
+    if (!next) setTerm("");
+  };
+
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent className="max-w-2xl gap-3 p-0">
         <DialogHeader className="border-b px-5 py-4">
           <DialogTitle className="text-base">搜索集群资源</DialogTitle>
@@ -35,11 +46,12 @@ export function GlobalSearch({ open, onOpenChange }: { open: boolean; onOpenChan
         <div className="px-5">
           <div className="relative">
             <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-            <Input autoFocus value={term} onChange={(event) => setTerm(event.target.value)} placeholder="输入资源名称…" className="h-11 pl-9 text-base" />
+            <Input autoFocus value={term} onChange={(event) => setTerm(event.target.value)} placeholder="输入资源名称…" aria-label="搜索集群资源" className="h-11 pl-9 text-base" />
           </div>
         </div>
         <div className="max-h-[60vh] overflow-y-auto px-3 pb-4 scrollbar-thin">
           {!enabled ? <p className="px-2 py-8 text-center text-sm text-muted-foreground">输入资源名称开始搜索</p> : null}
+          {enabled && failedGroups.length ? <div role="alert" className="mx-2 my-2 flex items-center justify-between gap-3 rounded-md border border-warning/35 bg-warning/10 px-3 py-2 text-xs text-warning"><span>{failedGroups.join("、")}资源加载失败</span><Button variant="ghost" size="sm" className="h-7 px-2 text-xs" onClick={() => { void nodes.refetch(); void workloads.refetch(); void pods.refetch(); }}>重试</Button></div> : null}
           {loading ? <div className="space-y-2 p-2">{Array.from({ length: 4 }).map((_, index) => <Skeleton key={index} className="h-10 w-full" />)}</div> : null}
           {empty ? <p className="px-2 py-8 text-center text-sm text-muted-foreground">没有找到匹配资源</p> : null}
           {nodes.data?.items.length ? <SearchGroup label="节点" icon={Server}>{nodes.data.items.map((item) => (

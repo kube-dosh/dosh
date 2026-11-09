@@ -53,11 +53,17 @@ export function NetworkPage() {
   const capabilities = useCapabilities(namespace || undefined).data;
   const serviceCaps = resourceCapabilities(capabilities, "services");
   const ingressCaps = resourceCapabilities(capabilities, "ingresses");
-  const error = services.error || ingresses.error || ingressClasses.error;
-  if (error) return <ErrorState error={error} onRetry={() => { void services.refetch(); void ingresses.refetch(); void ingressClasses.refetch(); }} />;
-  const noIngressClasses = !ingressClasses.isLoading && !ingressClasses.data?.items.length;
+  const noIngressClasses = !ingressClasses.isLoading && !ingressClasses.isError && !ingressClasses.data?.items.length;
   const serviceCreateHint = !namespace ? "请先选择命名空间，再创建 Service" : !serviceCaps.create ? "当前身份没有创建 Service 的权限" : undefined;
-  const ingressCreateHint = !namespace ? "请先选择命名空间，再创建 Ingress" : noIngressClasses ? "集群未安装 Ingress Controller" : !ingressCaps.create ? "当前身份没有创建 Ingress 的权限" : undefined;
+  const ingressCreateHint = !namespace
+    ? "请先选择命名空间，再创建 Ingress"
+    : ingressClasses.isError
+      ? "IngressClass 加载失败，请重试后再创建 Ingress"
+      : noIngressClasses
+        ? "集群未安装 Ingress Controller"
+        : !ingressCaps.create
+          ? "当前身份没有创建 Ingress 的权限"
+          : undefined;
   const detectedClasses = ingressClasses.data?.items.map((item) => item.name).join(", ") || "—";
   const refreshServices = async () => { await services.refetch(); };
   const refreshIngresses = async () => { await ingresses.refetch(); };
@@ -98,7 +104,7 @@ export function NetworkPage() {
       <Tabs value={tab} onValueChange={(value) => updateSearch({ tab: value === "services" ? undefined : value })}>
         <TabsList><TabsTrigger value="services">Service ({services.data?.meta.total ?? 0})</TabsTrigger><TabsTrigger value="ingresses">Ingress ({ingresses.data?.meta.total ?? 0})</TabsTrigger></TabsList>
         <TabsContent value="services">
-          <DataTable
+          {services.isError ? <ErrorState error={services.error} onRetry={() => void services.refetch()} /> : <DataTable
             columns={[
               serviceColumn.accessor("name", { header: "名称", cell: (info) => <Link to="/network/services/$namespace/$name" params={{ namespace: info.row.original.namespace, name: info.getValue() }} className="font-medium text-primary hover:underline">{info.getValue()}</Link> }),
               serviceColumn.accessor("namespace", { header: "命名空间" }),
@@ -114,10 +120,10 @@ export function NetworkPage() {
             data={services.data?.items ?? []}
             loading={services.isLoading}
             empty="当前筛选条件下没有 Service"
-          />
+          />}
         </TabsContent>
         <TabsContent value="ingresses">
-          {ingressClasses.isLoading ? <DataTable columns={[]} data={[]} loading empty="正在加载 IngressClass" /> : noIngressClasses ? (
+          {ingressClasses.isError ? <ErrorState error={ingressClasses.error} onRetry={() => void ingressClasses.refetch()} /> : ingresses.isError ? <ErrorState error={ingresses.error} onRetry={() => void ingresses.refetch()} /> : ingressClasses.isLoading ? <DataTable columns={[]} data={[]} loading empty="正在加载 IngressClass" /> : noIngressClasses ? (
             <EmptyState title="未安装 Ingress Controller" description="当前集群没有 IngressClass。请先安装并注册 Ingress Controller；Dosh 仍可通过 NodePort 32626 访问。" />
           ) : !ingresses.isLoading && !ingresses.data?.items.length ? (
             <EmptyState title="没有 Ingress 资源" description={`已检测到 IngressClass：${detectedClasses}。创建 Ingress 后，路由规则会显示在此页面。`} />

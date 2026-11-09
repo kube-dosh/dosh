@@ -47,6 +47,11 @@ function isWorkloadTab(value: string | undefined): value is WorkloadTab {
   return workloadTabs.includes(value as WorkloadTab);
 }
 
+function workloadKindLabel(kind: string): string {
+  const normalized = kind.toLowerCase();
+  return kubernetesKinds[normalized] ?? `${kind.charAt(0).toUpperCase()}${kind.slice(1).toLowerCase()}`;
+}
+
 export function WorkloadDetailPage() {
   const params = useParams({ strict: false }) as { kind: string; namespace: string; name: string };
   const search = useSearch({ from: "/app/workloads/$kind/$namespace/$name" });
@@ -64,6 +69,7 @@ export function WorkloadDetailPage() {
   const [replicas, setReplicas] = useState(1);
   const [confirmName, setConfirmName] = useState("");
   const kind = params.kind.toLowerCase();
+  const kindLabel = workloadKindLabel(kind);
   const tab = isWorkloadTab(search.tab) ? search.tab : "overview";
   const changeTab = (value: string) => {
     if (!isWorkloadTab(value)) return;
@@ -167,7 +173,7 @@ export function WorkloadDetailPage() {
     <>
       <PageHeader
         title={workload.name}
-        breadcrumb={<span>工作负载 / <Link to="/workloads" className="text-primary underline underline-offset-2">{kind}</Link> / {workload.namespace}</span>}
+        breadcrumb={<span>工作负载 / <Link to="/workloads" className="text-primary underline underline-offset-2">{kindLabel}</Link> / {workload.namespace}</span>}
         description={<span className="flex flex-wrap items-center gap-2"><StatusBadge status={workload.status} /><span>{workload.ready} 就绪</span><span>·</span><span>{workload.namespace}</span></span>}
         actions={
           <>
@@ -231,7 +237,7 @@ export function WorkloadDetailPage() {
           />
         </TabsContent>
         <TabsContent value="services"><WorkloadServicesPanel namespace={workload.namespace} workloadName={workload.name} workloadSelector={workload.selector} /></TabsContent>
-        <TabsContent value="events"><ResourceEvents namespace={workload.namespace} objectKind={kubernetesKinds[kind] ?? workload.kind} objectName={workload.name} /></TabsContent>
+        <TabsContent value="events"><ResourceEvents namespace={workload.namespace} objectKind={kindLabel} objectName={workload.name} /></TabsContent>
         <TabsContent value="logs"><PodLogs pods={workload.pods} emptyMessage="该工作负载当前没有可查看日志的实例。" /></TabsContent>
         <TabsContent value="yaml"><YamlPanel type={kind} name={workload.name} namespace={workload.namespace} height="64vh" /></TabsContent>
       </Tabs>

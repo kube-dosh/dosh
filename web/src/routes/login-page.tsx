@@ -66,7 +66,7 @@ export function LoginPage() {
           {authConfig.isPending ? (
             <div className="flex items-center gap-2 py-10 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />正在读取认证配置…</div>
           ) : authConfig.isError ? (
-            <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive-strong">无法读取认证配置，请刷新页面后重试。</div>
+            <div role="alert" className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive-strong">无法读取认证配置，请刷新页面后重试。</div>
           ) : authConfig.data.mode === "oidc" ? (
             <div>
               <div className="mb-7">
@@ -74,7 +74,7 @@ export function LoginPage() {
                 <h2 className="text-2xl font-semibold tracking-tight">企业身份登录</h2>
                 <p className="mt-1.5 text-sm text-muted-foreground">使用组织身份提供商安全登录，权限由 Kubernetes RBAC 决定。</p>
               </div>
-              {oidcError ? <div className="mb-4 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive-strong">身份认证未完成，请重新登录。</div> : null}
+              {oidcError ? <div role="alert" className="mb-4 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive-strong">身份认证未完成，请重新登录。</div> : null}
               <Button className="w-full" onClick={() => window.location.assign("/api/v1/auth/oidc/login?returnTo=%2F")}>
                 <LogIn className="h-4 w-4" />使用 {authConfig.data.providerName || "企业身份"} 登录
               </Button>
@@ -94,7 +94,7 @@ export function LoginPage() {
                   <Label htmlFor="kubernetes-token">Bearer Token</Label>
                   <Textarea id="kubernetes-token" autoFocus autoComplete="off" spellCheck={false} rows={5} className="font-mono text-xs" value={token} onChange={(event) => setToken(event.target.value)} placeholder="eyJhbGciOi..." />
                 </div>
-                {tokenMutation.error ? <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive-strong">{tokenMutation.error.message}</div> : null}
+                {tokenMutation.error ? <div role="alert" className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive-strong">{tokenMutation.error.message}</div> : null}
                 <Button type="submit" className="w-full" disabled={tokenMutation.isPending || !token.trim()}>
                   {tokenMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <LogIn className="h-4 w-4" />}
                   登录
@@ -114,7 +114,7 @@ export function LoginPage() {
               <form className="space-y-4" onSubmit={(event) => { event.preventDefault(); mutation.mutate(); }}>
                 <div className="space-y-1.5"><Label htmlFor="username">用户名</Label><Input id="username" autoFocus autoComplete="username" value={username} onChange={(event) => setUsername(event.target.value)} placeholder="admin" /></div>
                 <div className="space-y-1.5"><Label htmlFor="password">密码</Label><Input id="password" type="password" autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="请输入密码" /></div>
-                {mutation.error ? <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive-strong">{mutation.error.message}</div> : null}
+                {mutation.error ? <div role="alert" className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive-strong">{mutation.error.message}</div> : null}
                 <Button type="submit" className="w-full" disabled={mutation.isPending || !username || !password}>
                   {mutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <LockKeyhole className="h-4 w-4" />}
                   登录

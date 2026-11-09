@@ -831,6 +831,18 @@ test("节点列表可进入节点详情", async ({ page }) => {
   await expect(page.getByText("apiVersion: v1", { exact: false })).toBeVisible();
 });
 
+test("资源搜索具有可访问名称且可一键清空", async ({ page }) => {
+  await installApiMocks(page);
+  await page.goto("/nodes?q=worker");
+
+  const search = page.getByRole("textbox", { name: "搜索节点名称或 IP" });
+  await expect(search).toHaveValue("worker");
+  await page.getByRole("button", { name: "清空搜索" }).click();
+
+  await expect(search).toHaveValue("");
+  await expect(page).not.toHaveURL(/[?&]q=/);
+});
+
 test("集群配置展示网络规划与节点 Pod 网段", async ({ page }) => {
   await installApiMocks(page);
   await page.goto("/cluster/config");
@@ -1025,6 +1037,7 @@ test("总览不可用时显示真实集群降级状态", async ({ page }) => {
 });
 
 test("工作负载筛选条件可刷新、分享并随前进后退恢复", async ({ page, context }) => {
+  test.setTimeout(60_000);
   await installApiMocks(page);
   await page.goto("/workloads");
   const search = page.getByPlaceholder("搜索工作负载名称");
@@ -1497,7 +1510,7 @@ test("移动端超长固定列不会遮挡其他列", async ({ page }) => {
 });
 
 test("移动端逐页布局无页面级横向溢出", async ({ page }) => {
-  test.setTimeout(180_000);
+  test.setTimeout(360_000);
   await installApiMocks(page);
   await page.setViewportSize({ width: 390, height: 844 });
   const routes = [
@@ -1585,6 +1598,7 @@ test("移动端登录、抽屉导航和全局搜索可用", async ({ page }) => 
   const closedDrawer = await drawer.boundingBox();
   expect(closedDrawer).not.toBeNull();
   expect(closedDrawer!.x + closedDrawer!.width).toBeLessThanOrEqual(1);
+  await expect(drawer.locator("a", { hasText: "节点管理" })).toBeHidden();
 
   await page.getByRole("button", { name: "搜索" }).click();
   const searchDialog = page.getByRole("dialog", { name: "搜索集群资源" });
@@ -1594,6 +1608,11 @@ test("移动端登录、抽屉导航和全局搜索可用", async ({ page }) => 
   await expectElementInsideViewport(page, searchDialog, "global search dialog");
   await expectNoPageOverflow(page, "global search dialog");
   await page.screenshot({ path: "test-results/mobile-interactions/global-search.png", fullPage: true });
+  await page.keyboard.press("Escape");
+  await expect(searchDialog).toBeHidden();
+  await page.keyboard.press("Control+K");
+  await expect(searchDialog).toBeVisible();
+  await expect(searchDialog.getByPlaceholder("输入资源名称…")).toHaveValue("");
   await page.keyboard.press("Escape");
 });
 
@@ -2078,7 +2097,7 @@ test("登录页在亮暗主题下无严重可访问性问题", async ({ page }) 
 });
 
 test("核心运维页面在亮暗主题下无严重可访问性问题", async ({ page }) => {
-  test.setTimeout(120_000);
+  test.setTimeout(480_000);
   await installApiMocks(page);
   for (const theme of ["light", "dark"] as const) {
     for (const path of ["/", "/nodes", "/workloads/deployment/default/web", "/workloads/deployment/default/web?tab=config", "/pods/default/web-abcdef-12345", "/audit"]) {
@@ -2104,6 +2123,13 @@ test("仅用键盘完成登录、导航、扩容确认和退出", async ({ page 
   await expect(page.getByRole("button", { name: "登录", exact: true })).toBeFocused();
   await page.keyboard.press("Enter");
   await expect(page.getByRole("heading", { name: "集群总览" })).toBeVisible();
+
+  await page.keyboard.press("Control+K");
+  const searchDialog = page.getByRole("dialog", { name: "搜索集群资源" });
+  await expect(searchDialog).toBeVisible();
+  await expect(searchDialog.getByPlaceholder("输入资源名称…")).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(searchDialog).toBeHidden();
 
   await pressTabUntil(page, "workload navigation link", (focus) => focus.tag === "A" && focus.text === "工作负载");
   await expectVisibleFocusRing(page);

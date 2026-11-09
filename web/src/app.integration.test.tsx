@@ -422,6 +422,26 @@ describe("dosh application", () => {
     expect(await screen.findByRole("cell", { name: "data-claim" })).toBeInTheDocument();
   });
 
+  it("keeps PVC data visible when StorageClass access is forbidden", async () => {
+    server.use(
+      http.get("/api/v1/storageclasses", () => HttpResponse.json({ code: "forbidden", message: "denied" }, { status: 403 })),
+      http.get("/api/v1/persistentvolumes", () => HttpResponse.json({ items: [], meta: { total: 0 } })),
+      http.get("/api/v1/persistentvolumeclaims", () => HttpResponse.json({ items: [{
+        name: "data-claim", namespace: "production", status: "Bound", capacityBytes: 1073741824,
+        accessModes: ["ReadWriteOnce"], storageClass: "data-standard", createdAt: "2026-11-02T00:00:00Z",
+      }], meta: { total: 1 } })),
+    );
+    renderRoute("/storage?tab=claims");
+
+    expect(await screen.findByRole("cell", { name: "data-claim" })).toBeInTheDocument();
+    expect(screen.queryByText("没有访问权限")).not.toBeInTheDocument();
+
+    const classesTab = screen.getByRole("tab", { name: /StorageClass/ });
+    fireEvent.mouseDown(classesTab);
+    fireEvent.click(classesTab);
+    expect(await screen.findByText("没有访问权限")).toBeInTheDocument();
+  });
+
   it("shows Secret text as plaintext while retaining binary values as base64", async () => {
     const secret = { name: "app-secret", namespace: "default", type: "Opaque", keys: [{ key: "token", size: 10 }, { key: "blob", size: 3 }], createdAt: "2026-11-02T00:00:00Z" };
     const encodedToken = Buffer.from("token=abc\n").toString("base64");
@@ -461,6 +481,24 @@ describe("dosh application", () => {
     const value = await screen.findByLabelText("payload 值");
     expect(value).toHaveClass("soft-wrap");
     expect(value).toHaveTextContent(longValue);
+  });
+
+  it("keeps ConfigMaps visible when Secret access is forbidden", async () => {
+    server.use(
+      http.get("/api/v1/configmaps", () => HttpResponse.json({ items: [{
+        name: "app-config", namespace: "default", keys: ["mode"], dataBytes: 12, createdAt: "2026-11-02T00:00:00Z",
+      }], meta: { total: 1 } })),
+      http.get("/api/v1/secrets", () => HttpResponse.json({ code: "forbidden", message: "denied" }, { status: 403 })),
+    );
+    renderRoute("/configuration");
+
+    expect(await screen.findByRole("cell", { name: "app-config" })).toBeInTheDocument();
+    expect(screen.queryByText("没有访问权限")).not.toBeInTheDocument();
+
+    const secretsTab = screen.getByRole("tab", { name: /Secret/ });
+    fireEvent.mouseDown(secretsTab);
+    fireEvent.click(secretsTab);
+    expect(await screen.findByText("没有访问权限")).toBeInTheDocument();
   });
 
   it("shows Secret YAML with original data and allows editing", async () => {
@@ -1331,6 +1369,27 @@ describe("dosh application", () => {
 
     fireEvent.focus(trigger);
     expect(await screen.findByRole("tooltip")).toHaveTextContent("请先选择命名空间，再创建 Service");
+  });
+
+  it("keeps the active network tab usable when another resource is forbidden", async () => {
+    server.use(
+      http.get("/api/v1/services", () => HttpResponse.json({ items: [{
+        name: "web", namespace: "default", type: "ClusterIP", clusterIP: "10.96.0.10",
+        ports: [{ name: "http", port: 80, targetPort: "80", protocol: "TCP" }],
+        selector: { app: "web" }, endpointCount: 1, createdAt: "2026-11-02T00:00:00Z",
+      }], meta: { total: 1 } })),
+      http.get("/api/v1/ingresses", () => HttpResponse.json({ code: "forbidden", message: "denied" }, { status: 403 })),
+      http.get("/api/v1/ingressclasses", () => HttpResponse.json({ code: "forbidden", message: "denied" }, { status: 403 })),
+    );
+    renderRoute("/network");
+
+    expect(await screen.findByRole("cell", { name: "web" })).toBeInTheDocument();
+    expect(screen.queryByText("没有访问权限")).not.toBeInTheDocument();
+
+    const ingressTab = screen.getByRole("tab", { name: /Ingress/ });
+    fireEvent.mouseDown(ingressTab);
+    fireEvent.click(ingressTab);
+    expect(await screen.findByText("没有访问权限")).toBeInTheDocument();
   });
 
   it("edits and deletes an Ingress from its detail page", async () => {

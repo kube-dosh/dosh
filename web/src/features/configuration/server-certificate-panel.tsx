@@ -92,13 +92,13 @@ export function ServerCertificatePanel() {
         </CardHeader>
         <CardContent className="space-y-5">
           {warning ? (
-            <div className="flex gap-2 rounded-md border border-warning/35 bg-warning/10 px-3 py-2 text-sm text-warning">
+            <div role="status" className="flex gap-2 rounded-md border border-warning/35 bg-warning/10 px-3 py-2 text-sm text-warning">
               <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-              <span>{certificate.status === "expired" ? "证书已过期，请立即更新 Secret 并重载。" : certificate.status === "not_yet_valid" ? "证书尚未生效，请检查系统时间和证书有效期。" : "证书已进入续期窗口，请安排轮换。"}</span>
+              <span>{certificate.status === "expired" ? "证书已过期，请立即更新 Secret 并重载。" : certificate.status === "not_yet_valid" ? "证书尚未生效，请检查系统时间和证书有效期。" : certificate.status === "unavailable" ? "当前无法读取证书状态，请检查挂载文件和服务端日志。" : "证书已进入续期窗口，请安排轮换。"}</span>
             </div>
           ) : null}
           {certificate.lastReloadError ? (
-            <div className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive-strong">
+            <div role="alert" className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive-strong">
               最近一次热加载失败，当前仍使用上一份可用证书：{certificate.lastReloadError}
             </div>
           ) : null}

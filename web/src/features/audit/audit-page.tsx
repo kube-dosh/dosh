@@ -16,7 +16,15 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { formatDate } from "@/lib/utils";
 
 const column = createColumnHelper<AuditRecord>();
-const actions = ["login", "login_started", "logout", "reveal", "scale", "restart", "update-image", "delete", "apply", "cordon", "uncordon"];
+const actions = [
+  "apply", "cordon", "create-configmap", "create-deployment", "create-ingress", "create-namespace",
+  "create-persistentvolumeclaim", "create-secret", "create-service", "delete", "delete-configmap",
+  "delete-ingress", "delete-namespace", "delete-persistentvolumeclaim", "delete-secret",
+  "delete-service", "dry-run", "login", "login_started", "logout", "reload", "restart", "resume",
+  "reveal", "scale", "suspend", "uncordon", "update-configmap", "update-container-config",
+  "update-image", "update-ingress", "update-labels", "update-persistentvolumeclaim", "update-secret",
+  "update-service", "update-taints",
+];
 const results = ["success", "failure", "denied"] as const;
 
 export function AuditPage() {

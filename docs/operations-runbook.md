@@ -127,7 +127,7 @@ Token/OIDC 模式下，审计历史权限由 SubjectAccessReview 的
 该记录保存在单进程有界内存中，Pod 重启或副本切换后会清空或分叉，不是持久审计系统，也不能替代
 stdout、SIEM 或离机 WORM。调查事件时仍以集中日志和 SIEM 为合规事实源。
 
-### 2.1.2 工作负载镜像更新
+### 2.1.3 工作负载镜像更新
 
 工作负载详情页的“更新镜像”只在当前会话具备 `updateImage` capability 时显示，适用于
 Deployment、StatefulSet 和 DaemonSet。请求为：
@@ -166,7 +166,7 @@ NodePort、镜像、UID/generation/resourceVersion 指纹前后不变；默认�
 `/var/lib/dosh/evidence/e4a27d8b153b/20261104T112513Z-v244-internal-matrix-r2`，manifest
 SHA-256 `9f9560d2a7d0e30dd0c163e2ed8a5d674ee93f2bbef7dcd4d1f90c5c569472b9`，双层校验通过。
 
-### 2.1.3 CronJob 暂停与恢复
+### 2.1.4 CronJob 暂停与恢复
 
 CronJob 详情页的“暂停调度/恢复调度”只在当前会话具备 `suspendCronJob` capability（Kubernetes
 `batch/cronjobs update`）时显示，点击后需要二次确认。请求为：
@@ -189,7 +189,7 @@ kubectl -n <namespace> get cronjob <name> -o jsonpath='{.spec.suspend}{"\n"}'
 kubectl -n <namespace> get jobs --sort-by=.metadata.creationTimestamp
 ```
 
-### 2.1.4 工作负载关联 Service
+### 2.1.5 工作负载关联 Service
 
 工作负载详情的“访问方式”页签按 Pod Selector 展示同命名空间 Service。创建、编辑和删除分别要求
 Kubernetes `create services`、`update services`、`delete services`，服务端同时执行 CSRF、只读模式
@@ -216,7 +216,7 @@ kubectl -n <namespace> get endpointslice -l kubernetes.io/service-name=<name>
 
 成功、校验失败、无权限和冲突分别写入 `action=create-service|update-service|delete-service` 审计。
 
-### 2.1.5 命名空间删除
+### 2.1.6 命名空间删除
 
 命名空间列表和详情可发起删除，页面要求输入命名空间名称确认。服务端要求 Kubernetes
 `delete namespaces`，使用 `propagationPolicy=Foreground`，在命名空间及其全部受控资源删除完成后
@@ -418,7 +418,7 @@ sha256sum -c manifest.sha256
 sha256sum -c manifest-digest.txt
 ```
 
-### 3.1.1 日志流 NDJSON 隔离验收
+### 3.1.2 日志流 NDJSON 隔离验收
 
 ```bash
 make e2e-log-stream

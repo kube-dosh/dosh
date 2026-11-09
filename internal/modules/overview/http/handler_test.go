@@ -109,3 +109,15 @@ func TestOverviewRouteMapsUnavailableDependency(t *testing.T) {
 		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
 	}
 }
+
+func TestOverviewRouteMapsForbiddenCoreSources(t *testing.T) {
+	repo := &httpOverviewRepository{
+		nodesErr: domain.ErrForbidden,
+		podsErr:  domain.ErrForbidden,
+		workErr:  domain.ErrForbidden,
+	}
+	response := overviewRequest(overviewTestRouter(repo))
+	if response.Code != http.StatusForbidden || !strings.Contains(response.Body.String(), `"code":"forbidden"`) {
+		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+	}
+}

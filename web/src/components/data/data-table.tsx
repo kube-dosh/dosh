@@ -68,6 +68,7 @@ export function DataTable<T>({ columns, data, loading = false, empty, pageSize =
                 return (
                   <TableHead
                     key={header.id}
+                    aria-sort={sortable ? (sorted === "asc" ? "ascending" : sorted === "desc" ? "descending" : "none") : undefined}
                     style={{
                       width: meta?.width ?? (header.column.getSize() === 150 ? undefined : header.getSize()),
                       minWidth: meta?.minWidth,
@@ -134,10 +135,10 @@ export function DataTable<T>({ columns, data, loading = false, empty, pageSize =
       </Table>
       {table.getPageCount() > 1 ? (
         <div className="flex items-center justify-between border-t bg-card px-4 py-3 text-xs text-muted-foreground">
-          <span>共 {data.length} 条 · 第 {table.getState().pagination.pageIndex + 1} / {table.getPageCount()} 页</span>
+          <span aria-live="polite">共 {data.length} 条 · 第 {table.getState().pagination.pageIndex + 1} / {table.getPageCount()} 页</span>
           <div className="flex items-center gap-1">
-            <Button variant="outline" size="icon-sm" onClick={() => table.previousPage()} disabled={!table.getCanPreviousPage()}><ChevronLeft className="h-4 w-4" /></Button>
-            <Button variant="outline" size="icon-sm" onClick={() => table.nextPage()} disabled={!table.getCanNextPage()}><ChevronRight className="h-4 w-4" /></Button>
+            <Button variant="outline" size="icon-sm" aria-label="上一页" onClick={() => table.previousPage()} disabled={!table.getCanPreviousPage()}><ChevronLeft className="h-4 w-4" /></Button>
+            <Button variant="outline" size="icon-sm" aria-label="下一页" onClick={() => table.nextPage()} disabled={!table.getCanNextPage()}><ChevronRight className="h-4 w-4" /></Button>
           </div>
         </div>
       ) : null}

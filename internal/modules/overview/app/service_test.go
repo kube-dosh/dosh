@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -126,5 +127,59 @@ func TestOverviewFailsClosedWhenNoCoreDataLoads(t *testing.T) {
 	_, err := New(repo, "cluster-a").Get(context.Background())
 	if !errors.Is(err, domain.ErrUnavailable) {
 		t.Fatalf("Get() error = %v, want ErrUnavailable", err)
+	}
+}
+
+func TestOverviewReturnsForbiddenWhenCoreDataAccessIsDenied(t *testing.T) {
+	repo := &overviewRepository{
+		versionErr:   errors.New("version"),
+		nodesErr:     domain.ErrForbidden,
+		podsErr:      fmt.Errorf("%w: pods are forbidden", domain.ErrForbidden),
+		workloadsErr: domain.ErrForbidden,
+	}
+	_, err := New(repo, "cluster-a").Get(context.Background())
+	if !errors.Is(err, domain.ErrForbidden) {
+		t.Fatalf("Get() error = %v, want ErrForbidden", err)
+	}
+	if errors.Is(err, domain.ErrUnavailable) {
+		t.Fatalf("Get() error = %v, must not also match ErrUnavailable", err)
+	}
+}
+
+func TestOverviewKeepsPartialDataWhenAnotherCoreSourceIsForbidden(t *testing.T) {
+	repo := &overviewRepository{
+		nodes:     []domain.NodeSummary{{Name: "worker-a", Status: "Ready"}},
+		podsErr:   domain.ErrForbidden,
+		workloads: []domain.WorkloadSummary{{Name: "api"}},
+	}
+	overview, err := New(repo, "cluster-a").Get(context.Background())
+	if err != nil {
+		t.Fatalf("Get() error = %v", err)
+	}
+	if overview.Cluster.Status != "Healthy" {
+		t.Fatalf("status = %q, want Healthy", overview.Cluster.Status)
+	}
+	if overview.Counts.Nodes != 1 || overview.Counts.Workloads != 1 {
+		t.Fatalf("counts = %#v", overview.Counts)
+	}
+	if len(overview.Warnings) != 1 {
+		t.Fatalf("warnings = %#v, want one entry", overview.Warnings)
+	}
+}
+
+func TestOverviewReturnsHealthyEmptyClusterWhenCoreSourcesSucceed(t *testing.T) {
+	repo := &overviewRepository{
+		nodes: []domain.NodeSummary{{Name: "worker-a", Status: "Ready"}},
+		pods:  []domain.PodSummary{},
+	}
+	overview, err := New(repo, "cluster-a").Get(context.Background())
+	if err != nil {
+		t.Fatalf("Get() error = %v", err)
+	}
+	if overview.Cluster.Status != "Healthy" {
+		t.Fatalf("status = %q, want Healthy", overview.Cluster.Status)
+	}
+	if overview.Counts.Pods != 0 {
+		t.Fatalf("pods = %d, want 0", overview.Counts.Pods)
 	}
 }

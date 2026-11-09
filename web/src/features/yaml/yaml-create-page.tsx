@@ -20,6 +20,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useCapabilities } from "@/features/auth/use-session";
 import { formatYAMLDocuments, inspectYAMLDocuments, setNamespaceOnYAMLDocuments, type ParsedYAMLDocument } from "@/lib/yaml-documents";
+import { copyText } from "@/lib/clipboard";
 import { useTheme } from "@/lib/theme";
 
 type TemplateID = "deployment" | "batch" | "service" | "configmap" | "secret" | "pvc" | "ingress";
@@ -335,10 +336,10 @@ export function YAMLCreatePage() {
 
   const copyDocument = async () => {
     try {
-      await navigator.clipboard.writeText(value);
+      await copyText(value);
       toast.success("YAML 已复制");
     } catch {
-      toast.error("当前浏览器不允许访问剪贴板");
+      toast.error("复制失败，请手动选择内容复制");
     }
   };
 
@@ -349,8 +350,10 @@ export function YAMLCreatePage() {
     const anchor = document.createElement("a");
     anchor.href = url;
     anchor.download = `${basename}.yaml`;
+    document.body.appendChild(anchor);
     anchor.click();
-    URL.revokeObjectURL(url);
+    anchor.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 0);
   };
 
   const importDocument = async (event: ChangeEvent<HTMLInputElement>) => {
