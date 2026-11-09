@@ -2143,8 +2143,12 @@ test("仅用键盘完成登录、导航、扩容确认和退出", async ({ page 
   );
   await expectVisibleFocusRing(page);
   await page.keyboard.type("web");
+  await expect(page).toHaveURL(/[?&]q=web(?:&|$)/);
+  const webLink = page.getByRole("link", { name: "web", exact: true });
+  await expect(webLink).toBeVisible();
   await pressTabUntil(page, "web workload link", (focus) => focus.tag === "A" && focus.text === "web");
   await expectVisibleFocusRing(page);
+  await expect(webLink).toBeFocused();
   await page.keyboard.press("Enter");
   await expect(page.getByRole("heading", { name: "web", exact: true })).toBeVisible();
 
