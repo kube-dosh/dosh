@@ -3,7 +3,7 @@ set -Eeuo pipefail
 export PATH=/root/.local/bin:$PATH
 
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-PLAYWRIGHT_IMAGE=${DOSH_E2E_PLAYWRIGHT_IMAGE:-mcr.microsoft.com/playwright:v1.64.1-noble}
+PLAYWRIGHT_IMAGE=${DOSH_E2E_PLAYWRIGHT_IMAGE:-mcr.microsoft.com/playwright:v1.65.0-noble}
 PLAYWRIGHT_IN_CONTAINER=${DOSH_E2E_PLAYWRIGHT_CONTAINER:-1}
 STATE_DIR=${DOSH_E2E_ARTIFACT_DIR:-$(mktemp -d)}
 STATE_FILE="$STATE_DIR/fixture.json"

@@ -4833,7 +4833,7 @@ kubectl -n dosh get deploy,svc,pod,pdb,sa -o wide
 
 **前置约束**
 
-- 版本固定：Go `1.26.x`、Node.js `24.x`、Helm `3.22.0`、`@playwright/test 1.64.1`、Playwright `v1.64.1-noble` 容器、Trivy 固定镜像 digest `sha256:2e6c00d711ab4ae41d8a30c2c1fd3bd3b62704c177bb120f95012e939edfb3df`。
+- 版本固定：Go `1.27.4`、Node.js `26.13.1`、Helm `4.3.1`、`@playwright/test 1.65.0`、Playwright `v1.65.0-noble` 容器、TypeScript `5.9.3`、Vite `8.3.8`、Vitest `5.1.0`、Trivy 固定镜像 digest `sha256:2e6c00d711ab4ae41d8a30c2c1fd3bd3b62704c177bb120f95012e939edfb3df`。
 - 依赖锁定：使用 `go.sum`、`web/package-lock.json`，CI 使用 `npm ci`，禁止浮动的 `latest` 工具直接进入发布门禁。
 - 分片执行：后端、前端、浏览器 E2E、Helm/安全扫描可并行，但发布汇总任务必须等待全部成功。
 - 报告留存：JUnit、Playwright HTML、Trivy JSON/SARIF、Helm 渲染 YAML 作为 CI artifact 保留至少 30 天。

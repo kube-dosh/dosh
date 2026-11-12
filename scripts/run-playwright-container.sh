@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-IMAGE=${DOSH_PLAYWRIGHT_IMAGE:-mcr.microsoft.com/playwright:v1.64.1-noble}
+IMAGE=${DOSH_PLAYWRIGHT_IMAGE:-mcr.microsoft.com/playwright:v1.65.0-noble}
 MEMORY=${DOSH_PLAYWRIGHT_MEMORY:-4g}
 CPUS=${DOSH_PLAYWRIGHT_CPUS:-2}
 SHM_SIZE=${DOSH_PLAYWRIGHT_SHM_SIZE:-1g}

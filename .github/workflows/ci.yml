@@ -14,13 +14,13 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  GO_VERSION: "1.26.10"
-  NODE_VERSION: "24"
-  HELM_VERSION: "3.22.0"
-  PLAYWRIGHT_VERSION: "1.64.1"
+  GO_VERSION: "1.27.4"
+  NODE_VERSION: "26.13.1"
+  HELM_VERSION: "4.3.1"
+  PLAYWRIGHT_VERSION: "1.65.0"
   KUBECONFORM_VERSION: "v0.8.0"
   GOVULNCHECK_VERSION: "v1.9.0"
-  ACTIONLINT_VERSION: "v1.7.7"
+  ACTIONLINT_VERSION: "v1.7.12"
   TRIVY_IMAGE: "ghcr.io/aquasecurity/trivy@sha256:2e6c00d711ab4ae41d8a30c2c1fd3bd3b62704c177bb120f95012e939edfb3df"
 
 jobs:
@@ -76,7 +76,7 @@ jobs:
         project: [chromium, firefox, webkit]
     name: e2e (${{ matrix.project }})
     container:
-      image: mcr.microsoft.com/playwright:v1.64.1-noble
+      image: mcr.microsoft.com/playwright:v1.65.0-noble
       options: --shm-size=1g --memory=4g --memory-swap=4g --cpus=2 --pids-limit=2048 --ulimit core=0
     steps:
       - uses: actions/checkout@v7
@@ -100,7 +100,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     container:
-      image: mcr.microsoft.com/playwright:v1.64.1-noble
+      image: mcr.microsoft.com/playwright:v1.65.0-noble
       options: --shm-size=1g --memory=4g --memory-swap=4g --cpus=2 --pids-limit=2048 --ulimit core=0
     steps:
       - uses: actions/checkout@v7
