@@ -170,10 +170,13 @@ const server = setupServer(
   http.get("/api/v1/pods/default/web-abcdef-12345/logs", () => HttpResponse.text(logFrames("hello from dosh log stream"), { headers: { "Content-Type": "application/x-ndjson; charset=utf-8" } })),
   http.get("/api/v1/services/default/web", () => HttpResponse.json(serviceDetail)),
   http.get("/api/v1/services", () => HttpResponse.json({ items: [], meta: { total: 0 } })),
+  http.get("/api/v1/ingresses", () => HttpResponse.json({ items: [], meta: { total: 0, page: 1, pageSize: 20, totalPages: 0, filters: {} } })),
   http.get("/api/v1/ingresses/default/web", () => HttpResponse.json(ingressDetail)),
   http.get("/api/v1/ingressclasses", () => HttpResponse.json({ items: [{ name: "nginx", controller: "k8s.io/ingress-nginx", default: true, createdAt: "2026-11-02T00:00:00Z" }], meta: { total: 1 } })),
+  http.get("/api/v1/persistentvolumes", () => HttpResponse.json({ items: [], meta: { total: 0, page: 1, pageSize: 20, totalPages: 0, filters: {} } })),
   http.get("/api/v1/storageclasses/data-standard", () => HttpResponse.json(storageClassDetail)),
   http.get("/api/v1/persistentvolumes/pv-data", () => HttpResponse.json(persistentVolumeDetail)),
+  http.get("/api/v1/persistentvolumeclaims", () => HttpResponse.json({ items: [], meta: { total: 0, page: 1, pageSize: 20, totalPages: 0, filters: {} } })),
   http.get("/api/v1/persistentvolumeclaims/production/data-claim", () => HttpResponse.json(persistentVolumeClaimDetail)),
   http.get("/api/v1/events", () => HttpResponse.json({ items: [], meta: { total: 0, page: 1, pageSize: 1, totalPages: 0, filters: {} } })),
   http.get("/api/v1/configmaps", () => HttpResponse.json({ items: [], meta: { total: 0, page: 1, pageSize: 20, totalPages: 0, filters: {} } })),
@@ -224,6 +227,23 @@ describe("dosh application", () => {
     expect(logout.tagName).toBe("A");
     expect(logout).toHaveAttribute("href", "/api/v1/auth/oidc/logout");
     expect(screen.getByText("企业身份")).toBeInTheDocument();
+  });
+
+  it("keeps the session when local logout fails", async () => {
+    server.use(
+      http.delete("/api/v1/session", () => HttpResponse.json({ code: "internal_error", message: "logout failed" }, { status: 500 })),
+    );
+    renderRoute("/");
+
+    expect(await screen.findByRole("heading", { name: "集群总览" })).toBeInTheDocument();
+    const userMenu = screen.getByRole("button", { name: /admin/i });
+    fireEvent.pointerDown(userMenu, { button: 0, ctrlKey: false, pointerType: "mouse" });
+    fireEvent.pointerUp(userMenu, { button: 0, ctrlKey: false, pointerType: "mouse" });
+    fireEvent.click(userMenu);
+    fireEvent.click(await screen.findByRole("menuitem", { name: "退出登录" }));
+
+    expect(await screen.findByText(/退出登录失败/)).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "集群总览" })).toBeInTheDocument();
   });
 
   it("logs in and renders the cluster overview", async () => {

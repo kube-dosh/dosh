@@ -107,7 +107,7 @@ func TestGetNamespaceIncludesQuotasAndLimitRanges(t *testing.T) {
 func TestListNodesIncludesRequestsPodsAndRoles(t *testing.T) {
 	pod := testPod()
 	pod.Spec.NodeName = "worker-1"
-	client, _ := newFakeKubeClient(testNode(), pod)
+	client, clientset := newFakeKubeClient(testNode(), pod)
 	items, err := client.ListNodes(context.Background(), domain.ListQuery{})
 	if err != nil {
 		t.Fatalf("ListNodes() error = %v", err)
@@ -138,9 +138,18 @@ func TestListNodesIncludesRequestsPodsAndRoles(t *testing.T) {
 	if detail.Taints == nil {
 		t.Fatalf("node detail taints must be non-nil: %#v", detail)
 	}
+	clientset.ClearActions()
 	pods, err := client.ListPodsForNode(context.Background(), "worker-1")
 	if err != nil || len(pods) != 1 {
 		t.Fatalf("node pods = %#v, err = %v", pods, err)
+	}
+	actions := clientset.Actions()
+	if len(actions) != 1 || actions[0].GetVerb() != "list" || actions[0].GetResource().Resource != "pods" {
+		t.Fatalf("ListPodsForNode actions = %#v", actions)
+	}
+	listAction, ok := actions[0].(k8stesting.ListAction)
+	if !ok || listAction.GetListRestrictions().Fields.String() != "spec.nodeName=worker-1" {
+		t.Fatalf("ListPodsForNode list restrictions = %#v", actions[0])
 	}
 }
 

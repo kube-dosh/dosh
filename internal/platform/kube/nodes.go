@@ -473,19 +473,19 @@ func resourceListStrings(items corev1.ResourceList) map[string]string {
 }
 
 func (c *Client) ListPodsForNode(ctx context.Context, node string) ([]domain.PodSummary, error) {
-	pods, err := c.ListPods(ctx, domain.ListQuery{})
+	ctx, cancel := c.withTimeout(ctx)
+	defer cancel()
+	items, err := c.clientset.CoreV1().Pods(metav1.NamespaceAll).List(ctx, metav1.ListOptions{
+		FieldSelector: nodeFieldSelector(node),
+	})
 	if err != nil {
-		return nil, err
+		return nil, mapKubeError(err)
 	}
-	out := make([]domain.PodSummary, 0)
-	for _, pod := range pods {
-		if pod.Node == node {
-			out = append(out, pod)
-		}
+	out := make([]domain.PodSummary, 0, len(items.Items))
+	for _, pod := range items.Items {
+		out = append(out, podSummary(pod))
 	}
-	if len(out) == 0 {
-		return []domain.PodSummary{}, nil
-	}
+	sortPods(out)
 	return out, nil
 }
 

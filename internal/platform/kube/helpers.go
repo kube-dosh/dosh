@@ -3,12 +3,10 @@ package kube
 import (
 	"sort"
 	"strings"
-	"time"
 
 	"dosh/internal/domain"
 
 	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 func matchesSearch(values []string, search string) bool {
@@ -22,20 +20,6 @@ func matchesSearch(values []string, search string) bool {
 		}
 	}
 	return false
-}
-
-func conditionList(conditions []metav1.Condition) []domain.Condition {
-	out := make([]domain.Condition, 0, len(conditions))
-	for _, condition := range conditions {
-		out = append(out, domain.Condition{
-			Type:               condition.Type,
-			Status:             string(condition.Status),
-			Reason:             condition.Reason,
-			Message:            condition.Message,
-			LastTransitionTime: condition.LastTransitionTime.Time,
-		})
-	}
-	return out
 }
 
 func nodeConditionList(conditions []corev1.NodeCondition) []domain.Condition {
@@ -153,8 +137,4 @@ func itoa(v int) string {
 		v /= 10
 	}
 	return string(buf[i:])
-}
-
-func ownedSince(created time.Time) string {
-	return created.UTC().Format(time.RFC3339)
 }

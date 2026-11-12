@@ -152,7 +152,7 @@ func TestLoginValidationAndRateLimit(t *testing.T) {
 		t.Fatalf("unknown field status = %d, want 400", response.Code)
 	}
 	for range 5 {
-		response = performJSON(server.router, http.MethodPost, "/api/v1/session", `{"username":"admin","password":"wrong password"}`, nil)
+		_ = performJSON(server.router, http.MethodPost, "/api/v1/session", `{"username":"admin","password":"wrong password"}`, nil)
 	}
 	response = performJSON(server.router, http.MethodPost, "/api/v1/session", `{"username":"admin","password":"wrong password"}`, nil)
 	if response.Code != http.StatusTooManyRequests {

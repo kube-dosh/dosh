@@ -17,7 +17,6 @@ type Repository interface {
 	SetNodeScheduling(ctx context.Context, name string, unschedulable bool) (domain.NodeSummary, error)
 	SetNodeLabels(ctx context.Context, name string, update domain.NodeLabelUpdate) (domain.NodeDetail, error)
 	SetNodeTaints(ctx context.Context, name string, update domain.NodeTaintUpdate) (domain.NodeDetail, error)
-	ListPodsForNode(ctx context.Context, node string) ([]domain.PodSummary, error)
 	ListNamespaces(ctx context.Context, query domain.ListQuery) ([]domain.Namespace, error)
 	ListNamespacesPage(ctx context.Context, query domain.ListQuery, page domain.PageRequest) (domain.PageResult[domain.Namespace], error)
 	CreateNamespace(ctx context.Context, spec domain.NamespaceCreateSpec) (domain.Namespace, error)
@@ -46,16 +45,7 @@ func (s *Service) ListPage(ctx context.Context, query domain.ListQuery, page dom
 }
 
 func (s *Service) Get(ctx context.Context, name string) (domain.NodeDetail, error) {
-	detail, err := s.repository.GetNode(ctx, name)
-	if err != nil {
-		return domain.NodeDetail{}, err
-	}
-	pods, err := s.repository.ListPodsForNode(ctx, name)
-	if err != nil {
-		return domain.NodeDetail{}, err
-	}
-	detail.Pods = pods
-	return detail, nil
+	return s.repository.GetNode(ctx, name)
 }
 
 func (s *Service) Cordon(ctx context.Context, actor domain.Actor, name string) (domain.NodeSummary, error) {

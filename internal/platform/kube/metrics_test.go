@@ -2,6 +2,9 @@ package kube
 
 import (
 	"context"
+	"io"
+	"net/http"
+	"strings"
 	"testing"
 
 	"dosh/internal/domain"
@@ -10,8 +13,10 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/discovery"
 	fakediscovery "k8s.io/client-go/discovery/fake"
 	"k8s.io/client-go/kubernetes/fake"
+	restfake "k8s.io/client-go/rest/fake"
 	k8stesting "k8s.io/client-go/testing"
 	metricsv1beta1 "k8s.io/metrics/pkg/apis/metrics/v1beta1"
 	metricsfake "k8s.io/metrics/pkg/client/clientset/versioned/fake"
@@ -85,5 +90,38 @@ func coreResourceList(cpu, memory string) map[corev1.ResourceName]resource.Quant
 	return map[corev1.ResourceName]resource.Quantity{
 		corev1.ResourceCPU:    resourceQuantity(cpu),
 		corev1.ResourceMemory: resourceQuantity(memory),
+	}
+}
+
+func TestMetricsAvailableDoesNotCacheContextFailures(t *testing.T) {
+	requests := 0
+	restClient := &restfake.RESTClient{Client: restfake.CreateHTTPClient(func(request *http.Request) (*http.Response, error) {
+		requests++
+		if requests == 1 {
+			return nil, context.DeadlineExceeded
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(`{"groupVersion":"metrics.k8s.io/v1beta1","resources":[]}`)),
+			Request:    request,
+		}, nil
+	})}
+	client := NewForClientsWithMetrics(
+		fake.NewSimpleClientset(),
+		nil,
+		discovery.NewDiscoveryClient(restClient),
+		metricsfake.NewSimpleClientset(),
+		testConfig(),
+	)
+
+	if client.MetricsAvailable(context.Background()) {
+		t.Fatal("MetricsAvailable() = true after a context deadline")
+	}
+	if !client.MetricsAvailable(context.Background()) {
+		t.Fatal("context failure was cached and prevented the next probe")
+	}
+	if requests != 2 {
+		t.Fatalf("requests = %d, want 2", requests)
 	}
 }

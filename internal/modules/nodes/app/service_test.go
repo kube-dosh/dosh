@@ -14,8 +14,6 @@ type nodesRepository struct {
 	nodesErr                    error
 	detail                      domain.NodeDetail
 	detailErr                   error
-	pods                        []domain.PodSummary
-	podsErr                     error
 	namespaces                  []domain.Namespace
 	nsErr                       error
 	namespace                   domain.NamespaceDetail
@@ -69,9 +67,6 @@ func (r *nodesRepository) SetNodeTaints(_ context.Context, _ string, update doma
 	r.lastTaintUpdate = update
 	return r.taintDetail, r.taintErr
 }
-func (r *nodesRepository) ListPodsForNode(context.Context, string) ([]domain.PodSummary, error) {
-	return r.pods, r.podsErr
-}
 func (r *nodesRepository) ListNamespaces(context.Context, domain.ListQuery) ([]domain.Namespace, error) {
 	return r.namespaces, r.nsErr
 }
@@ -122,8 +117,7 @@ func (a *nodesAuditor) Record(_ context.Context, _ domain.Actor, event domain.Au
 func TestNodesServiceListsAndLoadsDetail(t *testing.T) {
 	repo := &nodesRepository{
 		nodes:      []domain.NodeSummary{{Name: "worker-a"}},
-		detail:     domain.NodeDetail{NodeSummary: domain.NodeSummary{Name: "worker-a"}},
-		pods:       []domain.PodSummary{{Name: "api-1"}},
+		detail:     domain.NodeDetail{NodeSummary: domain.NodeSummary{Name: "worker-a"}, Pods: []domain.PodSummary{{Name: "api-1"}}},
 		namespaces: []domain.Namespace{{Name: "default"}},
 		namespace:  domain.NamespaceDetail{Namespace: domain.Namespace{Name: "prod"}},
 	}
@@ -151,11 +145,6 @@ func TestNodesServicePropagatesDependencyFailures(t *testing.T) {
 	service := New(&nodesRepository{detailErr: dependencyErr}, &nodesAuthorizer{allow: true}, &nodesAuditor{})
 	if _, err := service.Get(context.Background(), "worker-a"); !errors.Is(err, dependencyErr) {
 		t.Fatalf("Get() node error = %v", err)
-	}
-
-	service = New(&nodesRepository{detail: domain.NodeDetail{NodeSummary: domain.NodeSummary{Name: "worker-a"}}, podsErr: dependencyErr}, &nodesAuthorizer{allow: true}, &nodesAuditor{})
-	if _, err := service.Get(context.Background(), "worker-a"); !errors.Is(err, dependencyErr) {
-		t.Fatalf("Get() pod error = %v", err)
 	}
 
 	service = New(&nodesRepository{nodesErr: dependencyErr}, &nodesAuthorizer{allow: true}, &nodesAuditor{})

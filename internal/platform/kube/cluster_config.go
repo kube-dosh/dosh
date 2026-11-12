@@ -35,7 +35,7 @@ func (c *Client) GetClusterConfiguration(ctx context.Context) (domain.ClusterCon
 	warnings := make([]string, 0)
 	loaded := 0
 
-	if info, err := c.discovery.ServerVersion(); err != nil {
+	if info, err := c.serverVersion(ctx); err != nil {
 		warnings = append(warnings, "Kubernetes version is unavailable")
 	} else {
 		configuration.Version = info.GitVersion

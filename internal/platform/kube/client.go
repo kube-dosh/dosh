@@ -2,6 +2,7 @@ package kube
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -12,7 +13,9 @@ import (
 	"dosh/internal/platform/config"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/version"
 	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
@@ -123,7 +126,7 @@ func (c *Client) ClusterName() string { return c.clusterName }
 func (c *Client) Version(ctx context.Context) (string, error) {
 	ctx, cancel := c.withTimeout(ctx)
 	defer cancel()
-	info, err := c.discovery.ServerVersion()
+	info, err := c.serverVersion(ctx)
 	if err != nil {
 		return "", fmt.Errorf("%w: %v", domain.ErrUnavailable, err)
 	}
@@ -141,7 +144,10 @@ func (c *Client) MetricsAvailable(ctx context.Context) bool {
 	}
 	ctx, cancel := c.withTimeout(ctx)
 	defer cancel()
-	_, err := c.discovery.ServerResourcesForGroupVersion("metrics.k8s.io/v1beta1")
+	_, err := c.serverResourcesForGroupVersion(ctx, "metrics.k8s.io/v1beta1")
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return c.metricsAvailable
+	}
 	c.metricsAvailable = err == nil
 	c.metricsCheckedAt = time.Now()
 	return c.metricsAvailable
@@ -150,7 +156,7 @@ func (c *Client) MetricsAvailable(ctx context.Context) bool {
 func (c *Client) DetectCNI(ctx context.Context) string {
 	ctx, cancel := c.withTimeout(ctx)
 	defer cancel()
-	groups, err := c.discovery.ServerGroups()
+	groups, err := c.serverGroups(ctx)
 	if err == nil {
 		for _, group := range groups.Groups {
 			if group.Name == "cilium.io" {
@@ -159,6 +165,54 @@ func (c *Client) DetectCNI(ctx context.Context) string {
 		}
 	}
 	return "Unknown"
+}
+
+func (c *Client) serverVersion(ctx context.Context) (*version.Info, error) {
+	restClient := c.discovery.RESTClient()
+	if restClient == nil {
+		return c.discovery.ServerVersion()
+	}
+	body, err := restClient.Get().AbsPath("/version").DoRaw(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var info version.Info
+	if err := json.Unmarshal(body, &info); err != nil {
+		return nil, fmt.Errorf("decode Kubernetes version: %w", err)
+	}
+	return &info, nil
+}
+
+func (c *Client) serverResourcesForGroupVersion(ctx context.Context, groupVersion string) (*metav1.APIResourceList, error) {
+	restClient := c.discovery.RESTClient()
+	if restClient == nil {
+		return c.discovery.ServerResourcesForGroupVersion(groupVersion)
+	}
+	body, err := restClient.Get().AbsPath("/apis/" + groupVersion).DoRaw(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var resources metav1.APIResourceList
+	if err := json.Unmarshal(body, &resources); err != nil {
+		return nil, fmt.Errorf("decode Kubernetes resources for %s: %w", groupVersion, err)
+	}
+	return &resources, nil
+}
+
+func (c *Client) serverGroups(ctx context.Context) (*metav1.APIGroupList, error) {
+	restClient := c.discovery.RESTClient()
+	if restClient == nil {
+		return c.discovery.ServerGroups()
+	}
+	body, err := restClient.Get().AbsPath("/apis").DoRaw(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var groups metav1.APIGroupList
+	if err := json.Unmarshal(body, &groups); err != nil {
+		return nil, fmt.Errorf("decode Kubernetes API groups: %w", err)
+	}
+	return &groups, nil
 }
 
 func (c *Client) withTimeout(ctx context.Context) (context.Context, context.CancelFunc) {

@@ -17,12 +17,10 @@ import (
 type httpNodesRepository struct {
 	nodes                       []domain.NodeSummary
 	detail                      domain.NodeDetail
-	pods                        []domain.PodSummary
 	namespaces                  []domain.Namespace
 	namespace                   domain.NamespaceDetail
 	listErr                     error
 	detailErr                   error
-	podsErr                     error
 	namespacesErr               error
 	namespaceErr                error
 	lastNodeQuery               domain.ListQuery
@@ -85,11 +83,6 @@ func (r *httpNodesRepository) SetNodeTaints(_ context.Context, name string, upda
 	r.lastNodeName = name
 	r.lastTaintUpdate = update
 	return r.taintDetail, r.taintErr
-}
-
-func (r *httpNodesRepository) ListPodsForNode(_ context.Context, name string) ([]domain.PodSummary, error) {
-	r.lastNodeName = name
-	return r.pods, r.podsErr
 }
 
 func (r *httpNodesRepository) ListNamespaces(_ context.Context, query domain.ListQuery) ([]domain.Namespace, error) {
@@ -160,8 +153,7 @@ func nodesRequestJSON(handler http.Handler, method, path, body string) *httptest
 func TestNodesRoutesReturnContracts(t *testing.T) {
 	repo := &httpNodesRepository{
 		nodes:      []domain.NodeSummary{{Name: "worker-a", Status: "Ready"}},
-		detail:     domain.NodeDetail{NodeSummary: domain.NodeSummary{Name: "worker-a"}, Labels: map[string]string{"role": "worker"}},
-		pods:       []domain.PodSummary{{Name: "api-1", Namespace: "prod"}},
+		detail:     domain.NodeDetail{NodeSummary: domain.NodeSummary{Name: "worker-a"}, Labels: map[string]string{"role": "worker"}, Pods: []domain.PodSummary{{Name: "api-1", Namespace: "prod"}}},
 		namespaces: []domain.Namespace{{Name: "prod", Status: "Active"}},
 		namespace: domain.NamespaceDetail{
 			Namespace:      domain.Namespace{Name: "prod", Status: "Active", Annotations: map[string]string{"owner": "platform"}},
@@ -239,7 +231,6 @@ func TestNodesRoutesMapDependencyFailures(t *testing.T) {
 		{name: "list nodes", path: "/nodes", apply: func(r *httpNodesRepository) { r.listErr = errors.New("unavailable") }, want: http.StatusInternalServerError},
 		{name: "list nodes unavailable", path: "/nodes", apply: func(r *httpNodesRepository) { r.listErr = domain.ErrUnavailable }, want: http.StatusServiceUnavailable},
 		{name: "node detail", path: "/nodes/worker-a", apply: func(r *httpNodesRepository) { r.detailErr = domain.ErrNotFound }, want: http.StatusNotFound},
-		{name: "node pods", path: "/nodes/worker-a", apply: func(r *httpNodesRepository) { r.podsErr = domain.ErrUnavailable }, want: http.StatusServiceUnavailable},
 		{name: "list namespaces", path: "/namespaces", apply: func(r *httpNodesRepository) { r.namespacesErr = domain.ErrRateLimited }, want: http.StatusTooManyRequests},
 		{name: "namespace detail", path: "/namespaces/prod", apply: func(r *httpNodesRepository) { r.namespaceErr = domain.ErrNotFound }, want: http.StatusNotFound},
 	}

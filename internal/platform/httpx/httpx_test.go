@@ -259,3 +259,25 @@ func TestPageItemsReturnsStablePaginationAndFilterMetadata(t *testing.T) {
 		t.Fatalf("filters = %#v", meta.Filters)
 	}
 }
+
+func TestIntQueryRejectsPartialNumbers(t *testing.T) {
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/test?limit=12oops", nil)
+	if got := IntQuery(request, "limit", 5); got != 5 {
+		t.Fatalf("IntQuery(partial number) = %d, want fallback 5", got)
+	}
+	request = httptest.NewRequest(http.MethodGet, "/api/v1/test?limit=42", nil)
+	if got := IntQuery(request, "limit", 5); got != 42 {
+		t.Fatalf("IntQuery(valid number) = %d, want 42", got)
+	}
+}
+
+func TestJSONListKeepsUnknownTotalAsLowerBound(t *testing.T) {
+	response := httptest.NewRecorder()
+	JSONList(response, []testPayload{{Name: "alpha"}, {Name: "beta"}}, ListMeta{TotalKnown: false})
+	body := response.Body.String()
+	for _, want := range []string{`"total":2`, `"totalKnown":false`} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("body = %s, want %s", body, want)
+		}
+	}
+}

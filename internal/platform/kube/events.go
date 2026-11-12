@@ -4,7 +4,6 @@ import (
 	"context"
 	"sort"
 	"strings"
-	"time"
 
 	"dosh/internal/domain"
 
@@ -159,11 +158,4 @@ func convertEvent(item corev1.Event) domain.Event {
 		LastSeen:   last,
 		Source:     item.Source.Component,
 	}
-}
-
-func eventTimeOrNow(t time.Time) time.Time {
-	if t.IsZero() {
-		return time.Now().UTC()
-	}
-	return t
 }

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link, Outlet, useNavigate, useRouterState } from "@tanstack/react-router";
 import { useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
 import {
   Activity, Bell, Boxes, ChevronDown, CircleDot, CloudCog, Database, FileCode2, FolderTree, HelpCircle,
   LayoutDashboard, LogOut, Menu, Moon, Network, ScrollText, Search, Server, Settings2, Sun, X,
@@ -123,9 +124,12 @@ export function AppShell() {
   }, [mobileOpen]);
 
   const localLogout = async () => {
-    try { await api.logout(); } finally {
+    try {
+      await api.logout();
       queryClient.removeQueries({ queryKey: sessionQueryKey });
       await navigate({ to: "/login", replace: true });
+    } catch (error) {
+      toast.error(error instanceof Error ? `退出登录失败：${error.message}` : "退出登录失败，请重试");
     }
   };
 

@@ -3,6 +3,7 @@ package kube
 import (
 	"context"
 	"errors"
+	"net/http"
 	"testing"
 	"time"
 
@@ -14,9 +15,11 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/version"
+	"k8s.io/client-go/discovery"
 	fakediscovery "k8s.io/client-go/discovery/fake"
 	k8sfake "k8s.io/client-go/kubernetes/fake"
 	"k8s.io/client-go/rest"
+	restfake "k8s.io/client-go/rest/fake"
 	k8stesting "k8s.io/client-go/testing"
 )
 
@@ -112,5 +115,35 @@ func TestClusterContextVersionAndCNI(t *testing.T) {
 	})
 	if _, err := client.Version(context.Background()); !errors.Is(err, domain.ErrUnavailable) {
 		t.Fatalf("Version() error = %v, want ErrUnavailable", err)
+	}
+}
+
+func TestDiscoveryRequestsUseCallerContext(t *testing.T) {
+	restClient := &restfake.RESTClient{
+		Client: restfake.CreateHTTPClient(func(request *http.Request) (*http.Response, error) {
+			return nil, request.Context().Err()
+		}),
+	}
+	client := NewForClients(k8sfake.NewSimpleClientset(), nil, discovery.NewDiscoveryClient(restClient), testConfig())
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	calls := []struct {
+		name string
+		call func() error
+	}{
+		{name: "version", call: func() error { _, err := client.serverVersion(ctx); return err }},
+		{name: "groups", call: func() error { _, err := client.serverGroups(ctx); return err }},
+		{name: "metrics resources", call: func() error {
+			_, err := client.serverResourcesForGroupVersion(ctx, "metrics.k8s.io/v1beta1")
+			return err
+		}},
+	}
+	for _, tt := range calls {
+		t.Run(tt.name, func(t *testing.T) {
+			if err := tt.call(); !errors.Is(err, context.Canceled) {
+				t.Fatalf("error = %v, want context.Canceled", err)
+			}
+		})
 	}
 }

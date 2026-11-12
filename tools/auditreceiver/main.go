@@ -367,13 +367,13 @@ func newLokiClient(rawURL, caFile string, timeout time.Duration) (*http.Client, 
 		return nil, fmt.Errorf("parse URL: %w", err)
 	}
 	if parsed.Scheme != "http" && parsed.Scheme != "https" {
-		return nil, errors.New("Loki URL must use http or https")
+		return nil, errors.New("loki URL must use http or https")
 	}
 	if parsed.Host == "" {
-		return nil, errors.New("Loki URL must include a host")
+		return nil, errors.New("loki URL must include a host")
 	}
 	if timeout <= 0 || timeout > 30*time.Second {
-		return nil, errors.New("Loki timeout must be between 1ns and 30s")
+		return nil, errors.New("loki timeout must be between 1ns and 30s")
 	}
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	if caFile != "" {
@@ -420,7 +420,7 @@ func (r *receiver) pushLoki(ctx context.Context, payload auditPayload, body []by
 	defer response.Body.Close()
 	responseBody, _ := io.ReadAll(io.LimitReader(response.Body, 4096))
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return fmt.Errorf("Loki returned status %d: %s", response.StatusCode, strings.TrimSpace(string(responseBody)))
+		return fmt.Errorf("loki returned status %d: %s", response.StatusCode, strings.TrimSpace(string(responseBody)))
 	}
 	return nil
 }

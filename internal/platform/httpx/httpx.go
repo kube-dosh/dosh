@@ -311,7 +311,7 @@ func JSONList[T any](w http.ResponseWriter, items []T, meta ListMeta) {
 	if items == nil {
 		items = []T{}
 	}
-	if meta.Total == 0 {
+	if meta.Total < len(items) {
 		meta.Total = len(items)
 	}
 	JSON(w, http.StatusOK, ListResponse[T]{Items: items, Meta: meta})
@@ -421,8 +421,7 @@ func IntQuery(r *http.Request, key string, fallback int) int {
 	if raw == "" {
 		return fallback
 	}
-	var parsed int
-	_, err := fmt.Sscanf(raw, "%d", &parsed)
+	parsed, err := strconv.Atoi(raw)
 	if err != nil {
 		return fallback
 	}
