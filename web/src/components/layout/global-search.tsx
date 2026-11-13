@@ -84,7 +84,7 @@ export function GlobalSearch({ open, onOpenChange }: { open: boolean; onOpenChan
                 void navigate({
                   to: "/resources/$group/$version/$resource/$name",
                   params: { group, version, resource: item.resource || item.kind.toLowerCase() + "s", name: item.name },
-                  search: { namespace: item.namespace },
+                  search: { namespace: item.namespace || namespace || undefined },
                 });
               })}
             />

@@ -73,7 +73,7 @@ export function ResourceListPage() {
       replace: true,
     });
   };
-  const detailSearch = (item: GenericResourceSummary) => ({ namespace: item.namespace });
+  const detailSearch = (item: GenericResourceSummary) => ({ namespace: item.namespace || namespace || undefined });
   const actions = (item: GenericResourceSummary): ResourceAction[] => [
     { label: "查看详情", icon: <Eye className="h-4 w-4" />, onSelect: () => void navigate({
       to: "/resources/$group/$version/$resource/$name",

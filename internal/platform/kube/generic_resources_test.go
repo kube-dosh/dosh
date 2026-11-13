@@ -175,6 +175,26 @@ func TestListGenericResourcesUsesTableAPI(t *testing.T) {
 	if len(result.Items) != 2 || result.Items[0].Name != "api-0" || result.Items[0].Resource != "pods" || result.Items[0].Cells["Status"] != "Running" {
 		t.Fatalf("items = %#v", result.Items)
 	}
+	if result.Items[0].Namespace != "prod" {
+		t.Fatalf("namespace fallback = %q, want prod", result.Items[0].Namespace)
+	}
+}
+
+func TestTableResourceSummaryReadsRowObjectMetadata(t *testing.T) {
+	descriptor := domain.ResourceDescriptor{Version: "v1", Resource: "pods", Kind: "Pod", Namespaced: true}
+	columns := []domain.ResourceColumn{{Name: "Name", Type: "string"}, {Name: "Status", Type: "string"}, {Name: "Age", Type: "string"}}
+	row := metav1.TableRow{
+		Cells: []any{"api-0", "Running", "2d"},
+		Object: runtime.RawExtension{Raw: []byte(`{
+			"apiVersion":"v1","kind":"Pod",
+			"metadata":{"name":"api-0","namespace":"prod","uid":"uid-1","resourceVersion":"9","creationTimestamp":"2026-11-01T00:00:00Z","labels":{"app":"api"}}
+		}`)},
+	}
+
+	summary := tableResourceSummary(descriptor, columns, row)
+	if summary.Namespace != "prod" || summary.UID != "uid-1" || summary.ResourceVersion != "9" || summary.Labels["app"] != "api" || summary.CreatedAt.IsZero() {
+		t.Fatalf("summary = %#v", summary)
+	}
 }
 
 func TestListResourceRulesUsesSelfSubjectRulesReviewAndCaches(t *testing.T) {

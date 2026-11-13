@@ -247,7 +247,11 @@ func (c *Client) listGenericResourceTable(ctx context.Context, descriptor domain
 		}, nil
 	}
 	result, err := listPage(ctx, page, query.Search != "", fetch, func(row metav1.TableRow) domain.GenericResourceSummary {
-		return tableResourceSummary(descriptor, columns, row)
+		summary := tableResourceSummary(descriptor, columns, row)
+		if summary.Namespace == "" {
+			summary.Namespace = query.Namespace
+		}
+		return summary
 	}, func(item domain.GenericResourceSummary) bool {
 		return matchesSearch(append([]string{item.Name, item.Namespace, item.Kind}, resourceCellStrings(item.Cells)...), query.Search)
 	})
@@ -321,13 +325,21 @@ func tableResourceSummary(descriptor domain.ResourceDescriptor, columns []domain
 		summary.Cells[column.Name] = value
 		switch strings.ToLower(column.Name) {
 		case "name":
-			summary.Name = fmt.Sprint(value)
+			if value != nil {
+				summary.Name = fmt.Sprint(value)
+			}
 		case "namespace":
-			summary.Namespace = fmt.Sprint(value)
+			if value != nil {
+				summary.Namespace = fmt.Sprint(value)
+			}
 		case "uid":
-			summary.UID = fmt.Sprint(value)
+			if value != nil {
+				summary.UID = fmt.Sprint(value)
+			}
 		case "resource version", "resourceversion":
-			summary.ResourceVersion = fmt.Sprint(value)
+			if value != nil {
+				summary.ResourceVersion = fmt.Sprint(value)
+			}
 		case "created at", "creation timestamp", "creationtimestamp":
 			if text, ok := value.(string); ok {
 				if parsed, err := time.Parse(time.RFC3339, text); err == nil {
@@ -341,6 +353,12 @@ func tableResourceSummary(descriptor domain.ResourceDescriptor, columns []domain
 	case *unstructured.Unstructured:
 		object = value.Object
 	}
+	if object == nil && len(row.Object.Raw) > 0 {
+		var decoded map[string]any
+		if err := json.Unmarshal(row.Object.Raw, &decoded); err == nil {
+			object = decoded
+		}
+	}
 	if object != nil {
 		metadata := objectMapLike(object, "metadata")
 		if summary.Name == "" {
@@ -351,6 +369,11 @@ func tableResourceSummary(descriptor domain.ResourceDescriptor, columns []domain
 		}
 		summary.UID = stringMapLike(metadata, "uid")
 		summary.ResourceVersion = stringMapLike(metadata, "resourceVersion")
+		if summary.CreatedAt.IsZero() {
+			if parsed, err := time.Parse(time.RFC3339, stringMapLike(metadata, "creationTimestamp")); err == nil {
+				summary.CreatedAt = parsed
+			}
+		}
 		summary.Labels = stringMap(metadata, "labels")
 		summary.Annotations = stringMap(metadata, "annotations")
 	}
