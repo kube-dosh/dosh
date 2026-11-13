@@ -22,6 +22,7 @@ tags:
   - name: certificates
   - name: storage
   - name: yaml
+  - name: resources
 security:
   - cookieAuth: []
 paths:
@@ -1516,6 +1517,77 @@ paths:
         "409": { $ref: "#/components/responses/Conflict" }
         "503": { $ref: "#/components/responses/DependencyUnavailable" }
         "501": { $ref: "#/components/responses/NotSupported" }
+  /api/v1/resources/discovery:
+    get:
+      tags: [resources]
+      summary: Read the discoverable Kubernetes resource catalog
+      description: >-
+        Returns resources found through Kubernetes API Discovery. The catalog is
+        cached by the server. Resource-level reads still require Kubernetes RBAC
+        authorization for the authenticated user.
+      responses:
+        "200":
+          description: Discovered resource types
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ResourceDiscovery" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
+  /api/v1/resources/{group}/{version}/{resource}:
+    get:
+      tags: [resources]
+      summary: List one discovered Kubernetes resource type
+      description: >-
+        Uses API Discovery to validate the resource type, then requires list
+        permission for the authenticated user before reading Kubernetes objects.
+        Use `_core` for the core API group.
+      parameters:
+        - $ref: "#/components/parameters/ResourceGroupPath"
+        - $ref: "#/components/parameters/ResourceVersionPath"
+        - $ref: "#/components/parameters/ResourceNamePath"
+        - $ref: "#/components/parameters/Namespace"
+        - $ref: "#/components/parameters/Search"
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Sort"
+        - $ref: "#/components/parameters/Order"
+      responses:
+        "200":
+          description: Generic resource metadata list
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/GenericResourceList" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
+  /api/v1/resources/{group}/{version}/{resource}/{name}:
+    get:
+      tags: [resources]
+      summary: Read one discovered Kubernetes resource
+      description: >-
+        Returns the API object and YAML for a discovered resource. Secret data is
+        redacted in this generic view; use the Secret-specific reveal workflow for
+        audited sensitive access.
+      parameters:
+        - $ref: "#/components/parameters/ResourceGroupPath"
+        - $ref: "#/components/parameters/ResourceVersionPath"
+        - $ref: "#/components/parameters/ResourceNamePath"
+        - $ref: "#/components/parameters/Name"
+        - $ref: "#/components/parameters/Namespace"
+      responses:
+        "200":
+          description: Generic resource detail
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/GenericResourceDetail" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
 components:
   securitySchemes:
     cookieAuth:
@@ -1591,6 +1663,23 @@ components:
       name: name
       in: path
       required: true
+      schema: { type: string }
+    ResourceGroupPath:
+      name: group
+      in: path
+      required: true
+      description: Kubernetes API group, or `_core` for the core API group.
+      schema: { type: string }
+    ResourceVersionPath:
+      name: version
+      in: path
+      required: true
+      schema: { type: string }
+    ResourceNamePath:
+      name: resource
+      in: path
+      required: true
+      description: Plural Kubernetes resource name, for example `pods` or `prometheuses`.
       schema: { type: string }
   responses:
     Session:
@@ -2745,3 +2834,82 @@ components:
         namespace: { type: string }
         name: { type: string }
         yaml: { type: string }
+    ResourceDescriptor:
+      type: object
+      required: [group, version, resource, kind, namespaced, verbs]
+      properties:
+        group: { type: string }
+        version: { type: string }
+        resource: { type: string }
+        kind: { type: string }
+        singularName: { type: string }
+        namespaced: { type: boolean }
+        verbs:
+          type: array
+          items: { type: string }
+        shortNames:
+          type: array
+          items: { type: string }
+        categories:
+          type: array
+          items: { type: string }
+    ResourceDiscovery:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/ResourceDescriptor" }
+        warnings:
+          type: array
+          items: { type: string }
+    GenericResourceSummary:
+      type: object
+      required: [apiVersion, kind, name]
+      properties:
+        apiVersion: { type: string }
+        kind: { type: string }
+        name: { type: string }
+        namespace: { type: string }
+        uid: { type: string }
+        resourceVersion: { type: string }
+        createdAt: { type: string, format: date-time }
+        labels:
+          type: object
+          additionalProperties: { type: string }
+        annotations:
+          type: object
+          additionalProperties: { type: string }
+    GenericResourceList:
+      type: object
+      required: [items, meta]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/GenericResourceSummary" }
+        meta: { $ref: "#/components/schemas/ListMeta" }
+    GenericResourceDetail:
+      type: object
+      required: [apiVersion, kind, name, object, yaml]
+      properties:
+        apiVersion: { type: string }
+        kind: { type: string }
+        name: { type: string }
+        namespace: { type: string }
+        uid: { type: string }
+        resourceVersion: { type: string }
+        createdAt: { type: string, format: date-time }
+        labels:
+          type: object
+          additionalProperties: { type: string }
+        annotations:
+          type: object
+          additionalProperties: { type: string }
+        object:
+          type: object
+          additionalProperties: true
+        yaml: { type: string }
+        redacted: { type: boolean }
+        warnings:
+          type: array
+          items: { type: string }

@@ -21,6 +21,9 @@ import { EventsPage } from "@/features/events/events-page";
 import { AuditPage } from "@/features/audit/audit-page";
 import { ClusterConfigurationPage } from "@/features/cluster/cluster-configuration-page";
 import { YAMLCreatePage } from "@/features/yaml/yaml-create-page";
+import { ResourcesPage } from "@/features/resources/resources-page";
+import { ResourceListPage } from "@/features/resources/resource-list-page";
+import { ResourceDetailPage } from "@/features/resources/resource-detail-page";
 import { Button } from "@/components/ui/button";
 import { Link } from "@tanstack/react-router";
 import { parseListSearch } from "@/lib/list-search";
@@ -61,6 +64,9 @@ const appRoute = createRoute({
 const indexRoute = createRoute({ getParentRoute: () => appRoute, path: "/", component: OverviewPage });
 const clusterConfigurationRoute = createRoute({ getParentRoute: () => appRoute, path: "/cluster/config", component: ClusterConfigurationPage });
 const yamlCreateRoute = createRoute({ getParentRoute: () => appRoute, path: "/yaml/create", component: YAMLCreatePage });
+const resourcesRoute = createRoute({ getParentRoute: () => appRoute, path: "/resources", component: ResourcesPage, validateSearch: parseListSearch });
+const resourceListRoute = createRoute({ getParentRoute: () => appRoute, path: "/resources/$group/$version/$resource", component: ResourceListPage, validateSearch: parseListSearch });
+const resourceDetailRoute = createRoute({ getParentRoute: () => appRoute, path: "/resources/$group/$version/$resource/$name", component: ResourceDetailPage, validateSearch: parseListSearch });
 const nodesRoute = createRoute({ getParentRoute: () => appRoute, path: "/nodes", component: NodesPage, validateSearch: parseListSearch });
 const nodeDetailRoute = createRoute({ getParentRoute: () => appRoute, path: "/nodes/$name", component: NodeDetailPage, validateSearch: parseListSearch });
 const workloadsRoute = createRoute({ getParentRoute: () => appRoute, path: "/workloads", component: WorkloadsPage, validateSearch: parseListSearch });
@@ -86,6 +92,9 @@ export const routeTree = rootRoute.addChildren([
     indexRoute,
     clusterConfigurationRoute,
     yamlCreateRoute,
+    resourcesRoute,
+    resourceListRoute,
+    resourceDetailRoute,
     nodesRoute,
     nodeDetailRoute,
     workloadsRoute,

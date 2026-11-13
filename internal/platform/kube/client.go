@@ -36,6 +36,11 @@ type Client struct {
 	metricsMu        sync.Mutex
 	metricsCheckedAt time.Time
 	metricsAvailable bool
+
+	resourceDiscoveryMu       sync.Mutex
+	resourceDiscovery         []domain.ResourceDescriptor
+	resourceDiscoveryWarnings []string
+	resourceDiscoveryFetched  time.Time
 }
 
 func New(ctx context.Context, cfg config.Config) (*Client, error) {
@@ -188,7 +193,11 @@ func (c *Client) serverResourcesForGroupVersion(ctx context.Context, groupVersio
 	if restClient == nil {
 		return c.discovery.ServerResourcesForGroupVersion(groupVersion)
 	}
-	body, err := restClient.Get().AbsPath("/apis/" + groupVersion).DoRaw(ctx)
+	path := "/apis/" + groupVersion
+	if groupVersion == "v1" {
+		path = "/api/v1"
+	}
+	body, err := restClient.Get().AbsPath(path).DoRaw(ctx)
 	if err != nil {
 		return nil, err
 	}

@@ -5,7 +5,7 @@
 
   <p><strong>面向 Kubernetes 日常运维的轻量级可视化控制台</strong></p>
 
-  <p>一个二进制，提供集群总览、工作负载、Pod 日志、网络、配置、存储、事件、YAML 创建与审计能力。</p>
+  <p>一个二进制，提供集群总览、固定运维视图、通用资源浏览器、Pod 日志、网络、配置、存储、事件、YAML 创建与审计能力。</p>
 
   <p><a href="#快速开始">快速开始</a> · <a href="#产品截图">产品截图</a> · <a href="#功能一览">功能一览</a> · <a href="#部署与配置">部署与配置</a> · <a href="#认证与权限">认证与权限</a> · <a href="#本地开发">本地开发</a> · <a href="docs/operations-runbook.md">运维手册</a></p>
 
@@ -55,6 +55,7 @@ Dosh 不替代 Kubernetes，也不绕过 Kubernetes。所有身份、权限和�
 | 存储 | PVC 创建与管理；PV、StorageClass 查看与关联关系导航 |
 | 命名空间 | 创建、详情、YAML 和受保护的级联删除；`default` 与 `kube-*` 始终拒绝删除 |
 | 事件 | 集群事件检索、命名空间过滤、Warning 识别、对象快速跳转和实时事件流 |
+| 资源浏览器 | 通过 Kubernetes API Discovery 浏览内置资源与 CRD 类型；按 API Group、Kind、资源名筛选；提供通用列表、详情、只读 YAML、事件和命名空间过滤，对象读取受 Kubernetes RBAC 约束 |
 | YAML 创建 | 按模板编辑、Dry Run、创建或 Server-Side Apply；支持多文档顺序提交和常用内置资源白名单 |
 | 集群配置 | Kubernetes 版本、平台、CNI、控制面地址、DNS 域名、Pod/Service 网段和节点 Pod CIDR |
 | 审计 | 查看认证与写操作审计记录；审计同时写入标准输出，可选 HTTPS Webhook 和 HMAC 签名 |
@@ -213,6 +214,7 @@ IMAGE=registry.example.com/dosh/dosh make image TAG=0.1.8
 | `tls.enabled` | `true` | 是否启用 HTTPS |
 | `tls.existingSecret` | `dosh-tls` | 存放 `tls.crt` 与 `tls.key` 的 Secret |
 | `auth.mode` | `token` | `token`、`oidc` 或 `local` |
+| `rbac.localReadAllResources` | `true` | local 模式下授予全资源只读权限，支持资源浏览器浏览内置资源和 CRD；不影响 Token/OIDC 的用户级 RBAC |
 | `auth.existingSecret` | `dosh-auth` | 会话密钥等敏感配置 |
 | `auth.sessionTTL` | `8h` | 登录会话有效期，最大 8 小时 |
 | `runtime.clusterName` | `kubedo-lab` | 控制台展示的集群名称 |

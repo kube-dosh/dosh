@@ -25,6 +25,14 @@ rules:
   - nonResourceURLs: ["/api", "/api/*", "/apis", "/apis/*", "/version", "/openapi/v2", "/openapi/v3", "/openapi/v3/*"]
     verbs: ["get"]
   {{- else }}
+  {{- if .Values.rbac.localReadAllResources }}
+  # local 模式没有用户级 impersonation，资源浏览器需要集群级只读发现能力。
+  - apiGroups: ["*"]
+    resources: ["*"]
+    verbs: ["get", "list", "watch"]
+  {{- end }}
+  - nonResourceURLs: ["/api", "/api/*", "/apis", "/apis/*", "/version", "/openapi/v2", "/openapi/v3", "/openapi/v3/*"]
+    verbs: ["get"]
   - apiGroups: [""]
     resources: ["nodes", "namespaces"]
     verbs: ["get", "list", "watch"]

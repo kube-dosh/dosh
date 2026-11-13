@@ -23,6 +23,8 @@ import (
 	networkhttp "dosh/internal/modules/network/http"
 	nodeshttp "dosh/internal/modules/nodes/http"
 	overviewhttp "dosh/internal/modules/overview/http"
+	resourcesapp "dosh/internal/modules/resources/app"
+	resourceshttp "dosh/internal/modules/resources/http"
 	storagehttp "dosh/internal/modules/storage/http"
 	workloadshttp "dosh/internal/modules/workloads/http"
 	yamlhttp "dosh/internal/modules/yaml/http"
@@ -98,6 +100,7 @@ func TestModuleRoutesAreScoped(t *testing.T) {
 			authhttp.MountProtected(r, deps.auth)
 		}, prefixes: []string{"/auth", "/session", "/capabilities"}},
 		{name: "overview", mount: deps.overview.Mount, prefixes: []string{"/overview"}},
+		{name: "resources", mount: deps.resources.Mount, prefixes: []string{"/resources"}},
 		{name: "cluster-config", mount: deps.clusterConfig.Mount, prefixes: []string{"/cluster"}},
 		{name: "nodes", mount: deps.nodes.Mount, prefixes: []string{"/nodes", "/namespaces"}},
 		{name: "workloads", mount: deps.workloads.Mount, prefixes: []string{"/workloads", "/pods"}},
@@ -154,6 +157,7 @@ func newRouteTestDependencies(t *testing.T) routerDependencies {
 		cfg:           config.Config{},
 		auth:          authHandler,
 		overview:      overviewhttp.New(nil),
+		resources:     resourceshttp.New(resourcesapp.New(nil, authz.NewLocal(false), audit.New(logger))),
 		clusterConfig: clusterconfighttp.New(nil),
 		nodes:         nodeshttp.New(nil),
 		workloads:     workloadshttp.New(nil),

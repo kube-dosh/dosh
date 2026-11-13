@@ -5,7 +5,7 @@
 
   <p><strong>A lightweight Kubernetes operations console for everyday cluster work</strong></p>
 
-  <p>One binary for cluster overview, workloads, Pod logs, networking, configuration, storage, events, YAML creation, and audit trails.</p>
+  <p>One binary for cluster overview, curated operations views, generic resource discovery, Pod logs, networking, configuration, storage, events, YAML creation, and audit trails.</p>
 
   <p><a href="#quick-start">Quick start</a> · <a href="#screenshots">Screenshots</a> · <a href="#features">Features</a> · <a href="#deployment-and-configuration">Deployment</a> · <a href="#authentication-and-permissions">Authentication</a> · <a href="#local-development">Development</a> · <a href="docs/operations-runbook.md">Runbook</a></p>
 
@@ -55,6 +55,7 @@ Dosh does not replace Kubernetes or bypass it. Authentication, authorization, an
 | Storage | Create and manage PVCs; inspect PVs and StorageClasses and navigate their relationships |
 | Namespaces | Create, inspect, view YAML, and perform protected cascade deletion; `default` and `kube-*` are always protected from deletion |
 | Events | Cluster-wide search, namespace filtering, warning detection, object deep links, and a live event stream |
+| Resource explorer | Kubernetes API Discovery catalog for built-in resources and CRD types; filter by API group, kind, and resource name; generic list, metadata detail, read-only YAML, events, and namespace filtering, with object reads enforced by Kubernetes RBAC |
 | YAML creation | Template editing, dry run, create, or server-side apply; multi-document sequential submission with a built-in resource allowlist |
 | Cluster configuration | Kubernetes version, platform, CNI, control-plane endpoint, DNS domain, Pod/Service CIDRs, and per-node Pod CIDRs |
 | Audit | Authentication and write-operation history; events are written to stdout with optional HTTPS webhook delivery and HMAC signing |
@@ -213,6 +214,7 @@ The main Helm settings live in [`deploy/helm/dosh/values.yaml`](deploy/helm/dosh
 | `tls.enabled` | `true` | Enable HTTPS |
 | `tls.existingSecret` | `dosh-tls` | Secret containing `tls.crt` and `tls.key` |
 | `auth.mode` | `token` | `token`, `oidc`, or `local` |
+| `rbac.localReadAllResources` | `true` | In local mode, grant cluster-wide read access so the resource explorer can browse built-in resources and CRDs; Token/OIDC modes continue to use the user's Kubernetes RBAC |
 | `auth.existingSecret` | `dosh-auth` | Session key and other sensitive authentication settings |
 | `auth.sessionTTL` | `8h` | Login session lifetime, capped at 8 hours |
 | `runtime.clusterName` | `kubedo-lab` | Cluster name displayed by the console |

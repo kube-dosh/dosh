@@ -1,0 +1,90 @@
+package http
+
+import (
+	stdhttp "net/http"
+
+	"dosh/internal/domain"
+	resourcesapp "dosh/internal/modules/resources/app"
+	"dosh/internal/platform/httpx"
+
+	"github.com/go-chi/chi/v5"
+)
+
+type Handler struct{ service *resourcesapp.Service }
+
+func New(service *resourcesapp.Service) *Handler { return &Handler{service: service} }
+
+type discoveryResponse struct {
+	Items    []domain.ResourceDescriptor `json:"items"`
+	Warnings []string                    `json:"warnings,omitempty"`
+}
+
+func (h *Handler) Discovery(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	items, warnings, err := h.service.Discovery(r.Context())
+	if err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	httpx.JSON(w, stdhttp.StatusOK, discoveryResponse{Items: items, Warnings: warnings})
+}
+
+func (h *Handler) List(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	ref, err := referenceFromRequest(r)
+	if err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	options, err := httpx.ParseListOptions(r, []string{"name", "namespace", "createdAt"})
+	if err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	query := domain.ListQuery{Namespace: httpx.Query(r, "namespace"), Search: httpx.Query(r, "q")}
+	actor, _ := domain.ActorFromContext(r.Context())
+	result, err := h.service.List(r.Context(), actor, ref, query, domain.PageRequest{
+		Number: options.Page, Size: options.PageSize, Cursor: options.Cursor,
+	})
+	if err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	httpx.SortItems(result.Items, options)
+	meta := httpx.PageMeta(result, options, map[string]string{"namespace": query.Namespace, "search": query.Search})
+	meta.Namespace, meta.Search = query.Namespace, query.Search
+	httpx.JSONList(w, result.Items, meta)
+}
+
+func (h *Handler) Get(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	ref, err := referenceFromRequest(r)
+	if err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	actor, _ := domain.ActorFromContext(r.Context())
+	item, err := h.service.Get(r.Context(), actor, ref, httpx.Query(r, "namespace"), chi.URLParam(r, "name"))
+	if err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	httpx.JSON(w, stdhttp.StatusOK, item)
+}
+
+func referenceFromRequest(r *stdhttp.Request) (domain.ResourceReference, error) {
+	group := chi.URLParam(r, "group")
+	if group == "_core" || group == "core" {
+		group = ""
+	}
+	ref := domain.ResourceReference{
+		Group: group, Version: chi.URLParam(r, "version"), Resource: chi.URLParam(r, "resource"),
+	}
+	if ref.Version == "" || ref.Resource == "" {
+		return domain.ResourceReference{}, httpx.Validation("resource", "version and resource are required")
+	}
+	return ref, nil
+}
+
+func (h *Handler) Mount(r chi.Router) {
+	r.Get("/resources/discovery", h.Discovery)
+	r.Get("/resources/{group}/{version}/{resource}", h.List)
+	r.Get("/resources/{group}/{version}/{resource}/{name}", h.Get)
+}

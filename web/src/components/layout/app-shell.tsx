@@ -3,7 +3,7 @@ import { Link, Outlet, useNavigate, useRouterState } from "@tanstack/react-route
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import {
-  Activity, Bell, Boxes, ChevronDown, CircleDot, CloudCog, Database, FileCode2, FolderTree, HelpCircle,
+  Activity, Bell, Boxes, ChevronDown, CircleDot, CloudCog, Database, FileCode2, FolderTree, HelpCircle, Layers3,
   LayoutDashboard, LogOut, Menu, Moon, Network, ScrollText, Search, Server, Settings2, Sun, X,
   type LucideIcon,
 } from "lucide-react";
@@ -29,6 +29,7 @@ const nav: Array<{ href: string; label: string; icon: LucideIcon; adminOnly?: bo
   { href: "/namespaces", label: "命名空间", icon: FolderTree, match: (path: string) => path.startsWith("/namespaces") },
   { href: "/events", label: "事件", icon: Activity, match: (path: string) => path.startsWith("/events") },
   { href: "/audit", label: "审计日志", icon: ScrollText, adminOnly: true, match: (path: string) => path.startsWith("/audit") },
+  { href: "/resources", label: "资源浏览器", icon: Layers3, match: (path: string) => path.startsWith("/resources") },
 ];
 
 type ClusterPresentation = {
@@ -228,7 +229,7 @@ export function AppShell() {
         <DialogContent>
           <DialogHeader><DialogTitle>关于 Dosh Console</DialogTitle><DialogDescription>面向 {overview.data?.cluster.name || "当前 Kubernetes 集群"} 的 Kubernetes 运维控制台。</DialogDescription></DialogHeader>
           <div className="space-y-2 text-sm text-muted-foreground">
-            <p>支持集群总览、节点、工作负载、Pod、日志、事件、服务、配置、Secret 和存储资源查看。</p>
+            <p>支持集群总览、节点、工作负载、Pod、日志、事件、服务、配置、Secret、存储资源，以及通过 API Discovery 浏览内置资源和 CRD 类型。</p>
             <p>所有写操作均经过会话、CSRF、权限和审计检查。默认只读模式可在 Helm values 中切换。</p>
           </div>
         </DialogContent>

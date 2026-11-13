@@ -2907,6 +2907,161 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/resources/discovery": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read the discoverable Kubernetes resource catalog
+         * @description Returns resources found through Kubernetes API Discovery. The catalog is cached by the server. Resource-level reads still require Kubernetes RBAC authorization for the authenticated user.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Discovered resource types */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ResourceDiscovery"];
+                    };
+                };
+                401: components["responses"]["Unauthorized"];
+                503: components["responses"]["DependencyUnavailable"];
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/resources/{group}/{version}/{resource}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List one discovered Kubernetes resource type
+         * @description Uses API Discovery to validate the resource type, then requires list permission for the authenticated user before reading Kubernetes objects. Use `_core` for the core API group.
+         */
+        get: {
+            parameters: {
+                query?: {
+                    namespace?: components["parameters"]["Namespace"];
+                    q?: components["parameters"]["Search"];
+                    page?: components["parameters"]["Page"];
+                    pageSize?: components["parameters"]["PageSize"];
+                    /** @description Opaque continuation cursor returned in meta.nextCursor. Use it for the next page; do not construct or modify it. */
+                    cursor?: components["parameters"]["Cursor"];
+                    /** @description Resource-specific sort field. Unsupported fields return 400. */
+                    sort?: components["parameters"]["Sort"];
+                    /** @description Sort direction; requires sort. */
+                    order?: components["parameters"]["Order"];
+                };
+                header?: never;
+                path: {
+                    /** @description Kubernetes API group, or `_core` for the core API group. */
+                    group: components["parameters"]["ResourceGroupPath"];
+                    version: components["parameters"]["ResourceVersionPath"];
+                    /** @description Plural Kubernetes resource name, for example `pods` or `prometheuses`. */
+                    resource: components["parameters"]["ResourceNamePath"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Generic resource metadata list */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["GenericResourceList"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+                404: components["responses"]["NotFound"];
+                503: components["responses"]["DependencyUnavailable"];
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/resources/{group}/{version}/{resource}/{name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read one discovered Kubernetes resource
+         * @description Returns the API object and YAML for a discovered resource. Secret data is redacted in this generic view; use the Secret-specific reveal workflow for audited sensitive access.
+         */
+        get: {
+            parameters: {
+                query?: {
+                    namespace?: components["parameters"]["Namespace"];
+                };
+                header?: never;
+                path: {
+                    /** @description Kubernetes API group, or `_core` for the core API group. */
+                    group: components["parameters"]["ResourceGroupPath"];
+                    version: components["parameters"]["ResourceVersionPath"];
+                    /** @description Plural Kubernetes resource name, for example `pods` or `prometheuses`. */
+                    resource: components["parameters"]["ResourceNamePath"];
+                    name: components["parameters"]["Name"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Generic resource detail */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["GenericResourceDetail"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+                404: components["responses"]["NotFound"];
+                503: components["responses"]["DependencyUnavailable"];
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -3761,6 +3916,63 @@ export interface components {
             name: string;
             yaml: string;
         };
+        ResourceDescriptor: {
+            group: string;
+            version: string;
+            resource: string;
+            kind: string;
+            singularName?: string;
+            namespaced: boolean;
+            verbs: string[];
+            shortNames?: string[];
+            categories?: string[];
+        };
+        ResourceDiscovery: {
+            items: components["schemas"]["ResourceDescriptor"][];
+            warnings?: string[];
+        };
+        GenericResourceSummary: {
+            apiVersion: string;
+            kind: string;
+            name: string;
+            namespace?: string;
+            uid?: string;
+            resourceVersion?: string;
+            /** Format: date-time */
+            createdAt?: string;
+            labels?: {
+                [key: string]: string;
+            };
+            annotations?: {
+                [key: string]: string;
+            };
+        };
+        GenericResourceList: {
+            items: components["schemas"]["GenericResourceSummary"][];
+            meta: components["schemas"]["ListMeta"];
+        };
+        GenericResourceDetail: {
+            apiVersion: string;
+            kind: string;
+            name: string;
+            namespace?: string;
+            uid?: string;
+            resourceVersion?: string;
+            /** Format: date-time */
+            createdAt?: string;
+            labels?: {
+                [key: string]: string;
+            };
+            annotations?: {
+                [key: string]: string;
+            };
+            object: {
+                [key: string]: unknown;
+            };
+            yaml: string;
+            redacted?: boolean;
+            warnings?: string[];
+        };
     };
     responses: {
         /** @description Authenticated session */
@@ -3866,6 +4078,11 @@ export interface components {
         WorkloadStatus: string;
         KindPath: components["schemas"]["WorkloadKind"];
         Name: string;
+        /** @description Kubernetes API group, or `_core` for the core API group. */
+        ResourceGroupPath: string;
+        ResourceVersionPath: string;
+        /** @description Plural Kubernetes resource name, for example `pods` or `prometheuses`. */
+        ResourceNamePath: string;
     };
     requestBodies: never;
     headers: never;

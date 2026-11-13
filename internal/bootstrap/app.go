@@ -30,6 +30,8 @@ import (
 	nodeshttp "dosh/internal/modules/nodes/http"
 	overviewapp "dosh/internal/modules/overview/app"
 	overviewhttp "dosh/internal/modules/overview/http"
+	resourcesapp "dosh/internal/modules/resources/app"
+	resourceshttp "dosh/internal/modules/resources/http"
 	storageapp "dosh/internal/modules/storage/app"
 	storagehttp "dosh/internal/modules/storage/http"
 	workloadsapp "dosh/internal/modules/workloads/app"
@@ -136,6 +138,7 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 	})
 
 	overviewService := overviewapp.New(kubeClient, cfg.ClusterName)
+	resourcesService := resourcesapp.New(kubeClient, authorizer, auditLogger)
 	clusterConfigService := clusterconfigapp.New(kubeClient)
 	nodesService := nodesapp.New(kubeClient, authorizer, auditLogger)
 	workloadsService := workloadsapp.New(kubeClient, authorizer, auditLogger)
@@ -153,6 +156,7 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 		kube:          kubeClient,
 		auth:          authHandler,
 		overview:      overviewhttp.New(overviewService),
+		resources:     resourceshttp.New(resourcesService),
 		clusterConfig: clusterconfighttp.New(clusterConfigService),
 		nodes:         nodeshttp.New(nodesService),
 		workloads:     workloadshttp.New(workloadsService),

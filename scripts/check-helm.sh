@@ -17,6 +17,7 @@ trap '[[ "$CLEANUP" == 1 ]] && rm -rf "$OUT"' EXIT
 helm lint "$CHART"
 
 helm template dosh "$CHART" -n dosh --set auth.mode=local >"$OUT/dosh-local.yaml"
+helm template dosh "$CHART" -n dosh --set auth.mode=local --set rbac.localReadAllResources=false >"$OUT/dosh-local-restricted.yaml"
 helm template dosh "$CHART" -n dosh >"$OUT/dosh-token.yaml"
 helm template dosh "$CHART" -n dosh \
   --set tls.enabled=false \
@@ -122,8 +123,12 @@ require "$OUT/dosh-local.yaml" 'verbs: \["get", "create", "update"\]' 'local log
 require "$OUT/dosh-local.yaml" 'resources: \["endpointslices"\]' 'local EndpointSlice read RBAC'
 require "$OUT/dosh-local.yaml" 'resources: \["ingresses", "ingressclasses"\]' 'local IngressClass read RBAC'
 require "$OUT/dosh-local.yaml" 'resources: \["resourcequotas", "limitranges"\]' 'local namespace quota and limit read RBAC'
+require "$OUT/dosh-local.yaml" 'apiGroups: \["\*"\]' 'local generic resource read-all RBAC group'
+require "$OUT/dosh-local.yaml" 'resources: \["\*"\]' 'local generic resource read-all RBAC resources'
+require "$OUT/dosh-local.yaml" 'nonResourceURLs: \["/api", "/api/\*", "/apis", "/apis/\*"' 'local API discovery non-resource RBAC'
 require "$OUT/dosh-local.yaml" 'value: "2097152"' 'integer max request body'
 reject "$OUT/dosh-local.yaml" 'name: DOSH_OIDC_ISSUER' 'local OIDC env'
+reject "$OUT/dosh-local-restricted.yaml" 'resources: \["\*"\]' 'restricted local generic resource read-all RBAC'
 require "$OUT/dosh-digest.yaml" 'image: "ghcr.io/kube-dosh/dosh@sha256:1111111111111111111111111111111111111111111111111111111111111111"' 'digest-pinned image'
 
 require "$OUT/dosh-token.yaml" 'value: "token"' 'token auth mode value'

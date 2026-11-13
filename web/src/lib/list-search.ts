@@ -6,6 +6,9 @@ export interface ListSearch {
   action?: string;
   result?: string;
   tab?: string;
+  group?: string;
+  version?: string;
+  resource?: string;
 }
 
 export function parseListSearch(raw: Record<string, unknown>): ListSearch {
@@ -15,5 +18,9 @@ export function parseListSearch(raw: Record<string, unknown>): ListSearch {
     const trimmed = value.trim();
     return trimmed || undefined;
   };
-  return { q: read("q"), namespace: read("namespace"), kind: read("kind"), status: read("status"), action: read("action"), result: read("result"), tab: read("tab") };
+  return {
+    q: read("q"), namespace: read("namespace"), kind: read("kind"), status: read("status"),
+    action: read("action"), result: read("result"), tab: read("tab"),
+    group: read("group"), version: read("version"), resource: read("resource"),
+  };
 }

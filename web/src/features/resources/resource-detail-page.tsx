@@ -1,0 +1,130 @@
+import { useQuery } from "@tanstack/react-query";
+import { Link, useNavigate, useParams, useSearch } from "@tanstack/react-router";
+import { ArrowLeft, FileCode2 } from "lucide-react";
+import { api } from "@/api/client";
+import type { ResourceDescriptor } from "@/api/types";
+import { DetailItem } from "@/components/data/detail-item";
+import { EmptyState, ErrorState, LoadingState } from "@/components/feedback/states";
+import { PageHeader } from "@/components/layout/page-header";
+import { MetadataCard } from "@/components/resources/metadata-card";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { ResourceEvents } from "@/features/events/resource-events";
+import { GenericYamlPanel } from "@/features/resources/generic-yaml-panel";
+import { formatDate } from "@/lib/utils";
+
+const detailTabs = ["overview", "events", "yaml"] as const;
+type DetailTab = (typeof detailTabs)[number];
+
+function isDetailTab(value: string | undefined): value is DetailTab {
+  return detailTabs.includes(value as DetailTab);
+}
+
+function findDescriptor(descriptors: ResourceDescriptor[], group: string, version: string, resource: string) {
+  return descriptors.find((item) => item.group === group && item.version === version && item.resource === resource);
+}
+
+export function ResourceDetailPage() {
+  const params = useParams({ strict: false }) as { group: string; version: string; resource: string; name: string };
+  const search = useSearch({ from: "/app/resources/$group/$version/$resource/$name" });
+  const navigate = useNavigate();
+  const apiGroup = params.group === "_core" ? "" : params.group;
+  const namespace = search.namespace ?? "";
+  const tab = isDetailTab(search.tab) ? search.tab : "overview";
+  const discovery = useQuery({ queryKey: ["resource-discovery"], queryFn: api.resourceDiscovery, staleTime: 60_000 });
+  const descriptor = findDescriptor(discovery.data?.items ?? [], apiGroup, params.version, params.resource);
+  const missingNamespace = Boolean(descriptor?.namespaced && !namespace);
+  const query = useQuery({
+    queryKey: ["generic-resource", apiGroup, params.version, params.resource, namespace, params.name],
+    queryFn: () => api.resource({ group: apiGroup, version: params.version, resource: params.resource }, params.name, namespace),
+    enabled: Boolean(descriptor) && !missingNamespace,
+  });
+  const changeTab = (value: string) => {
+    if (!isDetailTab(value)) return;
+    void navigate({
+      to: "/resources/$group/$version/$resource/$name",
+      params,
+      search: { ...search, tab: value === "overview" ? undefined : value },
+    });
+  };
+  const listLink = (
+    <Button asChild variant="outline" size="sm">
+      <Link to="/resources/$group/$version/$resource" params={{ group: params.group, version: params.version, resource: params.resource }} search={{ namespace: namespace || undefined }}>
+        <ArrowLeft className="h-4 w-4" />返回列表
+      </Link>
+    </Button>
+  );
+
+  if (discovery.isError) return <ErrorState error={discovery.error} onRetry={() => void discovery.refetch()} />;
+  if (!discovery.isLoading && !descriptor) {
+    return <EmptyState title="资源类型不存在" description="该 API Group、版本和资源名不在当前 Discovery 结果中。" action={<Button asChild variant="outline"><Link to="/resources">返回资源浏览器</Link></Button>} />;
+  }
+  if (missingNamespace) {
+    return <EmptyState title="缺少命名空间" description={`${descriptor?.kind || params.resource} 是 Namespaced 资源，请在列表页选择或携带 namespace 参数后重试。`} action={listLink} />;
+  }
+  if (query.isLoading || discovery.isLoading) return <LoadingState />;
+  if (query.isError) return <ErrorState error={query.error} onRetry={() => void query.refetch()} />;
+  const detail = query.data;
+  if (!detail) return null;
+  return (
+    <>
+      <PageHeader
+        title={detail.name}
+        breadcrumb={(
+          <>
+            <Link to="/resources" className="hover:text-foreground hover:underline">资源浏览器</Link>
+            {" / "}
+            <Link to="/resources/$group/$version/$resource" params={{ group: params.group, version: params.version, resource: params.resource }} search={{ namespace: namespace || undefined }} className="hover:text-foreground hover:underline">
+              {descriptor?.kind || params.resource}
+            </Link>
+            {` / ${detail.name}`}
+          </>
+        )}
+        description={`${detail.apiVersion} · ${detail.kind}${detail.namespace ? ` · ${detail.namespace}` : ""}`}
+        actions={listLink}
+      />
+      {detail.warnings?.length ? (
+        <div className="mb-3 rounded-md border border-warning/35 bg-warning/10 px-3 py-2 text-xs text-warning">{detail.warnings.join("；")}</div>
+      ) : null}
+      <Tabs value={tab} onValueChange={changeTab}>
+        <TabsList>
+          <TabsTrigger value="overview">概览</TabsTrigger>
+          <TabsTrigger value="events">事件</TabsTrigger>
+          <TabsTrigger value="yaml"><FileCode2 className="h-3.5 w-3.5" />YAML</TabsTrigger>
+        </TabsList>
+        <TabsContent value="overview">
+          <div className="grid gap-4 xl:grid-cols-2">
+            <Card>
+              <CardHeader><CardTitle>资源信息</CardTitle></CardHeader>
+              <CardContent>
+                <dl className="grid gap-5 sm:grid-cols-2">
+                  <DetailItem label="名称" value={detail.name} mono />
+                  <DetailItem label="Kind" value={detail.kind} mono />
+                  <DetailItem label="API Version" value={detail.apiVersion} mono />
+                  <DetailItem label="命名空间" value={detail.namespace || "—"} />
+                  <DetailItem label="UID" value={detail.uid || "—"} mono />
+                  <DetailItem label="Resource Version" value={detail.resourceVersion || "—"} mono />
+                  <DetailItem label="创建时间" value={formatDate(detail.createdAt)} />
+                  <DetailItem label="敏感性" value={detail.redacted ? "数据已遮蔽" : "无额外遮蔽"} />
+                </dl>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardHeader><CardTitle>对象字段</CardTitle></CardHeader>
+              <CardContent>
+                <div className="flex flex-wrap gap-1.5">
+                  {Object.keys(detail.object).sort().map((key) => <span key={key} className="rounded border bg-muted/30 px-2 py-1 font-mono text-[11px]">{key}</span>)}
+                </div>
+                <p className="mt-3 text-xs leading-5 text-muted-foreground">通用视图只保证标准资源元数据；不同 CRD 的业务字段请结合 YAML、事件和对应 Operator 文档排查。</p>
+              </CardContent>
+            </Card>
+          </div>
+          <div className="mt-4"><MetadataCard labels={detail.labels} annotations={detail.annotations} /></div>
+        </TabsContent>
+        <TabsContent value="events"><ResourceEvents namespace={namespace} objectKind={detail.kind} objectName={detail.name} /></TabsContent>
+        <TabsContent value="yaml"><GenericYamlPanel yaml={detail.yaml} /></TabsContent>
+      </Tabs>
+    </>
+  );
+}

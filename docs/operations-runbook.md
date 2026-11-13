@@ -233,8 +233,10 @@ kubectl get all,configmap,secret,pvc -n <name>
 ```
 
 删除请求返回 202 并记录 `action=delete-namespace` 审计。验收必须先使用临时命名空间，禁止删除
-`default`、`kube-*`、`dosh` 或 `dosh-preview`。local 模式 ClusterRole 除只读权限外仅增加
-`namespaces delete` 以及既有的受控写权限；Token/OIDC 模式仍由用户自身 RBAC 决定。
+`default`、`kube-*`、`dosh` 或 `dosh-preview`。local 模式默认通过
+`rbac.localReadAllResources=true` 授予全资源只读和 API Discovery 权限，以支持通用资源浏览器，
+写权限仍限制在既有受控资源；如设置为 `false`，资源浏览器将只能读取 ClusterRole 中显式列出的类型。
+Token/OIDC 模式仍由用户自身 RBAC 决定，不使用该全资源读取规则。
 
 ### 2.1.7 列表分页与事件窗口
 

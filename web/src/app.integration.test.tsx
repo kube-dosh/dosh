@@ -168,6 +168,25 @@ const server = setupServer(
   http.get("/api/v1/pods", () => HttpResponse.json({ items: [pod], meta: { total: 1 } })),
   http.get("/api/v1/pods/default/web-abcdef-12345", () => HttpResponse.json(pod)),
   http.get("/api/v1/pods/default/web-abcdef-12345/logs", () => HttpResponse.text(logFrames("hello from dosh log stream"), { headers: { "Content-Type": "application/x-ndjson; charset=utf-8" } })),
+  http.get("/api/v1/resources/discovery", () => HttpResponse.json({
+    items: [
+      { group: "", version: "v1", resource: "pods", kind: "Pod", singularName: "pod", namespaced: true, verbs: ["get", "list"], shortNames: ["po"] },
+      { group: "example.io", version: "v1", resource: "widgets", kind: "Widget", singularName: "widget", namespaced: true, verbs: ["get", "list"] },
+    ],
+    warnings: [],
+  })),
+  http.get("/api/v1/resources/_core/v1/pods", () => HttpResponse.json({
+    items: [{ apiVersion: "v1", kind: "Pod", name: "web-abcdef-12345", namespace: "default", createdAt: "2026-11-02T00:00:00Z", labels: { app: "web" } }],
+    meta: { total: 1, totalKnown: true, page: 1, pageSize: 20, totalPages: 1, hasMore: false },
+  })),
+  http.get("/api/v1/resources/_core/v1/pods/web-abcdef-12345", () => HttpResponse.json({
+    apiVersion: "v1", kind: "Pod", name: "web-abcdef-12345", namespace: "default",
+    uid: "pod-uid", resourceVersion: "42", createdAt: "2026-11-02T00:00:00Z",
+    labels: { app: "web" }, annotations: { owner: "platform" },
+    object: { apiVersion: "v1", kind: "Pod", metadata: { name: "web-abcdef-12345", namespace: "default" }, spec: { containers: [{ name: "web", image: "nginx:alpine" }] } },
+    yaml: "apiVersion: v1\nkind: Pod\nmetadata:\n  name: web-abcdef-12345\n",
+    redacted: false,
+  })),
   http.get("/api/v1/services/default/web", () => HttpResponse.json(serviceDetail)),
   http.get("/api/v1/services", () => HttpResponse.json({ items: [], meta: { total: 0 } })),
   http.get("/api/v1/ingresses", () => HttpResponse.json({ items: [], meta: { total: 0, page: 1, pageSize: 20, totalPages: 0, filters: {} } })),
@@ -1532,5 +1551,30 @@ describe("dosh application", () => {
     renderRoute("/nodes/worker-0001");
     expect(await screen.findByRole("heading", { name: "worker-0001" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "停止调度" })).not.toBeInTheDocument();
+  });
+
+  it("browses a discovered resource type and opens generic metadata and YAML detail", async () => {
+    const router = renderRoute("/resources");
+
+    expect(await screen.findByRole("heading", { name: "资源浏览器" })).toBeInTheDocument();
+    const podLink = await screen.findByRole("link", { name: "Pod" });
+    expect(screen.getByText("example.io/v1")).toBeInTheDocument();
+    fireEvent.click(podLink);
+    await waitFor(() => expect(router.state.location.pathname).toBe("/resources/_core/v1/pods"));
+
+    expect(await screen.findByRole("heading", { name: "Pod" })).toBeInTheDocument();
+    expect(await screen.findByText("Namespaced · core/v1 · 当前读取受 Kubernetes RBAC 约束。")).toBeInTheDocument();
+    const resourceLink = await screen.findByRole("link", { name: "web-abcdef-12345" });
+    expect(resourceLink).toHaveAttribute("href", "/resources/_core/v1/pods/web-abcdef-12345?namespace=default");
+    fireEvent.click(resourceLink);
+
+    expect(await screen.findByRole("heading", { name: "web-abcdef-12345" })).toBeInTheDocument();
+    expect(screen.getByText("pod-uid")).toBeInTheDocument();
+    expect(screen.getByText("owner")).toBeInTheDocument();
+    const yamlTab = screen.getByRole("tab", { name: /YAML/ });
+    fireEvent.mouseDown(yamlTab);
+    fireEvent.click(yamlTab);
+    await waitFor(() => expect(router.state.location.search).toMatchObject({ tab: "yaml" }));
+    expect(await screen.findByText(/只读 YAML/)).toBeInTheDocument();
   });
 });

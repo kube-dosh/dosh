@@ -3,7 +3,9 @@ package kube
 import (
 	"context"
 	"errors"
+	"io"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -145,5 +147,32 @@ func TestDiscoveryRequestsUseCallerContext(t *testing.T) {
 				t.Fatalf("error = %v, want context.Canceled", err)
 			}
 		})
+	}
+}
+
+func TestServerResourcesForCoreGroupUsesCoreAPIPath(t *testing.T) {
+	var requestedPath string
+	restClient := &restfake.RESTClient{
+		Client: restfake.CreateHTTPClient(func(request *http.Request) (*http.Response, error) {
+			requestedPath = request.URL.Path
+			body := `{"kind":"APIResourceList","apiVersion":"v1","groupVersion":"v1","resources":[{"name":"pods","singularName":"pod","namespaced":true,"kind":"Pod","verbs":["get","list"]}]}`
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     http.Header{"Content-Type": []string{"application/json"}},
+				Body:       io.NopCloser(strings.NewReader(body)),
+				Request:    request,
+			}, nil
+		}),
+	}
+	client := NewForClients(k8sfake.NewSimpleClientset(), nil, discovery.NewDiscoveryClient(restClient), testConfig())
+	resources, err := client.serverResourcesForGroupVersion(context.Background(), "v1")
+	if err != nil {
+		t.Fatalf("serverResourcesForGroupVersion() error = %v", err)
+	}
+	if requestedPath != "/api/v1" {
+		t.Fatalf("requested path = %q, want /api/v1", requestedPath)
+	}
+	if len(resources.APIResources) != 1 || resources.APIResources[0].SingularName != "pod" {
+		t.Fatalf("resources = %#v", resources)
 	}
 }

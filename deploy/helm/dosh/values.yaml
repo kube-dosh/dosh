@@ -53,6 +53,9 @@ serviceAccount:
 rbac:
   create: true
   clusterRoleName: dosh
+  # local 模式为单管理员控制台；开启后资源浏览器可只读浏览全部内置资源和 CRD。
+  # Token/OIDC 模式始终使用用户自身 Kubernetes RBAC，不受此值影响。
+  localReadAllResources: true
 
 auth:
   mode: token

@@ -717,6 +717,48 @@ export interface YAMLResource {
   yaml: string;
 }
 
+export interface ResourceDescriptor {
+  group: string;
+  version: string;
+  resource: string;
+  kind: string;
+  singularName?: string;
+  namespaced: boolean;
+  verbs: string[];
+  shortNames?: string[];
+  categories?: string[];
+}
+
+export interface ResourceDiscovery {
+  items: ResourceDescriptor[];
+  warnings?: string[];
+}
+
+export interface ResourceReference {
+  group: string;
+  version: string;
+  resource: string;
+}
+
+export interface GenericResourceSummary {
+  apiVersion: string;
+  kind: string;
+  name: string;
+  namespace?: string;
+  uid?: string;
+  resourceVersion?: string;
+  createdAt?: string;
+  labels?: Record<string, string>;
+  annotations?: Record<string, string>;
+}
+
+export interface GenericResourceDetail extends GenericResourceSummary {
+  object: Record<string, unknown>;
+  yaml: string;
+  redacted?: boolean;
+  warnings?: string[];
+}
+
 export type WorkloadKind = "deployment" | "statefulset" | "daemonset" | "job" | "cronjob";
 
 export interface ListParams {

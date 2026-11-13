@@ -11,6 +11,8 @@ import type {
   DeploymentCreateInput,
   DeploymentPreview,
   EventItem,
+  GenericResourceDetail,
+  GenericResourceSummary,
   IngressDetail,
   IngressCreateInput,
   IngressClassSummary,
@@ -35,6 +37,8 @@ import type {
   PodDetail,
   PodSummary,
   Problem,
+  ResourceDiscovery,
+  ResourceReference,
   SecretReveal,
   SecretSummary,
   SecretWriteInput,
@@ -116,6 +120,11 @@ function query(params?: ListParams): string {
   });
   const value = search.toString();
   return value ? `?${value}` : "";
+}
+
+function resourceBasePath(reference: ResourceReference): string {
+  const group = reference.group || "_core";
+  return `/api/v1/resources/${encodeURIComponent(group)}/${encodeURIComponent(reference.version)}/${encodeURIComponent(reference.resource)}`;
 }
 
 function list<T>(value: T[] | null | undefined): T[] {
@@ -457,6 +466,16 @@ export const api = {
     request<{ status: string }>(`/api/v1/persistentvolumeclaims/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}${resourceVersion ? `?resourceVersion=${encodeURIComponent(resourceVersion)}` : ""}`, { method: "DELETE" }),
   yaml: (type: string, name: string, namespace?: string) =>
     request<YAMLResource>(`/api/v1/yaml?${new URLSearchParams({ type, name, ...(namespace ? { namespace } : {}) }).toString()}`),
+  resourceDiscovery: async () => {
+    const value = await request<ResourceDiscovery>("/api/v1/resources/discovery");
+    return { ...value, items: list(value.items), warnings: list(value.warnings) };
+  },
+  resources: (reference: ResourceReference, params?: ListParams) =>
+    listRequest<GenericResourceSummary>(`${resourceBasePath(reference)}${query(params)}`),
+  resource: async (reference: ResourceReference, name: string, namespace?: string) => {
+    const value = await request<GenericResourceDetail>(`${resourceBasePath(reference)}/${encodeURIComponent(name)}${query({ namespace })}`);
+    return { ...value, object: value.object ?? {}, yaml: value.yaml ?? "", warnings: list(value.warnings) };
+  },
   applyYAML: (yaml: string, resourceVersion?: string, dryRun = false) =>
     request<YAMLResource>("/api/v1/yaml/apply", {
       method: "POST",
