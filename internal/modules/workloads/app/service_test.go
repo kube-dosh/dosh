@@ -17,6 +17,7 @@ type fakeRepository struct {
 	deleteErr      error
 	tailLines      int64
 	limitBytes     int64
+	previous       bool
 	lastLogStream  io.ReadCloser
 	createCalls    []bool
 	previewCalls   int
@@ -118,19 +119,24 @@ func (f *fakeRepository) DeletePod(_ context.Context, namespace, name string) er
 	f.lastNamespace, f.lastName = namespace, name
 	return nil
 }
-func (f *fakeRepository) StreamPodLogs(_ context.Context, _ string, _ string, _ string, _ bool, tailLines int64, _ bool, limitBytes int64) (io.ReadCloser, error) {
+func (f *fakeRepository) StreamPodLogs(_ context.Context, _ string, _ string, _ string, _, previous bool, tailLines int64, _ bool, limitBytes int64) (io.ReadCloser, error) {
 	f.tailLines = tailLines
 	f.limitBytes = limitBytes
+	f.previous = previous
 	f.lastLogStream = io.NopCloser(strings.NewReader("log line"))
 	return f.lastLogStream, nil
 }
 
 type fakeGuard struct {
-	allow bool
-	err   error
+	allow  bool
+	err    error
+	access *domain.Access
 }
 
-func (g fakeGuard) Require(context.Context, domain.Actor, domain.Access) error {
+func (g fakeGuard) Require(_ context.Context, _ domain.Actor, access domain.Access) error {
+	if g.access != nil {
+		*g.access = access
+	}
 	if g.err != nil {
 		return g.err
 	}
@@ -215,7 +221,7 @@ func TestStreamLogsClampsTailLines(t *testing.T) {
 	t.Parallel()
 	repo := &fakeRepository{}
 	service := New(repo, fakeGuard{allow: true}, &fakeAuditor{})
-	stream, err := service.StreamLogs(context.Background(), "default", "pod", "app", false, 999999, false)
+	stream, err := service.StreamLogs(context.Background(), domain.Actor{Username: "alice"}, "default", "pod", "app", false, false, 999999, false)
 	if err != nil {
 		t.Fatalf("StreamLogs() error = %v", err)
 	}
@@ -226,14 +232,46 @@ func TestStreamLogsClampsTailLines(t *testing.T) {
 	if repo.limitBytes != maxNonStreamLogBytes {
 		t.Fatalf("limitBytes = %d, want %d", repo.limitBytes, maxNonStreamLogBytes)
 	}
-	if _, err := service.StreamLogs(context.Background(), "default", "pod", "app", true, 100, false); err != nil {
+	if _, err := service.StreamLogs(context.Background(), domain.Actor{Username: "alice"}, "default", "pod", "app", true, false, 100, false); err != nil {
 		t.Fatalf("StreamLogs(follow) error = %v", err)
 	}
 	if repo.limitBytes != 0 {
 		t.Fatalf("follow limitBytes = %d, want 0", repo.limitBytes)
 	}
-	if _, err := service.StreamLogs(context.Background(), "default", "pod", "app", false, -1, false); !errors.Is(err, domain.ErrInvalid) {
+	if _, err := service.StreamLogs(context.Background(), domain.Actor{Username: "alice"}, "default", "pod", "app", false, false, -1, false); !errors.Is(err, domain.ErrInvalid) {
 		t.Fatalf("negative tailLines error = %v, want ErrInvalid", err)
+	}
+}
+
+func TestStreamLogsAuthorizesPodsLogAndAudits(t *testing.T) {
+	t.Parallel()
+	repo := &fakeRepository{}
+	auditor := &fakeAuditor{}
+	var access domain.Access
+	service := New(repo, fakeGuard{allow: true, access: &access}, auditor)
+	stream, err := service.StreamLogs(context.Background(), domain.Actor{Username: "alice"}, "prod", "api-0", "app", false, true, 100, true)
+	if err != nil {
+		t.Fatalf("StreamLogs() error = %v", err)
+	}
+	_ = stream.Close()
+	if access != (domain.Access{Verb: "get", Resource: "pods", Subresource: "log", Namespace: "prod", Name: "api-0"}) {
+		t.Fatalf("authorization access = %#v", access)
+	}
+	if !repo.previous {
+		t.Fatal("previous log option was not forwarded")
+	}
+	if len(auditor.actions) != 1 || auditor.actions[0] != "stream-pod-logs" || auditor.results[0] != "success" {
+		t.Fatalf("audit = %#v %#v", auditor.actions, auditor.results)
+	}
+
+	deniedRepo := &fakeRepository{}
+	deniedAuditor := &fakeAuditor{}
+	denied := New(deniedRepo, fakeGuard{allow: false}, deniedAuditor)
+	if _, err := denied.StreamLogs(context.Background(), domain.Actor{Username: "alice"}, "prod", "api-0", "app", false, false, 100, false); !errors.Is(err, domain.ErrForbidden) {
+		t.Fatalf("StreamLogs(denied) error = %v", err)
+	}
+	if deniedRepo.lastLogStream != nil || len(deniedAuditor.results) != 1 || deniedAuditor.results[0] != "denied" {
+		t.Fatalf("denied stream reached repository or audit was wrong: %#v %#v", deniedRepo.lastLogStream, deniedAuditor.results)
 	}
 }
 

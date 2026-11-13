@@ -712,6 +712,10 @@ paths:
         - name: timestamps
           in: query
           schema: { type: boolean, default: false }
+        - name: previous
+          in: query
+          description: Read logs from the previous terminated container instance.
+          schema: { type: boolean, default: false }
       responses:
         "200":
           description: NDJSON log stream (`log`, `end` or terminal `error` frames)
@@ -719,6 +723,7 @@ paths:
             application/x-ndjson:
               schema: { type: string }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
   /api/v1/events:
     get:
@@ -1523,14 +1528,42 @@ paths:
       summary: Read the discoverable Kubernetes resource catalog
       description: >-
         Returns resources found through Kubernetes API Discovery. The catalog is
-        cached by the server. Resource-level reads still require Kubernetes RBAC
-        authorization for the authenticated user.
+        cached by the server. When `namespace` is supplied, the catalog is also
+        filtered with SelfSubjectRulesReview for the authenticated user so types
+        without list permission are hidden. Resource-level reads still require
+        Kubernetes RBAC authorization.
+      parameters:
+        - $ref: "#/components/parameters/Namespace"
       responses:
         "200":
           description: Discovered resource types
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ResourceDiscovery" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
+  /api/v1/resources/search:
+    get:
+      tags: [resources]
+      summary: Search a bounded set of authorized Kubernetes resource types
+      description: >-
+        Searches up to 16 discovered resource types that the authenticated user
+        may list. Namespaced resources require an explicit namespace; when it is
+        omitted only cluster-scoped resources are searched. Results and type
+        coverage are bounded and include truncation warnings.
+      parameters:
+        - $ref: "#/components/parameters/Search"
+        - $ref: "#/components/parameters/Namespace"
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 50, default: 20 }
+      responses:
+        "200":
+          description: Bounded cross-type search result
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/GenericResourceSearch" }
+        "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "503": { $ref: "#/components/responses/DependencyUnavailable" }
   /api/v1/resources/{group}/{version}/{resource}:
@@ -1768,6 +1801,10 @@ components:
         search: { type: string }
         kind: { type: string }
         status: { type: string }
+        columns:
+          type: array
+          description: Table API column definitions for type-aware generic resource lists.
+          items: { $ref: "#/components/schemas/ResourceColumn" }
     OperationStatus:
       type: object
       required: [status]
@@ -2853,6 +2890,14 @@ components:
         categories:
           type: array
           items: { type: string }
+    ResourceColumn:
+      type: object
+      required: [name, type]
+      properties:
+        name: { type: string }
+        type: { type: string }
+        format: { type: string }
+        description: { type: string }
     ResourceDiscovery:
       type: object
       required: [items]
@@ -2869,6 +2914,7 @@ components:
       properties:
         apiVersion: { type: string }
         kind: { type: string }
+        resource: { type: string }
         name: { type: string }
         namespace: { type: string }
         uid: { type: string }
@@ -2880,6 +2926,22 @@ components:
         annotations:
           type: object
           additionalProperties: { type: string }
+        cells:
+          type: object
+          additionalProperties: true
+          description: Values aligned to the columns returned in list metadata by the Kubernetes Table API.
+    GenericResourceSearch:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/GenericResourceSummary" }
+        warnings:
+          type: array
+          items: { type: string }
+        truncated:
+          type: boolean
     GenericResourceList:
       type: object
       required: [items, meta]

@@ -4,7 +4,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import {
   Activity, Bell, Boxes, ChevronDown, CircleDot, CloudCog, Database, FileCode2, FolderTree, HelpCircle, Layers3,
-  LayoutDashboard, LogOut, Menu, Moon, Network, ScrollText, Search, Server, Settings2, Sun, X,
+  LayoutDashboard, LogOut, Menu, Moon, Network, ScrollText, Search, Server, Settings2, ShieldCheck, Sun, X,
   type LucideIcon,
 } from "lucide-react";
 import { ApiError, api } from "@/api/client";
@@ -29,6 +29,7 @@ const nav: Array<{ href: string; label: string; icon: LucideIcon; adminOnly?: bo
   { href: "/namespaces", label: "命名空间", icon: FolderTree, match: (path: string) => path.startsWith("/namespaces") },
   { href: "/events", label: "事件", icon: Activity, match: (path: string) => path.startsWith("/events") },
   { href: "/audit", label: "审计日志", icon: ScrollText, adminOnly: true, match: (path: string) => path.startsWith("/audit") },
+  { href: "/governance", label: "治理与策略", icon: ShieldCheck, match: (path: string) => path.startsWith("/governance") },
   { href: "/resources", label: "资源浏览器", icon: Layers3, match: (path: string) => path.startsWith("/resources") },
 ];
 

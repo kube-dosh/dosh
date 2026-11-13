@@ -2,7 +2,7 @@
 
 | 项目 | 内容 |
 |---|---|
-| 状态 | 第一阶段已实现：Discovery、通用只读列表/详情、RBAC、Secret 脱敏与审计、前端资源浏览器 |
+| 状态 | 第二阶段已实现：Discovery、类型感知列表、按身份过滤、通用只读列表/详情、RBAC、Secret 脱敏与审计、前端资源浏览器与治理入口 |
 | 目标 | 从固定资源控制台走向通用 Kubernetes 控制台，为 CRD、Operator 资源和后续动态写入提供统一底座 |
 | 边界 | 本阶段不开放任意 API 代理、CRD 写入、动态表单或客户端指定上游 URL |
 
@@ -64,6 +64,26 @@
 
 当 `auth.mode=local` 且 `rbac.localReadAllResources=true` 时，Helm Chart 应授予运行 ServiceAccount 全资源 `get/list/watch` 和 API Discovery 权限，使单管理员模式下的资源浏览器可覆盖内置资源与 CRD；Token/OIDC 模式不得复用该规则，必须继续以用户身份执行 SubjectAccessReview 和 impersonation。
 
+### GR-015 类型感知列
+
+当用户列出资源对象时，系统应优先使用 Kubernetes Table API 返回该类型的显示列和逐行 cells；当 Table API 不可用或返回无效响应时，应回退到动态客户端和基础元数据列，并在分页 metadata 中给出降级 warning。列名应去重，priority 大于 0 的宽列不进入默认视图。
+
+### GR-016 Discovery 授权过滤
+
+当 Discovery 请求携带 namespace 时，系统应使用当前身份对该 namespace 执行 `SelfSubjectRulesReview`，并额外使用空 namespace 获取集群级规则；只有具备无 resourceNames 限制的 `list` 权限的资源类型才应出现在目录中。规则应短期缓存，失败时按失败关闭策略隐藏对应作用域资源并返回 warning，不得逐资源发送 SubjectAccessReview。
+
+### GR-017 受控全局搜索
+
+当用户从全局搜索输入至少两个字符时，系统应在当前身份可 list 的已发现资源类型中执行有界搜索。Namespaced 资源必须显式选择命名空间；未选择命名空间时只搜索集群级资源。单次搜索最多覆盖 16 个资源类型，并返回截断与单类型失败 warning。
+
+### GR-018 治理资源入口
+
+当用户打开治理入口时，系统应展示 ServiceAccount、Role、RoleBinding、ClusterRole、ClusterRoleBinding、NetworkPolicy、HPA、PDB、ResourceQuota、LimitRange 和 PriorityClass 的统一入口，并复用通用列表与详情。详情页应解释 RoleBinding 角色引用与授权主体、NetworkPolicy Pod 选择器、HPA 扩缩目标、PDB 可用性约束等关键关系。
+
+### GR-019 Pod Previous 日志
+
+当用户请求 `previous=true` 时，系统应读取上一次容器实例日志；在建立日志流前必须执行 `get pods/log` SubjectAccessReview，并对成功、失败和拒绝记录 `stream-pod-logs` 审计。前端应提供 Previous 开关、容器、tailLines、时间戳和当前日志窗口关键词筛选。
+
 ## 2. 实现落点
 
 | 层 | 文件 | 职责 |
@@ -73,7 +93,7 @@
 | http | `internal/modules/resources/http/handler.go` | Discovery、列表、详情路由与稳定错误映射 |
 | kube | `internal/platform/kube/resources.go` | API Discovery、动态客户端读取、缓存、分页和搜索 |
 | bootstrap | `internal/bootstrap/app.go`、`router.go` | 依赖装配和受保护路由挂载 |
-| frontend | `web/src/features/resources/` | 类型目录、对象列表、详情、事件和只读 YAML |
+| frontend | `web/src/features/resources/`、`web/src/features/governance/` | 类型目录、类型列、对象列表、详情、事件、只读 YAML 和治理入口 |
 | contract | `api/openapi.yaml`、`web/src/api/schema.d.ts` | Discovery 与通用读取 REST 契约 |
 
 ## 3. 验证矩阵
@@ -83,13 +103,16 @@
   - 核心 API 使用 `/api/v1`，扩展 API 使用 `/apis/{group}/{version}`。
   - 未知 GVR、非法引用、缺少 namespace、RBAC 拒绝、依赖失败和 Secret 脱敏/审计。
   - 通用列表的命名空间、搜索、分页和详情读取。
+  - Table API 成功、priority 列过滤、Table API 回退和 cells 映射。
+  - SelfSubjectRulesReview 过滤、规则缓存、失败关闭和集群级搜索范围。
+  - Pod 日志 `pods/log` 授权、Previous 参数和审计。
 - `cd web && npm run api:check && npm run typecheck`
 - `cd web && npm test -- --run`
 - `make arch`
 
 ## 4. 后续阶段
 
-1. 使用 Table API 或 CRD additionalPrinterColumns 展示类型专属列。
-2. 基于 OpenAPI Schema 的 CRD 创建/编辑、Dry Run、Server-Side Apply 和删除审计。
-3. Discovery 按当前身份和命名空间过滤可见类型，避免展示完全无访问可能的入口。
-4. 将 CRD 资源接入全局搜索、事件对象跳转和保存视图。
+1. 基于 OpenAPI Schema 的 CRD 创建/编辑、Dry Run、Server-Side Apply 和删除审计。
+2. 将 CRD 资源接入事件对象跳转、保存视图和按资源类型收藏。
+3. 为 Discovery 过滤增加更细的 watch/create/update/delete 能力标记。
+4. 增加跨 Pod 日志聚合和可配置日志后端，不在浏览器端做无界全量扫描。

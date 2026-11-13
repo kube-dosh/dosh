@@ -81,6 +81,7 @@ export interface ListMeta {
   search?: string;
   kind?: string;
   status?: string;
+  columns?: ResourceColumn[];
 }
 
 export interface ListResponse<T> {
@@ -729,6 +730,13 @@ export interface ResourceDescriptor {
   categories?: string[];
 }
 
+export interface ResourceColumn {
+  name: string;
+  type: string;
+  format?: string;
+  description?: string;
+}
+
 export interface ResourceDiscovery {
   items: ResourceDescriptor[];
   warnings?: string[];
@@ -743,6 +751,7 @@ export interface ResourceReference {
 export interface GenericResourceSummary {
   apiVersion: string;
   kind: string;
+  resource?: string;
   name: string;
   namespace?: string;
   uid?: string;
@@ -750,6 +759,13 @@ export interface GenericResourceSummary {
   createdAt?: string;
   labels?: Record<string, string>;
   annotations?: Record<string, string>;
+  cells?: Record<string, unknown>;
+}
+
+export interface GenericResourceSearch {
+  items: GenericResourceSummary[];
+  warnings?: string[];
+  truncated?: boolean;
 }
 
 export interface GenericResourceDetail extends GenericResourceSummary {

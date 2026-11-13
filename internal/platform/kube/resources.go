@@ -2,13 +2,17 @@ package kube
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"net/url"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
 	"dosh/internal/domain"
 
+	authv1 "k8s.io/api/authorization/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -16,6 +20,13 @@ import (
 )
 
 const resourceDiscoveryTTL = 60 * time.Second
+const resourceRulesTTL = 30 * time.Second
+
+type cachedResourceRules struct {
+	rules     domain.ResourceRules
+	warnings  []string
+	fetchedAt time.Time
+}
 
 // DiscoverResources reads the preferred version of every Kubernetes API group
 // and returns resources that can be listed or fetched. The result is cached so
@@ -168,12 +179,15 @@ func cloneResourceDescriptors(items []domain.ResourceDescriptor) []domain.Resour
 	return out
 }
 
-func (c *Client) ListGenericResources(ctx context.Context, descriptor domain.ResourceDescriptor, query domain.ListQuery, page domain.PageRequest) (domain.PageResult[domain.GenericResourceSummary], error) {
+func (c *Client) ListGenericResources(ctx context.Context, descriptor domain.ResourceDescriptor, query domain.ListQuery, page domain.PageRequest) (domain.GenericResourcePage, error) {
 	ctx, cancel := c.withTimeout(ctx)
 	defer cancel()
+	if tablePage, err := c.listGenericResourceTable(ctx, descriptor, query, page); err == nil {
+		return tablePage, nil
+	}
 	resource, err := c.genericResourceInterface(descriptor, query.Namespace)
 	if err != nil {
-		return domain.PageResult[domain.GenericResourceSummary]{}, err
+		return domain.GenericResourcePage{}, err
 	}
 	fetch := func(options metav1.ListOptions) ([]unstructured.Unstructured, metav1.ListMeta, error) {
 		list, listErr := resource.List(ctx, options)
@@ -186,9 +200,205 @@ func (c *Client) ListGenericResources(ctx context.Context, descriptor domain.Res
 			ResourceVersion:    list.GetResourceVersion(),
 		}, nil
 	}
-	return listPage(ctx, page, query.Search != "", fetch, genericResourceSummary, func(item domain.GenericResourceSummary) bool {
+	result, err := listPage(ctx, page, query.Search != "", fetch, func(item unstructured.Unstructured) domain.GenericResourceSummary {
+		return genericResourceSummary(descriptor, item)
+	}, func(item domain.GenericResourceSummary) bool {
 		return matchesSearch([]string{item.Name, item.Namespace, item.Kind}, query.Search)
 	})
+	if err != nil {
+		return domain.GenericResourcePage{}, err
+	}
+	result.Warnings = append(result.Warnings, "该资源类型未返回 Table 列信息，已回退到基础元数据列")
+	return domain.GenericResourcePage{
+		PageResult: result,
+		Columns:    genericFallbackColumns(descriptor),
+	}, nil
+}
+
+func (c *Client) listGenericResourceTable(ctx context.Context, descriptor domain.ResourceDescriptor, query domain.ListQuery, page domain.PageRequest) (domain.GenericResourcePage, error) {
+	if c.discovery == nil || c.discovery.RESTClient() == nil {
+		return domain.GenericResourcePage{}, fmt.Errorf("%w: discovery REST client is unavailable", domain.ErrUnavailable)
+	}
+	restClient := c.discovery.RESTClient()
+	path := genericResourcePath(descriptor, query.Namespace)
+	var columns []domain.ResourceColumn
+	fetch := func(options metav1.ListOptions) ([]metav1.TableRow, metav1.ListMeta, error) {
+		request := restClient.Get().AbsPath(path).
+			SetHeader("Accept", "application/json;as=Table;v=v1;g=meta.k8s.io").
+			Param("limit", strconv.FormatInt(options.Limit, 10))
+		if options.Continue != "" {
+			request = request.Param("continue", options.Continue)
+		}
+		body, err := request.DoRaw(ctx)
+		if err != nil {
+			return nil, metav1.ListMeta{}, mapKubeError(err)
+		}
+		var table metav1.Table
+		if err := json.Unmarshal(body, &table); err != nil {
+			return nil, metav1.ListMeta{}, fmt.Errorf("%w: decode Kubernetes Table response: %v", domain.ErrUnavailable, err)
+		}
+		if columns == nil {
+			columns = tableColumns(table.ColumnDefinitions)
+		}
+		return table.Rows, metav1.ListMeta{
+			Continue:           table.Continue,
+			RemainingItemCount: table.RemainingItemCount,
+			ResourceVersion:    table.ResourceVersion,
+		}, nil
+	}
+	result, err := listPage(ctx, page, query.Search != "", fetch, func(row metav1.TableRow) domain.GenericResourceSummary {
+		return tableResourceSummary(descriptor, columns, row)
+	}, func(item domain.GenericResourceSummary) bool {
+		return matchesSearch(append([]string{item.Name, item.Namespace, item.Kind}, resourceCellStrings(item.Cells)...), query.Search)
+	})
+	if err != nil {
+		return domain.GenericResourcePage{}, err
+	}
+	if len(columns) == 0 {
+		columns = genericFallbackColumns(descriptor)
+	}
+	return domain.GenericResourcePage{PageResult: result, Columns: columns}, nil
+}
+
+func genericResourcePath(descriptor domain.ResourceDescriptor, namespace string) string {
+	prefix := "/api/" + url.PathEscape(descriptor.Version)
+	if descriptor.Group != "" {
+		prefix = "/apis/" + url.PathEscape(descriptor.Group) + "/" + url.PathEscape(descriptor.Version)
+	}
+	if descriptor.Namespaced && namespace != "" {
+		return prefix + "/namespaces/" + url.PathEscape(namespace) + "/" + url.PathEscape(descriptor.Resource)
+	}
+	return prefix + "/" + url.PathEscape(descriptor.Resource)
+}
+
+func tableColumns(definitions []metav1.TableColumnDefinition) []domain.ResourceColumn {
+	out := make([]domain.ResourceColumn, 0, len(definitions))
+	seen := make(map[string]struct{}, len(definitions))
+	for _, definition := range definitions {
+		if definition.Name == "" || definition.Priority > 0 {
+			continue
+		}
+		if _, exists := seen[definition.Name]; exists {
+			continue
+		}
+		seen[definition.Name] = struct{}{}
+		out = append(out, domain.ResourceColumn{
+			Name:        definition.Name,
+			Type:        definition.Type,
+			Format:      definition.Format,
+			Description: definition.Description,
+		})
+		if len(out) == 12 {
+			break
+		}
+	}
+	return out
+}
+
+func genericFallbackColumns(descriptor domain.ResourceDescriptor) []domain.ResourceColumn {
+	columns := []domain.ResourceColumn{{Name: "Name", Type: "string"}, {Name: "Kind", Type: "string"}}
+	if descriptor.Namespaced {
+		columns = append(columns, domain.ResourceColumn{Name: "Namespace", Type: "string"})
+	}
+	return columns
+}
+
+func tableResourceSummary(descriptor domain.ResourceDescriptor, columns []domain.ResourceColumn, row metav1.TableRow) domain.GenericResourceSummary {
+	summary := domain.GenericResourceSummary{
+		APIVersion: descriptor.Version,
+		Kind:       descriptor.Kind,
+		Resource:   descriptor.Resource,
+		Cells:      make(map[string]any, len(columns)),
+	}
+	if descriptor.Group != "" {
+		summary.APIVersion = descriptor.Group + "/" + descriptor.Version
+	}
+	for i, column := range columns {
+		if i >= len(row.Cells) {
+			break
+		}
+		value := row.Cells[i]
+		summary.Cells[column.Name] = value
+		switch strings.ToLower(column.Name) {
+		case "name":
+			summary.Name = fmt.Sprint(value)
+		case "namespace":
+			summary.Namespace = fmt.Sprint(value)
+		case "uid":
+			summary.UID = fmt.Sprint(value)
+		case "resource version", "resourceversion":
+			summary.ResourceVersion = fmt.Sprint(value)
+		case "created at", "creation timestamp", "creationtimestamp":
+			if text, ok := value.(string); ok {
+				if parsed, err := time.Parse(time.RFC3339, text); err == nil {
+					summary.CreatedAt = parsed
+				}
+			}
+		}
+	}
+	var object map[string]any
+	switch value := row.Object.Object.(type) {
+	case *unstructured.Unstructured:
+		object = value.Object
+	}
+	if object != nil {
+		metadata := objectMapLike(object, "metadata")
+		if summary.Name == "" {
+			summary.Name = stringMapLike(metadata, "name")
+		}
+		if summary.Namespace == "" {
+			summary.Namespace = stringMapLike(metadata, "namespace")
+		}
+		summary.UID = stringMapLike(metadata, "uid")
+		summary.ResourceVersion = stringMapLike(metadata, "resourceVersion")
+		summary.Labels = stringMap(metadata, "labels")
+		summary.Annotations = stringMap(metadata, "annotations")
+	}
+	return summary
+}
+
+func resourceCellStrings(cells map[string]any) []string {
+	values := make([]string, 0, len(cells))
+	for _, value := range cells {
+		switch typed := value.(type) {
+		case string:
+			values = append(values, typed)
+		case nil:
+			continue
+		default:
+			encoded, err := json.Marshal(typed)
+			if err == nil {
+				values = append(values, string(encoded))
+			} else {
+				values = append(values, fmt.Sprint(typed))
+			}
+		}
+	}
+	return values
+}
+
+func objectMapLike(object map[string]any, key string) map[string]any {
+	value, _ := object[key].(map[string]any)
+	return value
+}
+
+func stringMapLike(object map[string]any, key string) string {
+	value, _ := object[key].(string)
+	return value
+}
+
+func stringMap(object map[string]any, key string) map[string]string {
+	value, _ := object[key].(map[string]any)
+	if len(value) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(value))
+	for name, item := range value {
+		if text, ok := item.(string); ok {
+			out[name] = text
+		}
+	}
+	return out
 }
 
 func (c *Client) GetGenericResource(ctx context.Context, descriptor domain.ResourceDescriptor, namespace, name string) (map[string]any, error) {
@@ -217,10 +427,11 @@ func (c *Client) genericResourceInterface(descriptor domain.ResourceDescriptor, 
 	return resource, nil
 }
 
-func genericResourceSummary(item unstructured.Unstructured) domain.GenericResourceSummary {
+func genericResourceSummary(descriptor domain.ResourceDescriptor, item unstructured.Unstructured) domain.GenericResourceSummary {
 	return domain.GenericResourceSummary{
 		APIVersion:      item.GetAPIVersion(),
 		Kind:            item.GetKind(),
+		Resource:        descriptor.Resource,
 		Name:            item.GetName(),
 		Namespace:       item.GetNamespace(),
 		UID:             string(item.GetUID()),
@@ -229,4 +440,110 @@ func genericResourceSummary(item unstructured.Unstructured) domain.GenericResour
 		Labels:          item.GetLabels(),
 		Annotations:     item.GetAnnotations(),
 	}
+}
+
+// ListResourceRules returns the normalized SelfSubjectRulesReview result for
+// the authenticated actor. The review runs as the actor through the
+// impersonation transport, so application credentials cannot widen or narrow
+// the result. Namespace and cluster rules are cached separately for a short
+// period to keep Discovery page loads bounded.
+func (c *Client) ListResourceRules(ctx context.Context, actor domain.Actor, namespace string) (domain.ResourceRules, []string, error) {
+	if c.clientset == nil {
+		return domain.ResourceRules{}, nil, fmt.Errorf("%w: Kubernetes clientset is unavailable", domain.ErrUnavailable)
+	}
+	if actor.Username == "" {
+		return domain.ResourceRules{}, nil, domain.ErrForbidden
+	}
+	key := actor.Username + "\x00" + strings.Join(actor.Groups, "\x00") + "\x00" + namespace
+	c.resourceRulesMu.Lock()
+	if cached, ok := c.resourceRules[key]; ok && time.Since(cached.fetchedAt) < resourceRulesTTL {
+		rules := cloneResourceRules(cached.rules)
+		warnings := append([]string(nil), cached.warnings...)
+		c.resourceRulesMu.Unlock()
+		return rules, warnings, nil
+	}
+	c.resourceRulesMu.Unlock()
+
+	ctx, cancel := c.withTimeout(ctx)
+	defer cancel()
+	var result domain.ResourceRules
+	var warnings []string
+	var firstErr error
+	if namespace != "" {
+		rules, incomplete, err := c.selfSubjectResourceRules(ctx, namespace)
+		if err != nil {
+			firstErr = err
+			warnings = append(warnings, "无法读取当前命名空间的 RBAC 规则，命名空间资源已从 Discovery 中隐藏")
+		} else {
+			result.Namespaced = rules
+			if incomplete {
+				warnings = append(warnings, "当前命名空间的 RBAC 规则不完整，部分已授权资源可能被隐藏")
+			}
+		}
+	}
+	clusterRules, clusterIncomplete, clusterErr := c.selfSubjectResourceRules(ctx, "")
+	if clusterErr != nil {
+		if firstErr == nil {
+			firstErr = clusterErr
+		}
+		warnings = append(warnings, "无法读取集群级 RBAC 规则，集群级资源已从 Discovery 中隐藏")
+	} else {
+		result.Cluster = clusterRules
+		if clusterIncomplete {
+			warnings = append(warnings, "集群级 RBAC 规则不完整，部分已授权资源可能被隐藏")
+		}
+	}
+	if firstErr != nil && len(result.Namespaced) == 0 && len(result.Cluster) == 0 {
+		return domain.ResourceRules{}, warnings, firstErr
+	}
+
+	c.resourceRulesMu.Lock()
+	if c.resourceRules == nil {
+		c.resourceRules = make(map[string]cachedResourceRules)
+	}
+	for cachedKey, cached := range c.resourceRules {
+		if time.Since(cached.fetchedAt) >= resourceRulesTTL {
+			delete(c.resourceRules, cachedKey)
+		}
+	}
+	c.resourceRules[key] = cachedResourceRules{rules: cloneResourceRules(result), warnings: append([]string(nil), warnings...), fetchedAt: time.Now()}
+	c.resourceRulesMu.Unlock()
+	return result, warnings, nil
+}
+
+func (c *Client) selfSubjectResourceRules(ctx context.Context, namespace string) ([]domain.ResourceRule, bool, error) {
+	review := &authv1.SelfSubjectRulesReview{Spec: authv1.SelfSubjectRulesReviewSpec{Namespace: namespace}}
+	response, err := c.clientset.AuthorizationV1().SelfSubjectRulesReviews().Create(ctx, review, metav1.CreateOptions{})
+	if err != nil {
+		return nil, false, mapKubeError(err)
+	}
+	if response.Status.EvaluationError != "" {
+		return nil, false, fmt.Errorf("%w: authorization rules review: %s", domain.ErrUnavailable, response.Status.EvaluationError)
+	}
+	rules := make([]domain.ResourceRule, 0, len(response.Status.ResourceRules))
+	for _, rule := range response.Status.ResourceRules {
+		rules = append(rules, domain.ResourceRule{
+			Verbs: append([]string(nil), rule.Verbs...), APIGroups: append([]string(nil), rule.APIGroups...),
+			Resources: append([]string(nil), rule.Resources...), ResourceNames: append([]string(nil), rule.ResourceNames...),
+		})
+	}
+	return rules, response.Status.Incomplete, nil
+}
+
+func cloneResourceRules(rules domain.ResourceRules) domain.ResourceRules {
+	return domain.ResourceRules{
+		Namespaced: cloneRules(rules.Namespaced),
+		Cluster:    cloneRules(rules.Cluster),
+	}
+}
+
+func cloneRules(rules []domain.ResourceRule) []domain.ResourceRule {
+	out := make([]domain.ResourceRule, len(rules))
+	for i, rule := range rules {
+		out[i] = domain.ResourceRule{
+			Verbs: append([]string(nil), rule.Verbs...), APIGroups: append([]string(nil), rule.APIGroups...),
+			Resources: append([]string(nil), rule.Resources...), ResourceNames: append([]string(nil), rule.ResourceNames...),
+		}
+	}
+	return out
 }

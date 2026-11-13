@@ -28,7 +28,7 @@ type Repository interface {
 	ListPodsPage(ctx context.Context, query domain.ListQuery, page domain.PageRequest) (domain.PageResult[domain.PodSummary], error)
 	GetPod(ctx context.Context, namespace, name string) (domain.PodDetail, error)
 	DeletePod(ctx context.Context, namespace, name string) error
-	StreamPodLogs(ctx context.Context, namespace, name, container string, follow bool, tailLines int64, timestamps bool, limitBytes int64) (io.ReadCloser, error)
+	StreamPodLogs(ctx context.Context, namespace, name, container string, follow, previous bool, tailLines int64, timestamps bool, limitBytes int64) (io.ReadCloser, error)
 }
 
 type Service struct {
@@ -164,7 +164,7 @@ func (s *Service) DeletePod(ctx context.Context, actor domain.Actor, namespace, 
 	return err
 }
 
-func (s *Service) StreamLogs(ctx context.Context, namespace, name, container string, follow bool, tailLines int64, timestamps bool) (io.ReadCloser, error) {
+func (s *Service) StreamLogs(ctx context.Context, actor domain.Actor, namespace, name, container string, follow, previous bool, tailLines int64, timestamps bool) (io.ReadCloser, error) {
 	if tailLines < 0 {
 		return nil, fmt.Errorf("%w: tailLines must not be negative", domain.ErrInvalid)
 	}
@@ -175,7 +175,14 @@ func (s *Service) StreamLogs(ctx context.Context, namespace, name, container str
 	if !follow {
 		limitBytes = maxNonStreamLogBytes
 	}
-	return s.repository.StreamPodLogs(ctx, namespace, name, container, follow, tailLines, timestamps, limitBytes)
+	access := domain.Access{Verb: "get", Resource: "pods", Subresource: "log", Namespace: namespace, Name: name}
+	if err := s.authorizer.Require(ctx, actor, access); err != nil {
+		s.audit(ctx, actor, "stream-pod-logs", "pod", namespace, name, err)
+		return nil, err
+	}
+	stream, err := s.repository.StreamPodLogs(ctx, namespace, name, container, follow, previous, tailLines, timestamps, limitBytes)
+	s.audit(ctx, actor, "stream-pod-logs", "pod", namespace, name, err)
+	return stream, err
 }
 
 func (s *Service) audit(ctx context.Context, actor domain.Actor, action, resource, namespace, name string, err error) {

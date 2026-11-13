@@ -12,6 +12,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ResourceEvents } from "@/features/events/resource-events";
 import { GenericYamlPanel } from "@/features/resources/generic-yaml-panel";
+import { findGovernanceDescriptor, governanceRelationships } from "@/features/resources/governance-resources";
 import { formatDate } from "@/lib/utils";
 
 const detailTabs = ["overview", "events", "yaml"] as const;
@@ -32,7 +33,7 @@ export function ResourceDetailPage() {
   const apiGroup = params.group === "_core" ? "" : params.group;
   const namespace = search.namespace ?? "";
   const tab = isDetailTab(search.tab) ? search.tab : "overview";
-  const discovery = useQuery({ queryKey: ["resource-discovery"], queryFn: api.resourceDiscovery, staleTime: 60_000 });
+  const discovery = useQuery({ queryKey: ["resource-discovery", "all"], queryFn: () => api.resourceDiscovery(), staleTime: 60_000 });
   const descriptor = findDescriptor(discovery.data?.items ?? [], apiGroup, params.version, params.resource);
   const missingNamespace = Boolean(descriptor?.namespaced && !namespace);
   const query = useQuery({
@@ -67,6 +68,8 @@ export function ResourceDetailPage() {
   if (query.isError) return <ErrorState error={query.error} onRetry={() => void query.refetch()} />;
   const detail = query.data;
   if (!detail) return null;
+  const governance = descriptor ? findGovernanceDescriptor(descriptor) : undefined;
+  const relationships = governanceRelationships(params.resource, detail.object);
   return (
     <>
       <PageHeader
@@ -120,6 +123,19 @@ export function ResourceDetailPage() {
               </CardContent>
             </Card>
           </div>
+          {governance || relationships.length ? (
+            <Card className="mt-4">
+              <CardHeader><CardTitle>治理关系</CardTitle></CardHeader>
+              <CardContent className="space-y-3">
+                {governance ? <p className="text-xs leading-5 text-muted-foreground">{governance.description}</p> : null}
+                {relationships.length ? (
+                  <dl className="grid gap-4 sm:grid-cols-2">
+                    {relationships.map((item) => <DetailItem key={item.label} label={item.label} value={item.value} />)}
+                  </dl>
+                ) : null}
+              </CardContent>
+            </Card>
+          ) : null}
           <div className="mt-4"><MetadataCard labels={detail.labels} annotations={detail.annotations} /></div>
         </TabsContent>
         <TabsContent value="events"><ResourceEvents namespace={namespace} objectKind={detail.kind} objectName={detail.name} /></TabsContent>

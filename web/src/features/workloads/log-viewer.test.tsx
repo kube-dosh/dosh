@@ -93,4 +93,20 @@ describe("LogViewer security", () => {
 
     expect(await screen.findByText("日志流意外中断（未收到结束帧）")).toBeInTheDocument();
   });
+
+  it("requests previous logs and filters the current log window", async () => {
+    vi.mocked(streamLogs).mockResolvedValue(readerFor([
+      '{"type":"log","data":"ready line\\npanic: previous instance failed\\n"}\n',
+      '{"type":"end"}\n',
+    ]));
+
+    const { container } = render(<LogViewer namespace="default" name="web" containers={[{ name: "web", ready: false }]} />);
+    await waitFor(() => expect(container.querySelector("pre")?.textContent).toContain("previous instance failed"));
+
+    fireEvent.change(screen.getByRole("textbox", { name: "筛选当前日志窗口" }), { target: { value: "panic" } });
+    expect(container.querySelector("pre")?.textContent).toBe("panic: previous instance failed");
+
+    fireEvent.click(screen.getByRole("button", { name: "上一次实例" }));
+    await waitFor(() => expect(streamLogs).toHaveBeenLastCalledWith("default", "web", expect.objectContaining({ previous: true, follow: false })));
+  });
 });

@@ -176,8 +176,8 @@ const server = setupServer(
     warnings: [],
   })),
   http.get("/api/v1/resources/_core/v1/pods", () => HttpResponse.json({
-    items: [{ apiVersion: "v1", kind: "Pod", name: "web-abcdef-12345", namespace: "default", createdAt: "2026-11-02T00:00:00Z", labels: { app: "web" } }],
-    meta: { total: 1, totalKnown: true, page: 1, pageSize: 20, totalPages: 1, hasMore: false },
+    items: [{ apiVersion: "v1", kind: "Pod", resource: "pods", name: "web-abcdef-12345", namespace: "default", createdAt: "2026-11-02T00:00:00Z", labels: { app: "web" }, cells: { Status: "Running", Age: "2d" } }],
+    meta: { total: 1, totalKnown: true, page: 1, pageSize: 20, totalPages: 1, hasMore: false, columns: [{ name: "Name", type: "string" }, { name: "Status", type: "string" }, { name: "Age", type: "string" }] },
   })),
   http.get("/api/v1/resources/_core/v1/pods/web-abcdef-12345", () => HttpResponse.json({
     apiVersion: "v1", kind: "Pod", name: "web-abcdef-12345", namespace: "default",
@@ -1566,6 +1566,7 @@ describe("dosh application", () => {
     expect(await screen.findByText("Namespaced · core/v1 · 当前读取受 Kubernetes RBAC 约束。")).toBeInTheDocument();
     const resourceLink = await screen.findByRole("link", { name: "web-abcdef-12345" });
     expect(resourceLink).toHaveAttribute("href", "/resources/_core/v1/pods/web-abcdef-12345?namespace=default");
+    expect(await screen.findByText("Running")).toBeInTheDocument();
     fireEvent.click(resourceLink);
 
     expect(await screen.findByRole("heading", { name: "web-abcdef-12345" })).toBeInTheDocument();

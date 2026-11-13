@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link, useNavigate, useParams, useSearch } from "@tanstack/react-router";
 import { createColumnHelper } from "@tanstack/react-table";
@@ -54,7 +54,7 @@ export function ResourceListPage() {
   const apiGroup = params.group === "_core" ? "" : params.group;
   const namespace = search.namespace ?? "";
   const q = search.q ?? "";
-  const discovery = useQuery({ queryKey: ["resource-discovery"], queryFn: api.resourceDiscovery, staleTime: 60_000 });
+  const discovery = useQuery({ queryKey: ["resource-discovery", "all"], queryFn: () => api.resourceDiscovery(), staleTime: 60_000 });
   const descriptor = discovery.data?.items.find((item) => item.group === apiGroup && item.version === version && item.resource === resource);
   const pager = useCursorPagination(`resource|${apiGroup}|${version}|${resource}|${namespace}|${q}`, 20);
   const query = useQuery({
@@ -82,6 +82,29 @@ export function ResourceListPage() {
     }) },
     { label: "查看 YAML", icon: <FileCode2 className="h-4 w-4" />, onSelect: () => setYamlTarget(item) },
   ];
+  const tableColumns = useMemo(() => {
+    const apiColumns = query.data?.meta.columns ?? [];
+    if (apiColumns.length > 0) {
+      return apiColumns
+        .filter((item) => item.name.toLowerCase() !== "name")
+        .map((item) => column.accessor((row) => resourceCellText(row.cells?.[item.name]), {
+          id: `cell-${item.name}`,
+          header: item.name,
+          enableSorting: false,
+          cell: (info) => <span className="block max-w-[24rem] truncate" title={info.getValue()}>{info.getValue() || "—"}</span>,
+        }));
+    }
+    return [
+      column.accessor("namespace", { header: "命名空间", cell: (info) => info.getValue() || "—" }),
+      column.accessor("kind", { header: "Kind", cell: (info) => <span className="font-mono text-xs">{info.getValue()}</span> }),
+      column.accessor("labels", {
+        header: "Labels",
+        enableSorting: false,
+        cell: (info) => <span className="block max-w-xl truncate font-mono text-[11px] text-muted-foreground">{Object.entries(info.getValue() || {}).map(([key, value]) => `${key}=${value}`).join(", ") || "—"}</span>,
+      }),
+      column.accessor("createdAt", { header: "年龄", cell: (info) => <span className="text-muted-foreground">{formatAge(info.getValue())}</span> }),
+    ];
+  }, [query.data?.meta.columns]);
 
   if (discovery.isError) return <ErrorState error={discovery.error} onRetry={() => void discovery.refetch()} />;
   if (!discovery.isLoading && !descriptor) {
@@ -123,14 +146,7 @@ export function ResourceListPage() {
               </Link>
             ),
           }),
-          column.accessor("namespace", { header: "命名空间", cell: (info) => info.getValue() || "—" }),
-          column.accessor("kind", { header: "Kind", cell: (info) => <span className="font-mono text-xs">{info.getValue()}</span> }),
-          column.accessor("labels", {
-            header: "Labels",
-            enableSorting: false,
-            cell: (info) => <span className="block max-w-xl truncate font-mono text-[11px] text-muted-foreground">{Object.entries(info.getValue() || {}).map(([key, value]) => `${key}=${value}`).join(", ") || "—"}</span>,
-          }),
-          column.accessor("createdAt", { header: "年龄", cell: (info) => <span className="text-muted-foreground">{formatAge(info.getValue())}</span> }),
+          ...tableColumns,
           column.display({ id: "actions", header: "操作", size: 56, cell: (info) => <ResourceActionsMenu resource={`${info.row.original.kind} ${info.row.original.name}`} actions={actions(info.row.original)} /> }),
         ]}
         data={query.data?.items ?? []}
@@ -147,4 +163,15 @@ export function ResourceListPage() {
       {yamlTarget ? <ResourceYamlDialog target={yamlTarget} group={apiGroup} version={version} resource={resource} namespace={namespace} onClose={() => setYamlTarget(undefined)} /> : null}
     </>
   );
+}
+
+function resourceCellText(value: unknown): string {
+  if (value === null || value === undefined) return "";
+  if (typeof value === "string") return value;
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
 }

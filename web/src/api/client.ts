@@ -12,6 +12,7 @@ import type {
   DeploymentPreview,
   EventItem,
   GenericResourceDetail,
+  GenericResourceSearch,
   GenericResourceSummary,
   IngressDetail,
   IngressCreateInput,
@@ -466,12 +467,18 @@ export const api = {
     request<{ status: string }>(`/api/v1/persistentvolumeclaims/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}${resourceVersion ? `?resourceVersion=${encodeURIComponent(resourceVersion)}` : ""}`, { method: "DELETE" }),
   yaml: (type: string, name: string, namespace?: string) =>
     request<YAMLResource>(`/api/v1/yaml?${new URLSearchParams({ type, name, ...(namespace ? { namespace } : {}) }).toString()}`),
-  resourceDiscovery: async () => {
-    const value = await request<ResourceDiscovery>("/api/v1/resources/discovery");
+  resourceDiscovery: async (namespace?: string) => {
+    const value = await request<ResourceDiscovery>(`/api/v1/resources/discovery${query({ namespace })}`);
     return { ...value, items: list(value.items), warnings: list(value.warnings) };
   },
   resources: (reference: ResourceReference, params?: ListParams) =>
     listRequest<GenericResourceSummary>(`${resourceBasePath(reference)}${query(params)}`),
+  resourceSearch: async (q: string, namespace?: string, limit = 20) => {
+    const params = new URLSearchParams({ q, limit: String(limit) });
+    if (namespace) params.set("namespace", namespace);
+    const value = await request<GenericResourceSearch>(`/api/v1/resources/search?${params.toString()}`);
+    return { ...value, items: list(value.items), warnings: list(value.warnings) };
+  },
   resource: async (reference: ResourceReference, name: string, namespace?: string) => {
     const value = await request<GenericResourceDetail>(`${resourceBasePath(reference)}/${encodeURIComponent(name)}${query({ namespace })}`);
     return { ...value, object: value.object ?? {}, yaml: value.yaml ?? "", warnings: list(value.warnings) };
@@ -486,12 +493,13 @@ export const api = {
 export async function streamLogs(
   namespace: string,
   name: string,
-  options: { container?: string; tailLines?: number; follow?: boolean; timestamps?: boolean; signal?: AbortSignal } = {},
+  options: { container?: string; tailLines?: number; follow?: boolean; previous?: boolean; timestamps?: boolean; signal?: AbortSignal } = {},
 ): Promise<ReadableStreamDefaultReader<Uint8Array>> {
   const params = new URLSearchParams();
   if (options.container) params.set("container", options.container);
   if (options.tailLines) params.set("tailLines", String(options.tailLines));
   if (options.follow) params.set("follow", "true");
+  if (options.previous) params.set("previous", "true");
   if (options.timestamps) params.set("timestamps", "true");
   const response = await fetch(`/api/v1/pods/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}/logs?${params}`, {
     credentials: "same-origin",

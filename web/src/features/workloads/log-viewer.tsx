@@ -1,8 +1,9 @@
-import { useEffect, useRef, useState } from "react";
-import { CircleStop, Clock3, Loader2, Play, RotateCw, Trash2 } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { CircleStop, Clock3, History, Loader2, Play, RotateCw, Search, Trash2 } from "lucide-react";
 import { streamLogs } from "@/api/client";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Input } from "@/components/ui/input";
 import { createLogSanitizer } from "@/features/workloads/log-sanitizer";
 import { createLogStreamParser, type LogStreamFrame } from "@/features/workloads/log-stream";
 import { cn } from "@/lib/utils";
@@ -14,6 +15,8 @@ export function LogViewer({ namespace, name, containers }: { namespace: string; 
   const [follow, setFollow] = useState(true);
   const [tailLines, setTailLines] = useState(300);
   const [timestamps, setTimestamps] = useState(false);
+  const [previous, setPrevious] = useState(false);
+  const [filter, setFilter] = useState("");
   const [logs, setLogs] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -31,7 +34,7 @@ export function LogViewer({ namespace, name, containers }: { namespace: string; 
     stickToBottom.current = true;
     const run = async () => {
       try {
-        const reader = await streamLogs(namespace, name, { container, tailLines, follow, timestamps, signal: controller.signal });
+        const reader = await streamLogs(namespace, name, { container, tailLines, follow: follow && !previous, previous, timestamps, signal: controller.signal });
         const decoder = new TextDecoder();
         const sanitizer = createLogSanitizer();
         const parser = createLogStreamParser();
@@ -77,7 +80,13 @@ export function LogViewer({ namespace, name, containers }: { namespace: string; 
     };
     void run();
     return () => { active = false; controller.abort(); };
-  }, [container, follow, generation, name, namespace, tailLines, timestamps]);
+  }, [container, follow, generation, name, namespace, previous, tailLines, timestamps]);
+
+  const visibleLogs = useMemo(() => {
+    const needle = filter.trim().toLowerCase();
+    if (!needle) return logs;
+    return logs.split("\n").filter((line) => line.toLowerCase().includes(needle)).join("\n");
+  }, [filter, logs]);
 
   useEffect(() => {
     if (stickToBottom.current && outputRef.current) {
@@ -96,14 +105,21 @@ export function LogViewer({ namespace, name, containers }: { namespace: string; 
           <SelectTrigger className="h-8 w-32 border-slate-700 bg-slate-900 text-xs text-slate-200"><SelectValue /></SelectTrigger>
           <SelectContent>{[100, 300, 1000, 3000].map((value) => <SelectItem key={value} value={String(value)}>最近 {value} 行</SelectItem>)}</SelectContent>
         </Select>
-        <Button variant="ghost" size="sm" className="h-8 text-xs text-slate-300 hover:bg-slate-800 hover:text-white" onClick={() => setFollow((value) => !value)}>
+        <Button variant="ghost" size="sm" className="h-8 text-xs text-slate-300 hover:bg-slate-800 hover:text-white" onClick={() => { setPrevious(false); setFollow((value) => !value); }}>
           {follow ? <CircleStop className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}{follow ? "停止跟随" : "跟随日志"}
+        </Button>
+        <Button variant="ghost" size="sm" aria-pressed={previous} className={cn("h-8 text-xs text-slate-300 hover:bg-slate-800 hover:text-white", previous && "bg-slate-800 text-white")} title="读取上一次容器实例的日志，适用于 CrashLoopBackOff 排查" onClick={() => { setFollow(false); setPrevious((value) => !value); }}>
+          <History className="h-3.5 w-3.5" />{previous ? "读取当前实例" : "上一次实例"}
         </Button>
         <Button variant="ghost" size="sm" aria-pressed={timestamps} className={cn("h-8 text-xs text-slate-300 hover:bg-slate-800 hover:text-white", timestamps && "bg-slate-800 text-white")} onClick={() => setTimestamps((value) => !value)}>
           <Clock3 className="h-3.5 w-3.5" />{timestamps ? "隐藏时间戳" : "显示时间戳"}
         </Button>
         <Button variant="ghost" size="sm" className="h-8 text-xs text-slate-300 hover:bg-slate-800 hover:text-white" onClick={() => setGeneration((value) => value + 1)}><RotateCw className="h-3.5 w-3.5" />重新加载</Button>
         <Button variant="ghost" size="sm" className="h-8 text-xs text-slate-300 hover:bg-slate-800 hover:text-white" onClick={() => setLogs("")}><Trash2 className="h-3.5 w-3.5" />清屏</Button>
+        <div className="relative min-w-44 flex-1 sm:max-w-64">
+          <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
+          <Input value={filter} onChange={(event) => setFilter(event.target.value)} placeholder="筛选当前日志窗口" aria-label="筛选当前日志窗口" className="h-8 border-slate-700 bg-slate-900 pl-8 text-xs text-slate-200 placeholder:text-slate-500" />
+        </div>
         <span role="status" aria-live="polite" className={cn("ml-auto flex items-center gap-1.5 text-[11px]", error ? "text-red-400" : loading ? "text-amber-300" : "text-emerald-400")}>
           <span className={cn("h-1.5 w-1.5 rounded-full", error ? "bg-red-400" : loading ? "animate-pulse bg-amber-300" : "bg-emerald-400")} />
           {error ? error : loading ? (follow ? "正在跟随" : "正在读取") : follow ? "流已结束" : "静态日志"}
@@ -117,8 +133,12 @@ export function LogViewer({ namespace, name, containers }: { namespace: string; 
           const element = event.currentTarget;
           stickToBottom.current = element.scrollHeight - element.scrollTop - element.clientHeight < 24;
         }}
-      >{logs || (loading ? "正在连接日志流…" : "暂无日志输出")}</pre>
-      <div className="border-t border-slate-800 bg-slate-900 px-3 py-2 text-[11px] text-slate-400">日志仅用于当前会话查看，不会写入浏览器持久存储。</div>
+      >{visibleLogs || (loading ? "正在连接日志流…" : filter ? "当前日志窗口没有匹配内容" : "暂无日志输出")}</pre>
+      <div className="border-t border-slate-800 bg-slate-900 px-3 py-2 text-[11px] text-slate-400">
+        {previous ? "正在查看上一次容器实例日志 · " : ""}
+        {filter ? `筛选结果 ${visibleLogs.split("\n").filter(Boolean).length} 行 · ` : ""}
+        日志仅用于当前会话查看，不会写入浏览器持久存储。
+      </div>
     </div>
   );
 }

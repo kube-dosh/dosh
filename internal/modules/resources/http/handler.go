@@ -2,6 +2,7 @@ package http
 
 import (
 	stdhttp "net/http"
+	"strconv"
 
 	"dosh/internal/domain"
 	resourcesapp "dosh/internal/modules/resources/app"
@@ -20,7 +21,8 @@ type discoveryResponse struct {
 }
 
 func (h *Handler) Discovery(w stdhttp.ResponseWriter, r *stdhttp.Request) {
-	items, warnings, err := h.service.Discovery(r.Context())
+	actor, _ := domain.ActorFromContext(r.Context())
+	items, warnings, err := h.service.Discovery(r.Context(), actor, httpx.Query(r, "namespace"))
 	if err != nil {
 		httpx.Error(w, r, err)
 		return
@@ -49,9 +51,29 @@ func (h *Handler) List(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		return
 	}
 	httpx.SortItems(result.Items, options)
-	meta := httpx.PageMeta(result, options, map[string]string{"namespace": query.Namespace, "search": query.Search})
+	meta := httpx.PageMeta(result.PageResult, options, map[string]string{"namespace": query.Namespace, "search": query.Search})
 	meta.Namespace, meta.Search = query.Namespace, query.Search
+	meta.Columns = result.Columns
 	httpx.JSONList(w, result.Items, meta)
+}
+
+func (h *Handler) Search(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	actor, _ := domain.ActorFromContext(r.Context())
+	limit := 20
+	if raw := httpx.Query(r, "limit"); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed < 1 || parsed > 50 {
+			httpx.Error(w, r, httpx.Validation("limit", "limit must be between 1 and 50"))
+			return
+		}
+		limit = parsed
+	}
+	result, err := h.service.Search(r.Context(), actor, httpx.Query(r, "q"), httpx.Query(r, "namespace"), limit)
+	if err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	httpx.JSON(w, stdhttp.StatusOK, result)
 }
 
 func (h *Handler) Get(w stdhttp.ResponseWriter, r *stdhttp.Request) {
@@ -85,6 +107,7 @@ func referenceFromRequest(r *stdhttp.Request) (domain.ResourceReference, error) 
 
 func (h *Handler) Mount(r chi.Router) {
 	r.Get("/resources/discovery", h.Discovery)
+	r.Get("/resources/search", h.Search)
 	r.Get("/resources/{group}/{version}/{resource}", h.List)
 	r.Get("/resources/{group}/{version}/{resource}/{name}", h.Get)
 }

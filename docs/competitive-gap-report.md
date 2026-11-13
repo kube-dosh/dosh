@@ -386,12 +386,17 @@ Dosh 当前已经具备一套不错的安全边界和单集群日常运维闭环
 
 ## 10. 实施进展
 
-截至 2026-11-13，GAP-01 第一阶段已落地：
+截至 2026-11-13，GAP-01 第二阶段已落地：
 
 - 新增 API Discovery 类型目录、统一 GVR 校验和通用只读列表/详情。
 - 通用读取执行 `list`/`get` SubjectAccessReview，并支持命名空间、搜索、cursor 分页和截断提示。
 - 核心 Secret 在通用对象和 YAML 中遮蔽 `data`/`stringData`，并记录成功与失败审计。
 - 前端新增资源浏览器，可从类型目录进入任意已发现资源的列表、详情、事件和只读 YAML。
 - Pod、Service、ConfigMap、Secret 等固定页面继续保留，承担高价值关联、排障和受控写操作；资源浏览器作为通用只读兜底。
+- 通用列表优先使用 Kubernetes Table API 展示类型专属列，并在不支持 Table 响应时回退到基础元数据列。
+- 携带 namespace 的 Discovery 使用 `SelfSubjectRulesReview` 缓存过滤当前身份可 list 的资源类型；失败时按失败关闭策略隐藏对应作用域。
+- 全局搜索接入通用资源，但限制为当前身份可 list 的已授权类型、最多 16 个类型，并要求 Namespaced 资源显式选择命名空间。
+- 新增“治理与策略”入口，覆盖 RBAC、NetworkPolicy、HPA、PDB、配额和 PriorityClass，并解释关键资源关系。
+- Pod 日志新增 Previous 实例、关键词筛选，并补齐 `get pods/log` SubjectAccessReview 与 `stream-pod-logs` 审计。
 
-GAP-02（CRD 动态写入）、Table API printer columns、按身份过滤 Discovery 类型仍属于后续阶段。
+GAP-02（CRD 动态写入）、跨 Pod 日志聚合、CRD 事件跳转与保存视图仍属于后续阶段。

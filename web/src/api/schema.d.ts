@@ -1378,6 +1378,8 @@ export interface paths {
                     follow?: boolean;
                     tailLines?: number;
                     timestamps?: boolean;
+                    /** @description Read logs from the previous terminated container instance. */
+                    previous?: boolean;
                 };
                 header?: never;
                 path: {
@@ -1398,6 +1400,7 @@ export interface paths {
                     };
                 };
                 401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
                 404: components["responses"]["NotFound"];
             };
         };
@@ -2916,11 +2919,13 @@ export interface paths {
         };
         /**
          * Read the discoverable Kubernetes resource catalog
-         * @description Returns resources found through Kubernetes API Discovery. The catalog is cached by the server. Resource-level reads still require Kubernetes RBAC authorization for the authenticated user.
+         * @description Returns resources found through Kubernetes API Discovery. The catalog is cached by the server. When `namespace` is supplied, the catalog is also filtered with SelfSubjectRulesReview for the authenticated user so types without list permission are hidden. Resource-level reads still require Kubernetes RBAC authorization.
          */
         get: {
             parameters: {
-                query?: never;
+                query?: {
+                    namespace?: components["parameters"]["Namespace"];
+                };
                 header?: never;
                 path?: never;
                 cookie?: never;
@@ -2936,6 +2941,52 @@ export interface paths {
                         "application/json": components["schemas"]["ResourceDiscovery"];
                     };
                 };
+                401: components["responses"]["Unauthorized"];
+                503: components["responses"]["DependencyUnavailable"];
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/resources/search": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Search a bounded set of authorized Kubernetes resource types
+         * @description Searches up to 16 discovered resource types that the authenticated user may list. Namespaced resources require an explicit namespace; when it is omitted only cluster-scoped resources are searched. Results and type coverage are bounded and include truncation warnings.
+         */
+        get: {
+            parameters: {
+                query?: {
+                    q?: components["parameters"]["Search"];
+                    namespace?: components["parameters"]["Namespace"];
+                    limit?: number;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Bounded cross-type search result */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["GenericResourceSearch"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
                 401: components["responses"]["Unauthorized"];
                 503: components["responses"]["DependencyUnavailable"];
             };
@@ -3097,6 +3148,8 @@ export interface components {
             search?: string;
             kind?: string;
             status?: string;
+            /** @description Table API column definitions for type-aware generic resource lists. */
+            columns?: components["schemas"]["ResourceColumn"][];
         };
         OperationStatus: {
             status: string;
@@ -3927,6 +3980,12 @@ export interface components {
             shortNames?: string[];
             categories?: string[];
         };
+        ResourceColumn: {
+            name: string;
+            type: string;
+            format?: string;
+            description?: string;
+        };
         ResourceDiscovery: {
             items: components["schemas"]["ResourceDescriptor"][];
             warnings?: string[];
@@ -3934,6 +3993,7 @@ export interface components {
         GenericResourceSummary: {
             apiVersion: string;
             kind: string;
+            resource?: string;
             name: string;
             namespace?: string;
             uid?: string;
@@ -3946,6 +4006,15 @@ export interface components {
             annotations?: {
                 [key: string]: string;
             };
+            /** @description Values aligned to the columns returned in list metadata by the Kubernetes Table API. */
+            cells?: {
+                [key: string]: unknown;
+            };
+        };
+        GenericResourceSearch: {
+            items: components["schemas"]["GenericResourceSummary"][];
+            warnings?: string[];
+            truncated?: boolean;
         };
         GenericResourceList: {
             items: components["schemas"]["GenericResourceSummary"][];

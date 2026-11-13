@@ -38,22 +38,23 @@ func SetMaxBodyBytes(limit int64) {
 }
 
 type ListMeta struct {
-	Total      int               `json:"total"`
-	TotalKnown bool              `json:"totalKnown"`
-	Page       int               `json:"page"`
-	PageSize   int               `json:"pageSize"`
-	TotalPages int               `json:"totalPages"`
-	HasMore    bool              `json:"hasMore"`
-	NextCursor string            `json:"nextCursor,omitempty"`
-	Truncated  bool              `json:"truncated,omitempty"`
-	Warnings   []string          `json:"warnings,omitempty"`
-	Sort       string            `json:"sort,omitempty"`
-	Order      string            `json:"order,omitempty"`
-	Filters    map[string]string `json:"filters,omitempty"`
-	Namespace  string            `json:"namespace,omitempty"`
-	Search     string            `json:"search,omitempty"`
-	Kind       string            `json:"kind,omitempty"`
-	Status     string            `json:"status,omitempty"`
+	Total      int                     `json:"total"`
+	TotalKnown bool                    `json:"totalKnown"`
+	Page       int                     `json:"page"`
+	PageSize   int                     `json:"pageSize"`
+	TotalPages int                     `json:"totalPages"`
+	HasMore    bool                    `json:"hasMore"`
+	NextCursor string                  `json:"nextCursor,omitempty"`
+	Truncated  bool                    `json:"truncated,omitempty"`
+	Warnings   []string                `json:"warnings,omitempty"`
+	Sort       string                  `json:"sort,omitempty"`
+	Order      string                  `json:"order,omitempty"`
+	Filters    map[string]string       `json:"filters,omitempty"`
+	Namespace  string                  `json:"namespace,omitempty"`
+	Search     string                  `json:"search,omitempty"`
+	Kind       string                  `json:"kind,omitempty"`
+	Status     string                  `json:"status,omitempty"`
+	Columns    []domain.ResourceColumn `json:"columns,omitempty"`
 }
 
 // ListOptions is transport-level pagination and sorting policy. Repositories

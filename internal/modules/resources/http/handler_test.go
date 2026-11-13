@@ -17,7 +17,8 @@ import (
 type handlerRepository struct {
 	descriptors []domain.ResourceDescriptor
 	warnings    []string
-	listResult  domain.PageResult[domain.GenericResourceSummary]
+	listResult  domain.GenericResourcePage
+	rules       domain.ResourceRules
 	object      map[string]any
 	err         error
 
@@ -30,7 +31,11 @@ func (r *handlerRepository) DiscoverResources(context.Context) ([]domain.Resourc
 	return r.descriptors, r.warnings, r.err
 }
 
-func (r *handlerRepository) ListGenericResources(_ context.Context, _ domain.ResourceDescriptor, query domain.ListQuery, _ domain.PageRequest) (domain.PageResult[domain.GenericResourceSummary], error) {
+func (r *handlerRepository) ListResourceRules(context.Context, domain.Actor, string) (domain.ResourceRules, []string, error) {
+	return r.rules, nil, nil
+}
+
+func (r *handlerRepository) ListGenericResources(_ context.Context, _ domain.ResourceDescriptor, query domain.ListQuery, _ domain.PageRequest) (domain.GenericResourcePage, error) {
 	r.lastQuery = query
 	return r.listResult, r.err
 }
@@ -89,12 +94,14 @@ func TestResourceDiscoveryRoute(t *testing.T) {
 func TestResourceListRouteUsesGVRFiltersAndPagination(t *testing.T) {
 	repository := &handlerRepository{
 		descriptors: []domain.ResourceDescriptor{{Group: "", Version: "v1", Resource: "pods", Kind: "Pod", Namespaced: true}},
-		listResult: domain.PageResult[domain.GenericResourceSummary]{
-			Items: []domain.GenericResourceSummary{
-				{APIVersion: "v1", Kind: "Pod", Name: "api-0", Namespace: "prod"},
+		listResult: domain.GenericResourcePage{
+			PageResult: domain.PageResult[domain.GenericResourceSummary]{
+				Items: []domain.GenericResourceSummary{
+					{APIVersion: "v1", Kind: "Pod", Name: "api-0", Namespace: "prod"},
+				},
+				Total:      1,
+				TotalKnown: true,
 			},
-			Total:      1,
-			TotalKnown: true,
 		},
 	}
 	response := resourceRequest(resourceTestRouter(repository, handlerAuthorizer{}, domain.Actor{Username: "alice"}), "/resources/_core/v1/pods?namespace=prod&q=api&pageSize=1&sort=name&order=desc")
@@ -107,10 +114,11 @@ func TestResourceListRouteUsesGVRFiltersAndPagination(t *testing.T) {
 	var body struct {
 		Items []domain.GenericResourceSummary `json:"items"`
 		Meta  struct {
-			Page     int    `json:"page"`
-			PageSize int    `json:"pageSize"`
-			Sort     string `json:"sort"`
-			Order    string `json:"order"`
+			Page     int                     `json:"page"`
+			PageSize int                     `json:"pageSize"`
+			Sort     string                  `json:"sort"`
+			Order    string                  `json:"order"`
+			Columns  []domain.ResourceColumn `json:"columns"`
 			Filters  struct {
 				Namespace string `json:"namespace"`
 				Search    string `json:"search"`
@@ -125,6 +133,30 @@ func TestResourceListRouteUsesGVRFiltersAndPagination(t *testing.T) {
 	}
 	if body.Meta.PageSize != 1 || body.Meta.Sort != "name" || body.Meta.Order != "desc" || body.Meta.Filters.Namespace != "prod" || body.Meta.Filters.Search != "api" {
 		t.Fatalf("meta = %#v", body.Meta)
+	}
+}
+
+func TestResourceSearchRouteReturnsBoundedGenericResults(t *testing.T) {
+	repository := &handlerRepository{
+		descriptors: []domain.ResourceDescriptor{{Group: "", Version: "v1", Resource: "nodes", Kind: "Node", Verbs: []string{"get", "list"}}},
+		rules:       domain.ResourceRules{Cluster: []domain.ResourceRule{{Verbs: []string{"list"}, APIGroups: []string{""}, Resources: []string{"nodes"}}}},
+		listResult: domain.GenericResourcePage{PageResult: domain.PageResult[domain.GenericResourceSummary]{
+			Items: []domain.GenericResourceSummary{{APIVersion: "v1", Kind: "Node", Resource: "nodes", Name: "worker-1"}}, Total: 1, TotalKnown: true,
+		}},
+	}
+	response := resourceRequest(resourceTestRouter(repository, handlerAuthorizer{}, domain.Actor{Username: "alice"}), "/resources/search?q=worker&limit=5")
+	if response.Code != stdhttp.StatusOK {
+		t.Fatalf("status = %d body = %s", response.Code, response.Body.String())
+	}
+	var body struct {
+		Items    []domain.GenericResourceSummary `json:"items"`
+		Warnings []string                        `json:"warnings"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(body.Items) != 1 || body.Items[0].Name != "worker-1" {
+		t.Fatalf("body = %#v", body)
 	}
 }
 

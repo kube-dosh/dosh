@@ -56,6 +56,8 @@ curl -k -b /tmp/dosh.cookies "$DOSH_BASE_URL/api/v1/pods?namespace=<namespace>"
 
 有效 Token 返回 200，无业务权限返回 403，无效 Token 返回 401。服务端要求
 `tokenreviews/create`、`users/groups/serviceaccounts/impersonate`、`subjectaccessreviews/create`；
+Discovery 授权过滤还会以当前身份执行 `selfsubjectrulesreviews/create`（Kubernetes 默认为
+`system:basic-user` 提供该权限），Pod 日志读取则单独校验 `get pods/log`。
 Token 不得出现在日志、审计、Cookie 或浏览器存储中。
 
 ### 2.1 节点 Cordon/Uncordon

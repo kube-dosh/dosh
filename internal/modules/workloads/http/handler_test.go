@@ -151,7 +151,7 @@ func (r *workloadRepo) DeletePod(_ context.Context, namespace, name string) erro
 	return nil
 }
 
-func (r *workloadRepo) StreamPodLogs(_ context.Context, namespace, name, container string, _ bool, tailLines int64, _ bool, _ int64) (io.ReadCloser, error) {
+func (r *workloadRepo) StreamPodLogs(_ context.Context, namespace, name, container string, _, _ bool, tailLines int64, _ bool, _ int64) (io.ReadCloser, error) {
 	r.lastNamespace, r.lastName = namespace, name
 	r.lastTailLines = tailLines
 	if r.logsErr != nil {

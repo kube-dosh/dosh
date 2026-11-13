@@ -341,16 +341,19 @@ func (h *Handler) DeletePod(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 }
 
 func (h *Handler) Logs(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	actor, _ := domain.ActorFromContext(r.Context())
 	tailLines, err := strconv.ParseInt(httpx.Query(r, "tailLines"), 10, 64)
 	if err != nil {
 		tailLines = 200
 	}
 	stream, err := h.service.StreamLogs(
 		r.Context(),
+		actor,
 		chi.URLParam(r, "namespace"),
 		chi.URLParam(r, "name"),
 		httpx.Query(r, "container"),
 		httpx.BoolQuery(r, "follow", false),
+		httpx.BoolQuery(r, "previous", false),
 		tailLines,
 		httpx.BoolQuery(r, "timestamps", false),
 	)

@@ -13,8 +13,10 @@ type fakeResourceRepository struct {
 	descriptors []domain.ResourceDescriptor
 	warnings    []string
 	discoverErr error
-	listResult  domain.PageResult[domain.GenericResourceSummary]
+	listResult  domain.GenericResourcePage
 	listErr     error
+	rules       domain.ResourceRules
+	rulesErr    error
 	object      map[string]any
 	getErr      error
 
@@ -23,6 +25,7 @@ type fakeResourceRepository struct {
 	lastPage       domain.PageRequest
 	lastNamespace  string
 	lastName       string
+	seenResources  []string
 	listCalls      int
 	getCalls       int
 }
@@ -31,9 +34,14 @@ func (r *fakeResourceRepository) DiscoverResources(context.Context) ([]domain.Re
 	return r.descriptors, r.warnings, r.discoverErr
 }
 
-func (r *fakeResourceRepository) ListGenericResources(_ context.Context, descriptor domain.ResourceDescriptor, query domain.ListQuery, page domain.PageRequest) (domain.PageResult[domain.GenericResourceSummary], error) {
+func (r *fakeResourceRepository) ListResourceRules(context.Context, domain.Actor, string) (domain.ResourceRules, []string, error) {
+	return r.rules, nil, r.rulesErr
+}
+
+func (r *fakeResourceRepository) ListGenericResources(_ context.Context, descriptor domain.ResourceDescriptor, query domain.ListQuery, page domain.PageRequest) (domain.GenericResourcePage, error) {
 	r.listCalls++
 	r.lastDescriptor, r.lastQuery, r.lastPage = descriptor, query, page
+	r.seenResources = append(r.seenResources, descriptor.Resource)
 	return r.listResult, r.listErr
 }
 
@@ -80,7 +88,7 @@ func TestServiceDiscoveryPassesThroughRepositoryMetadata(t *testing.T) {
 	service, repository, _, _ := resourceServiceFixture()
 	repository.warnings = []string{"one API group is unavailable"}
 
-	items, warnings, err := service.Discovery(context.Background())
+	items, warnings, err := service.Discovery(context.Background(), domain.Actor{Username: "alice"}, "")
 	if err != nil {
 		t.Fatalf("Discovery() error = %v", err)
 	}
@@ -92,12 +100,90 @@ func TestServiceDiscoveryPassesThroughRepositoryMetadata(t *testing.T) {
 	}
 }
 
+func TestServiceDiscoveryFiltersTypesBySelfSubjectRules(t *testing.T) {
+	service, repository, _, _ := resourceServiceFixture()
+	repository.rules = domain.ResourceRules{
+		Namespaced: []domain.ResourceRule{{Verbs: []string{"list"}, APIGroups: []string{""}, Resources: []string{"pods"}}},
+		Cluster:    []domain.ResourceRule{{Verbs: []string{"list"}, APIGroups: []string{""}, Resources: []string{"nodes"}}},
+	}
+
+	items, warnings, err := service.Discovery(context.Background(), domain.Actor{Username: "alice"}, "prod")
+	if err != nil {
+		t.Fatalf("Discovery() error = %v", err)
+	}
+	if len(items) != 2 || items[0].Resource != "pods" || items[1].Resource != "nodes" {
+		t.Fatalf("Discovery() items = %#v", items)
+	}
+	if len(warnings) != 0 {
+		t.Fatalf("Discovery() warnings = %#v", warnings)
+	}
+}
+
+func TestServiceDiscoveryFailsClosedWhenRulesAreUnavailable(t *testing.T) {
+	service, repository, _, _ := resourceServiceFixture()
+	repository.rulesErr = domain.ErrUnavailable
+
+	items, warnings, err := service.Discovery(context.Background(), domain.Actor{Username: "alice"}, "prod")
+	if err != nil {
+		t.Fatalf("Discovery() error = %v", err)
+	}
+	if len(items) != 0 {
+		t.Fatalf("Discovery() items = %#v, want none", items)
+	}
+	if len(warnings) != 1 || !strings.Contains(warnings[0], "失败关闭") {
+		t.Fatalf("Discovery() warnings = %#v", warnings)
+	}
+}
+
+func TestServiceSearchSearchesOnlyClusterResourcesWithoutNamespace(t *testing.T) {
+	service, repository, _, _ := resourceServiceFixture()
+	repository.rules = domain.ResourceRules{
+		Namespaced: []domain.ResourceRule{{Verbs: []string{"list"}, APIGroups: []string{""}, Resources: []string{"pods"}}},
+		Cluster:    []domain.ResourceRule{{Verbs: []string{"list"}, APIGroups: []string{""}, Resources: []string{"nodes"}}},
+	}
+	repository.listResult = domain.GenericResourcePage{PageResult: domain.PageResult[domain.GenericResourceSummary]{
+		Items: []domain.GenericResourceSummary{{Kind: "Node", Name: "worker-1"}}, Total: 1, TotalKnown: true,
+	}}
+
+	result, err := service.Search(context.Background(), domain.Actor{Username: "alice"}, "worker", "", 20)
+	if err != nil {
+		t.Fatalf("Search() error = %v", err)
+	}
+	if len(result.Items) != 1 || result.Items[0].Kind != "Node" {
+		t.Fatalf("Search() items = %#v", result.Items)
+	}
+	if len(repository.seenResources) != 1 || repository.seenResources[0] != "nodes" {
+		t.Fatalf("searched resources = %#v", repository.seenResources)
+	}
+}
+
+func TestDescriptorListableHonorsWildcardsAndResourceNames(t *testing.T) {
+	wildcardRules := domain.ResourceRules{Namespaced: []domain.ResourceRule{{Verbs: []string{"*"}, APIGroups: []string{"*"}, Resources: []string{"*"}}}}
+	descriptor := domain.ResourceDescriptor{Group: "example.io", Version: "v1", Resource: "widgets", Namespaced: true}
+	if !descriptorListable(domain.ResourceDescriptor{Resource: "pods", Namespaced: true}, wildcardRules, "prod") {
+		t.Fatal("wildcard rule did not authorize pods")
+	}
+	namedRules := domain.ResourceRules{Namespaced: []domain.ResourceRule{{Verbs: []string{"list"}, APIGroups: []string{"example.io"}, Resources: []string{"widgets"}, ResourceNames: []string{"one"}}}}
+	if descriptorListable(descriptor, namedRules, "prod") {
+		t.Fatal("resourceNames rule must not authorize an unbounded list")
+	}
+	wildcardNames := domain.ResourceRules{Namespaced: []domain.ResourceRule{{Verbs: []string{"list"}, APIGroups: []string{"example.io"}, Resources: []string{"widgets"}, ResourceNames: []string{"*"}}}}
+	if !descriptorListable(descriptor, wildcardNames, "prod") {
+		t.Fatal("wildcard resourceNames should authorize an unbounded list")
+	}
+	if descriptorListable(descriptor, namedRules, "") {
+		t.Fatal("namespaced resource must not be listable without a namespace")
+	}
+}
+
 func TestServiceListValidatesGVRAndAuthorizesRequestedNamespace(t *testing.T) {
 	service, repository, authorizer, _ := resourceServiceFixture()
-	repository.listResult = domain.PageResult[domain.GenericResourceSummary]{
-		Items:      []domain.GenericResourceSummary{{Name: "api-0"}},
-		Total:      1,
-		TotalKnown: true,
+	repository.listResult = domain.GenericResourcePage{
+		PageResult: domain.PageResult[domain.GenericResourceSummary]{
+			Items:      []domain.GenericResourceSummary{{Name: "api-0"}},
+			Total:      1,
+			TotalKnown: true,
+		},
 	}
 	actor := domain.Actor{Username: "alice", Groups: []string{"viewers"}}
 	query := domain.ListQuery{Namespace: "prod", Search: "api"}

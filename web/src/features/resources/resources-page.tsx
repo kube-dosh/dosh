@@ -8,6 +8,7 @@ import type { ResourceDescriptor } from "@/api/types";
 import { DataTable } from "@/components/data/data-table";
 import { ErrorState } from "@/components/feedback/states";
 import { PageHeader } from "@/components/layout/page-header";
+import { NamespaceSelect } from "@/components/layout/namespace-select";
 import { SearchInput } from "@/components/layout/search-input";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -20,7 +21,7 @@ function groupLabel(group: string): string {
   return group || "core";
 }
 
-function resourcePath(descriptor: ResourceDescriptor) {
+function resourcePath(descriptor: ResourceDescriptor, namespace: string) {
   return {
     to: "/resources/$group/$version/$resource" as const,
     params: {
@@ -28,7 +29,7 @@ function resourcePath(descriptor: ResourceDescriptor) {
       version: descriptor.version,
       resource: descriptor.resource,
     },
-    search: {},
+    search: { namespace: namespace || undefined },
   };
 }
 
@@ -36,11 +37,12 @@ export function ResourcesPage() {
   const search = useSearch({ from: "/app/resources" });
   const navigate = useNavigate();
   const q = search.q ?? "";
+  const namespace = search.namespace ?? "";
   const groupParam = search.group;
   const group = groupParam === undefined || groupParam === "_core" ? "" : groupParam;
   const query = useQuery({
-    queryKey: ["resource-discovery"],
-    queryFn: api.resourceDiscovery,
+    queryKey: ["resource-discovery", "namespace", namespace],
+    queryFn: () => api.resourceDiscovery(namespace || undefined),
     staleTime: 60_000,
   });
   const items = query.data?.items ?? [];
@@ -60,7 +62,7 @@ export function ResourcesPage() {
         .some((value) => String(value).toLowerCase().includes(needle));
     });
   }, [group, groupParam, items, q]);
-  const updateSearch = (patch: { q?: string; group?: string }) => {
+  const updateSearch = (patch: { q?: string; group?: string; namespace?: string }) => {
     void navigate({ to: "/resources", search: { ...search, ...patch }, replace: true });
   };
 
@@ -81,6 +83,7 @@ export function ResourcesPage() {
             {groups.map((item) => <SelectItem key={item || "_core"} value={item || "_core"}>{groupLabel(item)}</SelectItem>)}
           </SelectContent>
         </Select>
+        <NamespaceSelect value={namespace} onChange={(value) => updateSearch({ namespace: value || undefined })} />
         <span className="text-xs text-muted-foreground sm:ml-auto">共 {filtered.length} 个资源类型</span>
       </div>
       {query.data?.warnings?.length ? (
@@ -94,7 +97,7 @@ export function ResourcesPage() {
           column.accessor("kind", {
             header: "Kind",
             cell: (info) => (
-              <Link {...resourcePath(info.row.original)} className="inline-flex items-center gap-1 font-medium text-primary hover:underline">
+              <Link {...resourcePath(info.row.original, namespace)} className="inline-flex items-center gap-1 font-medium text-primary hover:underline">
                 {info.getValue()}<ArrowUpRight className="h-3 w-3" aria-hidden="true" />
               </Link>
             ),
