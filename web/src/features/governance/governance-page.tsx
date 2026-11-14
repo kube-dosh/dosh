@@ -52,12 +52,12 @@ export function GovernancePage() {
           const Icon = meta.icon;
           return (
             <section key={group} aria-labelledby={`governance-${group}`}>
-              <div className="mb-3 flex items-center gap-2">
-                <Icon className="h-4 w-4 text-primary" />
-                <h2 id={`governance-${group}`} className="text-sm font-semibold">{group}</h2>
-                <span className="text-xs text-muted-foreground">{meta.description}</span>
+              <div className="mb-3 flex flex-wrap items-center gap-x-2 gap-y-1">
+                <Icon className="h-4 w-4 shrink-0 text-primary" />
+                <h2 id={`governance-${group}`} className="shrink-0 whitespace-nowrap text-sm font-semibold">{group}</h2>
+                <span className="min-w-0 break-words text-xs text-muted-foreground">{meta.description}</span>
               </div>
-              <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
                 {governanceResources.filter((item) => item.category === group).map((item) => (
                   <GovernanceCard key={`${item.group}/${item.resource}`} item={item} descriptor={descriptors.get(`${item.group}/${item.resource}`)} namespace={namespace} />
                 ))}
@@ -77,14 +77,14 @@ function GovernanceCard({ item, descriptor, namespace }: {
 }) {
   const available = Boolean(descriptor);
   const body = (
-    <Card className={available ? "h-full transition-colors hover:border-primary/50" : "h-full opacity-65"}>
+    <Card className={available ? "h-full min-w-0 overflow-hidden transition-colors hover:border-primary/50" : "h-full min-w-0 overflow-hidden opacity-65"}>
       <CardHeader className="pb-2">
         <div className="flex items-start justify-between gap-3">
-          <div>
-            <CardTitle className="text-sm">{item.label}</CardTitle>
-            <CardDescription className="mt-1 font-mono text-[11px]">{item.group || "core"}/{item.resource}</CardDescription>
+          <div className="min-w-0 flex-1">
+            <CardTitle className="break-words text-sm">{item.label}</CardTitle>
+            <CardDescription className="mt-1 break-words font-mono text-[11px]">{item.group || "core"}/<wbr />{item.resource}</CardDescription>
           </div>
-          <Badge variant={available ? "secondary" : "outline"}>{available ? descriptor?.version : "未发现"}</Badge>
+          <Badge variant={available ? "secondary" : "outline"} className="shrink-0">{available ? descriptor?.version : "未发现"}</Badge>
         </div>
       </CardHeader>
       <CardContent>
@@ -98,7 +98,7 @@ function GovernanceCard({ item, descriptor, namespace }: {
       to="/resources/$group/$version/$resource"
       params={{ group: descriptor.group || "_core", version: descriptor.version, resource: descriptor.resource }}
       search={{ namespace: descriptor.namespaced ? namespace || undefined : undefined }}
-      className="group relative block rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      className="group relative block min-w-0 rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
     >
       {body}
       <ArrowUpRight className="absolute right-3 top-3 h-3.5 w-3.5 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100" />

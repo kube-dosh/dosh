@@ -11,6 +11,7 @@ import type {
   PodSummary,
   PersistentVolumeClaimDetail,
   PersistentVolumeDetail,
+  ResourceDescriptor,
   ServerCertificate,
   ServiceDetail,
   SessionResponse,
@@ -385,6 +386,22 @@ async function installApiMocks(page: Page, options: { authenticated?: boolean; a
       return json(route, { code: "unauthorized", message: "authentication required" }, 401);
     }
     if (path === "/api/v1/overview") return json(route, options.overview ?? overview, options.overviewStatus ?? 200);
+    if (path === "/api/v1/resources/discovery") {
+      const resources: ResourceDescriptor[] = [
+        { group: "", version: "v1", resource: "serviceaccounts", kind: "ServiceAccount", namespaced: true, verbs: ["get", "list"] },
+        { group: "rbac.authorization.k8s.io", version: "v1", resource: "roles", kind: "Role", namespaced: true, verbs: ["get", "list"] },
+        { group: "rbac.authorization.k8s.io", version: "v1", resource: "rolebindings", kind: "RoleBinding", namespaced: true, verbs: ["get", "list"] },
+        { group: "rbac.authorization.k8s.io", version: "v1", resource: "clusterroles", kind: "ClusterRole", namespaced: false, verbs: ["get", "list"] },
+        { group: "rbac.authorization.k8s.io", version: "v1", resource: "clusterrolebindings", kind: "ClusterRoleBinding", namespaced: false, verbs: ["get", "list"] },
+        { group: "networking.k8s.io", version: "v1", resource: "networkpolicies", kind: "NetworkPolicy", namespaced: true, verbs: ["get", "list"] },
+        { group: "policy", version: "v1", resource: "poddisruptionbudgets", kind: "PodDisruptionBudget", namespaced: true, verbs: ["get", "list"] },
+        { group: "autoscaling", version: "v2", resource: "horizontalpodautoscalers", kind: "HorizontalPodAutoscaler", namespaced: true, verbs: ["get", "list"] },
+        { group: "", version: "v1", resource: "resourcequotas", kind: "ResourceQuota", namespaced: true, verbs: ["get", "list"] },
+        { group: "", version: "v1", resource: "limitranges", kind: "LimitRange", namespaced: true, verbs: ["get", "list"] },
+        { group: "scheduling.k8s.io", version: "v1", resource: "priorityclasses", kind: "PriorityClass", namespaced: false, verbs: ["get", "list"] },
+      ];
+      return json(route, { items: resources });
+    }
     if (path === "/api/v1/cluster/config") return json(route, clusterConfiguration);
     if (path === "/api/v1/capabilities") return json(route, session.capabilities);
     if (path === "/api/v1/nodes") return json(route, list([{ ...nodeSummary, unschedulable: nodeSchedulingDisabled }]));
@@ -1555,6 +1572,8 @@ test("移动端逐页布局无页面级横向溢出", async ({ page }) => {
     { path: "/namespaces/default?tab=yaml", name: "namespace-yaml" },
     { path: "/events", name: "events" },
     { path: "/audit", name: "audit" },
+    { path: "/governance", name: "governance" },
+    { path: "/governance?namespace=default", name: "governance-namespace" },
   ];
 
   for (const route of routes) {
@@ -1632,11 +1651,51 @@ test("320px 窄屏关键页面无横向溢出", async ({ page }) => {
     { path: "/configuration?tab=certificate", name: "certificate" },
     { path: "/events", name: "events" },
     { path: "/audit", name: "audit" },
+    { path: "/governance", name: "governance" },
+    { path: "/governance?namespace=default", name: "governance-namespace" },
   ]) {
     await page.goto(route.path);
     await page.locator("main h1").waitFor({ state: "visible" });
     await expectNoPageOverflow(page, `320px ${route.name}`);
     await page.screenshot({ path: `test-results/mobile-320/${route.name}.png`, fullPage: true });
+  }
+});
+
+test("治理页移动端卡片不超出主内容区域", async ({ page }) => {
+  test.setTimeout(90_000);
+  await installApiMocks(page);
+
+  for (const viewport of [{ width: 320, height: 720 }, { width: 390, height: 844 }]) {
+    await page.setViewportSize(viewport);
+    await page.goto("/governance");
+    await page.locator("main h1").waitFor({ state: "visible" });
+    await page.waitForTimeout(250);
+
+    const layout = await page.evaluate(() => {
+      const main = document.querySelector("main")!;
+      const mainRect = main.getBoundingClientRect();
+      const mainStyle = getComputedStyle(main);
+      const contentLeft = mainRect.left + Number.parseFloat(mainStyle.paddingLeft);
+      const contentRight = mainRect.right - Number.parseFloat(mainStyle.paddingRight);
+      const cards = Array.from(document.querySelectorAll<HTMLAnchorElement>('section[aria-labelledby^="governance-"] a[href^="/resources/"]'));
+      const outside = cards.filter((card) => {
+        const rect = card.getBoundingClientRect();
+        return rect.left < contentLeft - 1 || rect.right > contentRight + 1;
+      }).map((card) => ({ text: card.textContent?.trim().slice(0, 80), rect: card.getBoundingClientRect().toJSON(), contentLeft, contentRight }));
+      const clipped = cards.flatMap((card) => {
+        const cardRect = card.getBoundingClientRect();
+        return Array.from(card.querySelectorAll<HTMLElement>("*")).filter((child) => {
+          const rect = child.getBoundingClientRect();
+          return rect.width > 0 && (rect.left < cardRect.left - 1 || rect.right > cardRect.right + 1);
+        }).map((child) => ({ card: card.textContent?.trim().slice(0, 80), tag: child.tagName, className: child.className, text: child.textContent?.trim().slice(0, 80) }));
+      });
+      return { cardCount: cards.length, outside, clipped };
+    });
+
+    expect(layout.cardCount, `${viewport.width}px governance cards`).toBeGreaterThan(0);
+    expect(layout.outside, `${viewport.width}px governance cards outside main content`).toEqual([]);
+    expect(layout.clipped, `${viewport.width}px governance card descendants clipped`).toEqual([]);
+    await page.screenshot({ path: `test-results/mobile-governance/${viewport.width}.png`, fullPage: true });
   }
 });
 
@@ -1667,6 +1726,7 @@ test("320px 大字体缩放时页面不产生横向溢出", async ({ page }) => 
     { path: "/pods/default/web-abcdef-12345?tab=logs", name: "pod-logs" },
     { path: "/configuration?tab=secrets", name: "secrets" },
     { path: "/events", name: "events" },
+    { path: "/governance", name: "governance" },
   ]) {
     await page.goto(route.path);
     await page.locator("main h1").waitFor({ state: "visible" });
@@ -1697,6 +1757,7 @@ test.describe("Android Chrome 视口", () => {
       { path: "/configuration?tab=secrets", name: "secrets" },
       { path: "/events", name: "events" },
       { path: "/audit", name: "audit" },
+      { path: "/governance", name: "governance" },
     ]) {
       await page.goto(route.path);
       await page.locator("main h1").waitFor({ state: "visible" });
