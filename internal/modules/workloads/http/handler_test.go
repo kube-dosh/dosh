@@ -61,6 +61,11 @@ type workloadRepo struct {
 	previewCalls     int
 	createErr        error
 	previewYAML      string
+	revisions        []domain.WorkloadRevision
+	revisionErr      error
+	rollbackCalls    int
+	rollbackErr      error
+	lastRevision     int64
 }
 
 func (r *workloadRepo) ListWorkloads(_ context.Context, query domain.ListQuery) ([]domain.WorkloadSummary, error) {
@@ -124,6 +129,18 @@ func (r *workloadRepo) SetCronJobSuspend(_ context.Context, namespace, name stri
 	r.lastNamespace, r.lastName = namespace, name
 	r.lastSuspend = update
 	return r.suspendErr
+}
+
+func (r *workloadRepo) ListWorkloadRevisions(_ context.Context, kind, namespace, name string) ([]domain.WorkloadRevision, error) {
+	r.lastKind, r.lastNamespace, r.lastName = kind, namespace, name
+	return r.revisions, r.revisionErr
+}
+
+func (r *workloadRepo) RollbackWorkload(_ context.Context, kind, namespace, name string, revision int64) error {
+	r.rollbackCalls++
+	r.lastKind, r.lastNamespace, r.lastName = kind, namespace, name
+	r.lastRevision = revision
+	return r.rollbackErr
 }
 
 func (r *workloadRepo) DeleteWorkload(_ context.Context, kind, namespace, name string, propagation domain.DeletionPropagation) error {
@@ -598,5 +615,37 @@ func TestPreviewDeploymentAndCreateConflict(t *testing.T) {
 	response = performWorkloadJSON(server.router, http.MethodPost, "/api/v1/workloads/deployments", payload, server.authHeaders())
 	if response.Code != http.StatusConflict || len(server.repo.createCalls) != 1 || !strings.Contains(response.Body.String(), `"code":"already_exists"`) {
 		t.Fatalf("conflict status=%d calls=%#v body=%s", response.Code, server.repo.createCalls, response.Body.String())
+	}
+}
+
+func TestWorkloadRevisionAndRollbackRoutes(t *testing.T) {
+	server := newWorkloadTestServer(t)
+	server.repo.revisions = []domain.WorkloadRevision{{Kind: "Deployment", Name: "api", Revision: 2, Current: true}, {Kind: "Deployment", Name: "api", Revision: 1}}
+	response := performWorkloadJSON(server.router, http.MethodGet, "/api/v1/workloads/deployment/prod/api/revisions", "", map[string]string{"Cookie": server.cookie.String()})
+	if response.Code != http.StatusOK {
+		t.Fatalf("revisions status = %d, body = %s", response.Code, response.Body.String())
+	}
+	var payload struct {
+		Items []domain.WorkloadRevision `json:"items"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode revisions: %v", err)
+	}
+	if len(payload.Items) != 2 || payload.Items[0].Revision != 2 || !payload.Items[0].Current {
+		t.Fatalf("revisions = %#v", payload.Items)
+	}
+
+	response = performWorkloadJSON(server.router, http.MethodPost, "/api/v1/workloads/deployment/prod/api/rollback", `{"revision":1}`, server.authHeaders())
+	if response.Code != http.StatusAccepted {
+		t.Fatalf("rollback status = %d, body = %s", response.Code, response.Body.String())
+	}
+	if server.repo.rollbackCalls != 1 || server.repo.lastRevision != 1 {
+		t.Fatalf("rollback calls=%d revision=%d", server.repo.rollbackCalls, server.repo.lastRevision)
+	}
+
+	server.repo.rollbackErr = domain.ErrConflict
+	response = performWorkloadJSON(server.router, http.MethodPost, "/api/v1/workloads/deployment/prod/api/rollback", `{"revision":1}`, server.authHeaders())
+	if response.Code != http.StatusConflict {
+		t.Fatalf("rollback conflict status = %d, body = %s", response.Code, response.Body.String())
 	}
 }

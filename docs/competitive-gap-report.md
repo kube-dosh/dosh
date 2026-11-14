@@ -19,9 +19,9 @@ Dosh 当前不是“通用 Kubernetes Dashboard”，而是一个定位清晰的
 
 但与 Headlamp、Lens 以及 KubeSphere、Rancher、Devtron 相比，Dosh 的主要差距可以归纳为五类：
 
-1. 没有通用资源模型：只能操作固定资源类型，无法浏览和操作 CRD，无法适应 Operator 生态。
+1. 通用资源模型已经落地，但仍缺多版本 API 选择、Schema 基础校验和高风险资源的写入策略分层。
 2. 没有交互式排障能力：缺少 Pod Exec/Terminal、Ephemeral Container、Port-forward。
-3. 没有发布与回滚能力：缺少 Helm Release 管理、Deployment revision 历史、一键回滚。
+3. Deployment/StatefulSet 已具备 revision 历史和回滚；仍缺 Helm Release 管理。
 4. 可观测性较浅：只有 Metrics Server 瞬时值，没有 Prometheus 历史指标、告警、日志聚合。
 5. 平台扩展能力缺失：没有多集群、插件机制、GitOps、多租户和集群生命周期管理。
 
@@ -39,7 +39,7 @@ Dosh 当前不是“通用 Kubernetes Dashboard”，而是一个定位清晰的
 | 集群总览 | 版本、CNI、节点/Pod 健康度、工作负载数量、CPU/内存、Metrics 缺失时回退到 requests |
 | 节点 | 状态、角色、容量、标签、污点、Pod、事件、日志、Cordon/Uncordon |
 | 工作负载 | Deployment、StatefulSet、DaemonSet、Job、CronJob 的列表、详情、实例、YAML |
-| 工作负载操作 | Deployment 创建、扩缩容、滚动重启、更新镜像、容器配置、CronJob 暂停/恢复、删除 |
+| 工作负载操作 | Deployment 创建、扩缩容、滚动重启、更新镜像、容器配置、CronJob 暂停/恢复、删除、Deployment/StatefulSet revision 历史和回滚 |
 | Pod | 状态、容器、资源、节点、事件、日志、YAML |
 | 日志 | 单 Pod、单容器、实时流、tailLines、timestamps |
 | 网络 | Service、Ingress、IngressClass 的查看、创建、编辑、删除 |
@@ -47,12 +47,12 @@ Dosh 当前不是“通用 Kubernetes Dashboard”，而是一个定位清晰的
 | 存储 | PVC 创建、编辑、删除；PV、StorageClass 主要只读和关联导航 |
 | 命名空间 | 创建、详情、YAML、受保护级联删除 |
 | 事件 | 检索、命名空间过滤、Warning 识别、对象跳转、实时流；最多展示最近 500 条 |
-| YAML | 模板、Dry Run、Server-Side Apply、多文档顺序提交、内置资源白名单 |
+| YAML | 模板、Dry Run、Server-Side Apply、多文档顺序提交、内置资源白名单；资源浏览器支持已发现资源的通用 YAML 创建、更新和删除 |
 | 审计 | 最近审计记录、stdout、可选 HTTPS Webhook、HMAC |
 | 证书 | HTTPS 证书元数据、热加载、手动重载 |
 | 移动端 | 列表、搜索、弹窗、详情页响应式适配 |
 
-相关边界在 `README.zh-CN.md:235` 已有明确说明：YAML 暂不开放 Namespace、Node、CRD；PV、StorageClass 以只读为主；Secret 不做额外二次遮蔽层。
+相关边界在 `README.zh-CN.md` 已有明确说明：`/yaml/create` 暂不开放 Namespace 和 Node；CRD 等已发现资源通过资源浏览器写入；通用 Secret 写入关闭；PV、StorageClass 仍以查看和关联导航为主；Secret 专用页面不做额外二次遮蔽层。
 
 ### 2.2 架构上的固定扩展点
 
@@ -166,18 +166,18 @@ Devtron 的参考价值主要在 Helm、发布历史、回滚和应用生命周�
 
 | 能力 | Dosh | K8s Dashboard | Headlamp | Lens | 判断 |
 |---|---|---|---|---|---|
-| 单集群资源浏览 | ◐ 固定资源类型 | ✅ | ✅ | ✅ | Dosh 缺通用模型 |
-| CRD / API Discovery | — | ✅ CRD 资源与对象 | ✅ | ✅ | P0 最大缺口 |
-| YAML 编辑 / Schema | ◐ 白名单、基础编辑 | ◐ 基础编辑 | ✅ 编辑器和文档 | ✅ | Dosh 缺 Schema 和任意资源 |
-| 资源创建/编辑/删除 | ◐ 常用资源为主 | ✅ | ✅ | ✅ | PV、SC、部分资源写操作不足 |
-| Pod 日志 | ✅ 单 Pod 单容器流 | ✅ | ✅ | ✅ | 缺 Previous 和聚合检索 |
+| 单集群资源浏览 | ✅ 固定视图 + 通用资源目录 | ✅ | ✅ | ✅ | 已具备通用模型 |
+| CRD / API Discovery | ✅ CRD 类型与对象 | ✅ CRD 资源与对象 | ✅ | ✅ | 已落地，多版本待补 |
+| YAML 编辑 / Schema | ◐ 通用 YAML 编辑，无 Schema 校验 | ◐ 基础编辑 | ✅ 编辑器和文档 | ✅ | 缺 Schema 和动态表单 |
+| 资源创建/编辑/删除 | ◐ 已发现资源通用写入，缺少高风险策略分层 | ✅ | ✅ | ✅ | Secret 仅专用页面；高危资源护栏不足 |
+| Pod 日志 | ✅ 单 Pod、Previous、关键词筛选 | ✅ | ✅ | ✅ | 缺跨 Pod 聚合 |
 | Exec / Terminal | — | ✅ | ✅ | ✅ | P0 缺口 |
 | Ephemeral Debug | — | — | ✅ | ◐ | 建议随 Exec 一起设计 |
 | Port-forward | — | — | ✅ | ✅ | P0/P1 缺口 |
-| 工作负载 revision / rollback | — | ◐ 可看部分历史对象 | ◐ | ◐ | 缺一键回滚 |
+| 工作负载 revision / rollback | ✅ Deployment/StatefulSet 历史与回滚 | ◐ 可看部分历史对象 | ◐ | ◐ | 已具备一键回滚 |
 | Helm Release 管理 | — | — | ◐ 桌面插件 | ✅ | P0/P1 缺口 |
 | Metrics 历史 / 告警 | ◐ 仅瞬时 Metrics API | ◐ Metrics Server | ◐ Metrics + Prometheus 插件 | ◐ Metrics | 缺历史趋势和告警 |
-| RBAC / Policy 资源视图 | ◐ 仅审计和权限判断 | ◐ | ✅ | ✅ | 缺 Role、Binding、NetworkPolicy 等 |
+| RBAC / Policy 资源视图 | ✅ 治理入口复用通用资源视图 | ◐ | ✅ | ✅ | 已覆盖高频治理资源 |
 | 多集群 | — | — | ✅ | ✅ | P2，架构级变化 |
 | 插件 / 扩展 | — | — | ✅ | ✅ | P2，取决于生态战略 |
 | 桌面端 / 离线 | — | — | ✅ | ✅ | 不建议优先做 |
@@ -204,15 +204,15 @@ Devtron 的参考价值主要在 Helm、发布历史、回滚和应用生命周�
 
 | ID | Gap | Dosh 当前状态 | 主流基线 | 业务影响 | 建议补齐 | 粗估 |
 |---|---|---|---|---|---|---|
-| GAP-01 | 通用资源浏览器与 API Discovery | 固定 15 类资源和固定路由 | Headlamp、Lens、Devtron、K8s Dashboard 均支持较通用的资源浏览 | Operator、CRD、HPA、PDB、NetworkPolicy、RBAC 等资源不可见，集群治理能力不完整 | 增加 API Discovery、GVR 注册表、通用列表/详情/YAML/SAR；支持 CRD 实例和 printer columns | 4–6 人周 |
-| GAP-02 | CRD 生命周期与动态 YAML | YAML 白名单不含 CRD | Headlamp、Lens、Devtron 支持 CRD 和自定义资源编辑 | 无法通过 UI 创建、修改、排查 Operator 资源 | 基于 Discovery + OpenAPI Schema 做动态表单/编辑器；CRD 的 create/update/delete 全部走 SAR 和审计 | 2–4 人周 |
+| GAP-01 | 通用资源浏览器与 API Discovery | ✅ 已实现 Discovery、通用列表/详情、Table API、搜索和治理入口 | Headlamp、Lens、Devtron、K8s Dashboard 均支持较通用的资源浏览 | 已解锁 Operator、CRD、HPA、PDB、NetworkPolicy、RBAC 等资源 | 后续补多版本 API 选择、Schema 和能力精细提示 | 已完成主体 |
+| GAP-02 | CRD 生命周期与动态 YAML | ◐ 通用 YAML 创建/编辑/删除、Dry Run、SSA、SAR 和审计已实现；缺 Schema 与动态表单 | Headlamp、Lens、Devtron 支持 CRD 和自定义资源编辑 | 已可通过 UI 管理 CRD，但复杂 CRD 的输入体验仍依赖文档 | 接入 OpenAPI Schema、动态表单和字段级提示 | 剩余 1–2 人周 |
 | GAP-03 | Pod Exec / Terminal / Debug | 无 | Headlamp、Lens、K8s Dashboard | 排障仍需回到 `kubectl exec`，控制台闭环中断 | WebSocket/SPDY 终端、容器选择、Shell 检测、Ephemeral Container、超时和审计 | 3–4 人周 |
 | GAP-04 | Port-forward | 无 | Headlamp、Lens | 临时访问数据库、调试端口仍需本地 kubectl | 受 RBAC、审计、显式端口和会话超时控制的端口转发；默认考虑关闭 | 4–6 人周 |
 | GAP-05 | Helm Release 管理 | 仅用 Helm 部署 Dosh 自身 | Lens、KubeSphere、Rancher、Devtron | 无法查看 Release、values、manifest、历史、diff 和回滚 | 浏览 Release、values、manifest、revision history、升级/回滚；Secret 值遮蔽 | 5–7 人周 |
-| GAP-06 | 工作负载 revision 与回滚 | 无 ReplicaSet/ControllerRevision 历史视图 | 平台型产品普遍有发布历史 | 发布失败只能重新 apply YAML，缺少可追踪恢复路径 | 展示 Deployment/StatefulSet revision、rollout 状态、差异和一键回滚；保留审计 | 2–3 人周 |
+| GAP-06 | 工作负载 revision 与回滚 | ✅ Deployment/StatefulSet revision 历史、当前标记、镜像和回滚已实现 | 平台型产品普遍有发布历史 | 已提供可追踪的发布恢复路径 | 后续补回滚前 Diff、仅 Patch 模板和更细的 rollout 状态 | 已完成主体 |
 | GAP-07 | 结构化工作负载与存储表单 | 目前主要只有 Deployment 创建表单 | Headlamp 通用编辑；平台产品有向导 | StatefulSet、DaemonSet、Job、CronJob 仍依赖 YAML；PV、SC 写入能力不足 | 增加结构化创建/编辑表单，复杂字段可回退 YAML；补齐 PV/SC 的受控操作 | 2–3 人周 |
 | GAP-08 | 节点排空与故障拓扑 | 仅 Cordon/Uncordon、标签、污点 | Lens/Headlamp 有更完整资源关系和排障入口 | 节点维护需要手动 evict 和检查 PodDisruptionBudget | 增加 drain/evict、PDB 提示、Pod 拓扑、节点事件和关联工作负载视图 | 2–3 人周 |
-| GAP-09 | RBAC、网络策略、弹性资源视图 | 无 Role、Binding、NetworkPolicy、HPA、PDB、Quota 等专门视图 | Headlamp、Lens、平台产品 | 无法在控制台解释“为什么能/不能访问”、无法查看配额和策略 | 增加 ServiceAccount、Role、RoleBinding、ClusterRole、ClusterRoleBinding、NetworkPolicy、HPA/VPA、PDB、ResourceQuota、LimitRange、PriorityClass | 2–4 人周 |
+| GAP-09 | RBAC、网络策略、弹性资源视图 | ✅ 治理入口覆盖 ServiceAccount、Role、Binding、NetworkPolicy、HPA、PDB、Quota、LimitRange、PriorityClass | Headlamp、Lens、平台产品 | 已可查看高频治理对象和关键关系 | 后续补 can-i 权限解释、VPA 和更深的关联导航 | 已完成主体 |
 
 P0 合计约 26–40 人周。如果只做 1 名工程师，等于 6–9 个月；如果目标是快速形成竞争力，建议至少 2 名工程师并行，并把 P0 拆成 2–3 个里程碑。
 
@@ -221,7 +221,7 @@ P0 合计约 26–40 人周。如果只做 1 名工程师，等于 6–9 个月�
 | ID | Gap | Dosh 当前状态 | 主流基线 | 业务影响 | 建议补齐 | 粗估 |
 |---|---|---|---|---|---|---|
 | GAP-10 | 历史指标与告警 | 只有 Metrics API 瞬时 CPU/内存 | Lens metrics、Headlamp Prometheus 插件、KubeSphere/Rancher/Devtron 监控 | 无法看趋势、容量规划和告警 | Prometheus/VictoriaMetrics 适配器、节点/Pod/工作负载图表、告警状态；不可用时无障碍降级 | 4–6 人周 |
-| GAP-11 | 日志聚合、Previous、检索 | 仅单 Pod 实时流 | Lens、Headlamp、平台产品更强 | CrashLoop 恢复后无法看上一轮日志，跨 Pod 排障效率低 | `previous` 日志、容器/时间范围/tail 过滤、跨 Pod 聚合、Loki 等后端可选接入 | 3–5 人周 |
+| GAP-11 | 日志聚合、Previous、检索 | ◐ 单 Pod 实时流、Previous、容器/tail/时间戳/关键词筛选已实现 | Lens、Headlamp、平台产品更强 | CrashLoop 恢复后已可查看上一轮日志，跨 Pod 排障效率仍有限 | 补 Init Container、时间范围、跨 Pod 聚合和 Loki 等后端 | 2–4 人周 |
 | GAP-12 | 全局搜索、保存视图、Diff | 全局搜索仅节点/工作负载/Pod | Headlamp/Lens 通用搜索；平台产品有保存视图 | 资源多时查找效率低，变更前无法预览差异 | 全资源搜索、保存筛选、收藏、自定义列、YAML Diff、最近使用模板、资源历史 | 3–4 人周 |
 | GAP-13 | 策略预检、镜像漏洞和健康评分 | 无 | Devtron、Rancher、KubeSphere，Headlamp 可通过 Kyverno/Trivy 插件 | 高风险配置和漏洞只能在集群外发现 | Kyverno/OPA Dry Run 预检、Trivy 镜像扫描、工作负载健康评分、风险提示 | 4–6 人周 |
 | GAP-14 | 审计运营化 | 最近记录 + stdout/Webhook | 企业平台有集中审计、保留、检索和告警 | 当前更适合技术审计，不足以直接满足企业 SIEM 运营 | 明确保留策略、SIEM 投递、检索、告警、访问审批和证据导出 | 3–5 人周 + 外部运营 |
@@ -386,17 +386,20 @@ Dosh 当前已经具备一套不错的安全边界和单集群日常运维闭环
 
 ## 10. 实施进展
 
-截至 2026-11-13，GAP-01 第二阶段已落地：
+截至 2026-11-14，阶段 A 的通用资源只读与受控写入已落地：
 
-- 新增 API Discovery 类型目录、统一 GVR 校验和通用只读列表/详情。
+- 新增 API Discovery 类型目录、统一 GVR 校验和通用列表/详情。
 - 通用读取执行 `list`/`get` SubjectAccessReview，并支持命名空间、搜索、cursor 分页和截断提示。
 - 核心 Secret 在通用对象和 YAML 中遮蔽 `data`/`stringData`，并记录成功与失败审计。
-- 前端新增资源浏览器，可从类型目录进入任意已发现资源的列表、详情、事件和只读 YAML。
-- Pod、Service、ConfigMap、Secret 等固定页面继续保留，承担高价值关联、排障和受控写操作；资源浏览器作为通用只读兜底。
+- 前端新增资源浏览器，可从类型目录进入任意已发现资源的列表、详情、事件和 YAML，并按能力查询结果提供创建、编辑和删除入口。
+- 通用创建/更新支持 API Server Dry Run、`create`/`update`/`patch` 分权、SSA 回退和审计；通用 Secret 创建/更新继续关闭，删除仍需资源级 RBAC。
+- Pod、Service、ConfigMap、Secret 等固定页面继续保留，承担高价值关联、排障和受控写操作；资源浏览器提供通用读写兜底。
 - 通用列表优先使用 Kubernetes Table API 展示类型专属列，并在不支持 Table 响应时回退到基础元数据列。
 - 携带 namespace 的 Discovery 使用 `SelfSubjectRulesReview` 缓存过滤当前身份可 list 的资源类型；失败时按失败关闭策略隐藏对应作用域。
 - 全局搜索接入通用资源，但限制为当前身份可 list 的已授权类型、最多 16 个类型，并要求 Namespaced 资源显式选择命名空间。
 - 新增“治理与策略”入口，覆盖 RBAC、NetworkPolicy、HPA、PDB、配额和 PriorityClass，并解释关键资源关系。
 - Pod 日志新增 Previous 实例、关键词筛选，并补齐 `get pods/log` SubjectAccessReview 与 `stream-pod-logs` 审计。
+- 工作负载详情新增发布历史页签，Deployment 使用 ReplicaSet、StatefulSet 使用 ControllerRevision 展示 revision、镜像、变更原因和当前标记。
+- Deployment/StatefulSet 支持通过定向 Merge Patch 回滚，只恢复 Pod 模板与变更原因，保留副本数和其他并发字段，并记录回滚审计；避免状态控制器持续更新导致整体对象 `resourceVersion` 冲突。
 
-GAP-02（CRD 动态写入）、跨 Pod 日志聚合、CRD 事件跳转与保存视图仍属于后续阶段。
+仍属于后续阶段：CRD Schema/动态表单、多 served version 选择、高风险资源写入策略分层、仅 Patch Pod 模板的回滚、跨 Pod 日志聚合、CRD 事件跳转与保存视图。

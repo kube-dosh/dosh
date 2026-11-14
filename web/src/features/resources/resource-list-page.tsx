@@ -1,8 +1,8 @@
 import { useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useParams, useSearch } from "@tanstack/react-router";
 import { createColumnHelper } from "@tanstack/react-table";
-import { Eye, FileCode2, Layers3, TriangleAlert } from "lucide-react";
+import { Eye, FileCode2, Layers3, Plus, TriangleAlert } from "lucide-react";
 import { api } from "@/api/client";
 import type { GenericResourceSummary } from "@/api/types";
 import { DataTable } from "@/components/data/data-table";
@@ -14,6 +14,7 @@ import { ResourceActionsMenu, type ResourceAction } from "@/components/resources
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { GenericYamlPanel } from "@/features/resources/generic-yaml-panel";
+import { GenericResourceEditorDialog } from "@/features/resources/generic-resource-editor-dialog";
 import { cursorPaginationProps, retryListQuery, useCursorPagination } from "@/hooks/use-cursor-pagination";
 import { formatAge } from "@/lib/utils";
 
@@ -48,7 +49,9 @@ export function ResourceListPage() {
   const params = useParams({ strict: false }) as { group: string; version: string; resource: string };
   const search = useSearch({ from: "/app/resources/$group/$version/$resource" });
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const [yamlTarget, setYamlTarget] = useState<GenericResourceSummary>();
+  const [createOpen, setCreateOpen] = useState(false);
   const version = params.version;
   const resource = params.resource;
   const apiGroup = params.group === "_core" ? "" : params.group;
@@ -56,6 +59,14 @@ export function ResourceListPage() {
   const q = search.q ?? "";
   const discovery = useQuery({ queryKey: ["resource-discovery", "all"], queryFn: () => api.resourceDiscovery(), staleTime: 60_000 });
   const descriptor = discovery.data?.items.find((item) => item.group === apiGroup && item.version === version && item.resource === resource);
+  const capabilities = useQuery({
+    queryKey: ["generic-resource-capabilities", apiGroup, version, resource, namespace],
+    queryFn: () => api.genericResourceCapabilities({ group: apiGroup, version, resource }, namespace || undefined),
+    enabled: Boolean(descriptor) && (!descriptor?.namespaced || Boolean(namespace)),
+    staleTime: 30_000,
+  });
+  const canCreate = Boolean(capabilities.data?.create);
+  const createDisabled = descriptor?.namespaced && !namespace;
   const pager = useCursorPagination(`resource|${apiGroup}|${version}|${resource}|${namespace}|${q}`, 20);
   const query = useQuery({
     queryKey: ["generic-resources", apiGroup, version, resource, namespace, q, pager.page, pager.cursor],
@@ -123,6 +134,7 @@ export function ResourceListPage() {
         title={descriptor?.kind || resource}
         breadcrumb={<><Link to="/resources" className="hover:text-foreground hover:underline">资源浏览器</Link>{` / ${apiGroup || "core"}/${version}/${resource}`}</>}
         description={descriptor ? `${descriptor.namespaced ? "Namespaced" : "Cluster-scoped"} · ${descriptor.group || "core"}/${descriptor.version} · 当前读取受 Kubernetes RBAC 约束。` : "正在读取资源类型。"}
+          actions={canCreate ? <Button size="sm" disabled={createDisabled} title={createDisabled ? "请先选择命名空间" : undefined} onClick={() => setCreateOpen(true)}><Plus className="h-4 w-4" />创建 YAML</Button> : undefined}
       />
       <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center">
         <SearchInput value={q} onChange={(value) => updateSearch({ q: value || undefined })} placeholder="搜索名称或命名空间" />
@@ -161,6 +173,21 @@ export function ResourceListPage() {
         })}
       />
       {yamlTarget ? <ResourceYamlDialog target={yamlTarget} group={apiGroup} version={version} resource={resource} namespace={namespace} onClose={() => setYamlTarget(undefined)} /> : null}
+      {descriptor ? (
+        <GenericResourceEditorDialog
+          open={createOpen}
+          onOpenChange={setCreateOpen}
+          descriptor={descriptor}
+          reference={{ group: apiGroup, version, resource }}
+          namespace={namespace}
+          mode="create"
+          onSaved={async () => {
+            await queryClient.invalidateQueries({ queryKey: ["generic-resources"] });
+            await queryClient.invalidateQueries({ queryKey: ["resource-discovery"] });
+            await queryClient.invalidateQueries({ queryKey: ["generic-resource-capabilities"] });
+          }}
+        />
+      ) : null}
     </>
   );
 }

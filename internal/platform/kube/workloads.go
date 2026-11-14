@@ -602,6 +602,161 @@ func (c *Client) DeleteWorkload(ctx context.Context, kind, namespace, name strin
 	}
 }
 
+func (c *Client) ListWorkloadRevisions(ctx context.Context, kind, namespace, name string) ([]domain.WorkloadRevision, error) {
+	ctx, cancel := c.withTimeout(ctx)
+	defer cancel()
+	switch strings.ToLower(kind) {
+	case "deployment":
+		deployment, err := c.clientset.AppsV1().Deployments(namespace).Get(ctx, name, metav1.GetOptions{})
+		if err != nil {
+			return nil, mapKubeError(err)
+		}
+		replicaSets, err := c.clientset.AppsV1().ReplicaSets(namespace).List(ctx, metav1.ListOptions{})
+		if err != nil {
+			return nil, mapKubeError(err)
+		}
+		currentRevision := deployment.Annotations["deployment.kubernetes.io/revision"]
+		revisions := make([]domain.WorkloadRevision, 0)
+		for _, replicaSet := range replicaSets.Items {
+			if !metav1.IsControlledBy(&replicaSet, deployment) {
+				continue
+			}
+			revision, err := strconv.ParseInt(replicaSet.Annotations["deployment.kubernetes.io/revision"], 10, 64)
+			if err != nil {
+				continue
+			}
+			desired := int32(1)
+			if replicaSet.Spec.Replicas != nil {
+				desired = *replicaSet.Spec.Replicas
+			}
+			revisions = append(revisions, domain.WorkloadRevision{
+				Kind: "Deployment", Name: replicaSet.Name, Revision: revision,
+				Current:     currentRevision == replicaSet.Annotations["deployment.kubernetes.io/revision"],
+				ChangeCause: replicaSet.Annotations["kubernetes.io/change-cause"],
+				Status:      replicaStatus(desired, replicaSet.Status.ReadyReplicas, replicaSet.Status.AvailableReplicas, false),
+				Replicas:    desired, ReadyReplicas: replicaSet.Status.ReadyReplicas,
+				Images: podTemplateImages(replicaSet.Spec.Template.Spec.Containers), CreatedAt: replicaSet.CreationTimestamp.Time,
+			})
+		}
+		sort.Slice(revisions, func(i, j int) bool { return revisions[i].Revision > revisions[j].Revision })
+		return revisions, nil
+	case "statefulset":
+		statefulSet, err := c.clientset.AppsV1().StatefulSets(namespace).Get(ctx, name, metav1.GetOptions{})
+		if err != nil {
+			return nil, mapKubeError(err)
+		}
+		controllerRevisions, err := c.clientset.AppsV1().ControllerRevisions(namespace).List(ctx, metav1.ListOptions{})
+		if err != nil {
+			return nil, mapKubeError(err)
+		}
+		revisions := make([]domain.WorkloadRevision, 0)
+		for _, controllerRevision := range controllerRevisions.Items {
+			if !metav1.IsControlledBy(&controllerRevision, statefulSet) {
+				continue
+			}
+			var snapshot appsv1.StatefulSet
+			if err := json.Unmarshal(controllerRevision.Data.Raw, &snapshot); err != nil {
+				continue
+			}
+			revisions = append(revisions, domain.WorkloadRevision{
+				Kind: "StatefulSet", Name: controllerRevision.Name, Revision: controllerRevision.Revision,
+				Current:     statefulSet.Status.CurrentRevision == controllerRevision.Name,
+				ChangeCause: controllerRevision.Annotations["kubernetes.io/change-cause"],
+				Status:      "History", Images: podTemplateImages(snapshot.Spec.Template.Spec.Containers),
+				CreatedAt: controllerRevision.CreationTimestamp.Time,
+			})
+		}
+		sort.Slice(revisions, func(i, j int) bool { return revisions[i].Revision > revisions[j].Revision })
+		return revisions, nil
+	default:
+		return nil, fmt.Errorf("%w: revisions are not supported for %s", domain.ErrUnsupported, kind)
+	}
+}
+
+func (c *Client) RollbackWorkload(ctx context.Context, kind, namespace, name string, revision int64) error {
+	ctx, cancel := c.withTimeout(ctx)
+	defer cancel()
+	switch strings.ToLower(kind) {
+	case "deployment":
+		deployment, err := c.clientset.AppsV1().Deployments(namespace).Get(ctx, name, metav1.GetOptions{})
+		if err != nil {
+			return mapKubeError(err)
+		}
+		replicaSets, err := c.clientset.AppsV1().ReplicaSets(namespace).List(ctx, metav1.ListOptions{})
+		if err != nil {
+			return mapKubeError(err)
+		}
+		var target *appsv1.ReplicaSet
+		for index := range replicaSets.Items {
+			replicaSet := &replicaSets.Items[index]
+			if !metav1.IsControlledBy(replicaSet, deployment) {
+				continue
+			}
+			if replicaSet.Annotations["deployment.kubernetes.io/revision"] == strconv.FormatInt(revision, 10) {
+				target = replicaSet
+				break
+			}
+		}
+		if target == nil {
+			return fmt.Errorf("%w: deployment revision %d", domain.ErrNotFound, revision)
+		}
+		patch, err := rollbackPatch(target.Spec.Template, target.Annotations["kubernetes.io/change-cause"])
+		if err != nil {
+			return err
+		}
+		_, err = c.clientset.AppsV1().Deployments(namespace).Patch(ctx, name, types.MergePatchType, patch, metav1.PatchOptions{FieldManager: "dosh"})
+		return mapKubeError(err)
+	case "statefulset":
+		statefulSet, err := c.clientset.AppsV1().StatefulSets(namespace).Get(ctx, name, metav1.GetOptions{})
+		if err != nil {
+			return mapKubeError(err)
+		}
+		controllerRevisions, err := c.clientset.AppsV1().ControllerRevisions(namespace).List(ctx, metav1.ListOptions{})
+		if err != nil {
+			return mapKubeError(err)
+		}
+		var target *appsv1.ControllerRevision
+		for index := range controllerRevisions.Items {
+			controllerRevision := &controllerRevisions.Items[index]
+			if metav1.IsControlledBy(controllerRevision, statefulSet) && controllerRevision.Revision == revision {
+				target = controllerRevision
+				break
+			}
+		}
+		if target == nil {
+			return fmt.Errorf("%w: statefulset revision %d", domain.ErrNotFound, revision)
+		}
+		var snapshot appsv1.StatefulSet
+		if err := json.Unmarshal(target.Data.Raw, &snapshot); err != nil {
+			return fmt.Errorf("%w: decode statefulset revision: %v", domain.ErrUnavailable, err)
+		}
+		patch, err := rollbackPatch(snapshot.Spec.Template, target.Annotations["kubernetes.io/change-cause"])
+		if err != nil {
+			return err
+		}
+		_, err = c.clientset.AppsV1().StatefulSets(namespace).Patch(ctx, name, types.MergePatchType, patch, metav1.PatchOptions{FieldManager: "dosh"})
+		return mapKubeError(err)
+	default:
+		return fmt.Errorf("%w: rollback is not supported for %s", domain.ErrUnsupported, kind)
+	}
+}
+
+func rollbackPatch(template corev1.PodTemplateSpec, changeCause string) ([]byte, error) {
+	patch := map[string]any{
+		"spec": map[string]any{"template": template},
+	}
+	if changeCause != "" {
+		patch["metadata"] = map[string]any{
+			"annotations": map[string]string{"kubernetes.io/change-cause": changeCause},
+		}
+	}
+	encoded, err := json.Marshal(patch)
+	if err != nil {
+		return nil, fmt.Errorf("%w: encode rollback patch: %v", domain.ErrUnavailable, err)
+	}
+	return encoded, nil
+}
+
 func deploymentSummary(item appsv1.Deployment) domain.WorkloadSummary {
 	desired := int32(1)
 	if item.Spec.Replicas != nil {

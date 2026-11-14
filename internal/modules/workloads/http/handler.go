@@ -73,6 +73,10 @@ type suspendRequest struct {
 	ResourceVersion string `json:"resourceVersion"`
 }
 
+type rollbackRequest struct {
+	Revision int64 `json:"revision"`
+}
+
 type deploymentEnvVarRequest struct {
 	Name  string `json:"name"`
 	Value string `json:"value"`
@@ -331,6 +335,28 @@ func (h *Handler) GetPod(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	httpx.JSON(w, stdhttp.StatusOK, item)
 }
 
+func (h *Handler) Revisions(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	items, err := h.service.Revisions(r.Context(), chi.URLParam(r, "kind"), chi.URLParam(r, "namespace"), chi.URLParam(r, "name"))
+	if err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	httpx.JSON(w, stdhttp.StatusOK, map[string]any{"items": items})
+}
+
+func (h *Handler) Rollback(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	var request rollbackRequest
+	if !httpx.DecodeJSON(w, r, &request) {
+		return
+	}
+	actor, _ := domain.ActorFromContext(r.Context())
+	if err := h.service.Rollback(r.Context(), actor, chi.URLParam(r, "kind"), chi.URLParam(r, "namespace"), chi.URLParam(r, "name"), request.Revision); err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	httpx.JSON(w, stdhttp.StatusAccepted, map[string]string{"status": "rolling-back"})
+}
+
 func (h *Handler) DeletePod(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	actor, _ := domain.ActorFromContext(r.Context())
 	if err := h.service.DeletePod(r.Context(), actor, chi.URLParam(r, "namespace"), chi.URLParam(r, "name")); err != nil {
@@ -444,6 +470,8 @@ func (h *Handler) Mount(r chi.Router) {
 	r.Post("/workloads/{kind}/{namespace}/{name}/image", h.UpdateImage)
 	r.Put("/workloads/{kind}/{namespace}/{name}/containers/{container}/config", h.UpdateContainerConfig)
 	r.Post("/workloads/{kind}/{namespace}/{name}/suspend", h.SetSuspend)
+	r.Get("/workloads/{kind}/{namespace}/{name}/revisions", h.Revisions)
+	r.Post("/workloads/{kind}/{namespace}/{name}/rollback", h.Rollback)
 	r.Delete("/workloads/{kind}/{namespace}/{name}", h.Delete)
 	r.Get("/pods", h.ListPods)
 	r.Get("/pods/{namespace}/{name}", h.GetPod)

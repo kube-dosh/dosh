@@ -1,6 +1,7 @@
-import { useQuery } from "@tanstack/react-query";
+import { useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useParams, useSearch } from "@tanstack/react-router";
-import { ArrowLeft, FileCode2 } from "lucide-react";
+import { ArrowLeft, FileCode2, Pencil, Trash2 } from "lucide-react";
 import { api } from "@/api/client";
 import type { ResourceDescriptor } from "@/api/types";
 import { DetailItem } from "@/components/data/detail-item";
@@ -12,7 +13,9 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ResourceEvents } from "@/features/events/resource-events";
 import { GenericYamlPanel } from "@/features/resources/generic-yaml-panel";
+import { GenericResourceEditorDialog } from "@/features/resources/generic-resource-editor-dialog";
 import { findGovernanceDescriptor, governanceRelationships } from "@/features/resources/governance-resources";
+import { DeleteResourceDialog } from "@/components/resources/delete-resource-dialog";
 import { formatDate } from "@/lib/utils";
 
 const detailTabs = ["overview", "events", "yaml"] as const;
@@ -30,12 +33,21 @@ export function ResourceDetailPage() {
   const params = useParams({ strict: false }) as { group: string; version: string; resource: string; name: string };
   const search = useSearch({ from: "/app/resources/$group/$version/$resource/$name" });
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
+  const [editOpen, setEditOpen] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
   const apiGroup = params.group === "_core" ? "" : params.group;
   const namespace = search.namespace ?? "";
   const tab = isDetailTab(search.tab) ? search.tab : "overview";
   const discovery = useQuery({ queryKey: ["resource-discovery", "all"], queryFn: () => api.resourceDiscovery(), staleTime: 60_000 });
   const descriptor = findDescriptor(discovery.data?.items ?? [], apiGroup, params.version, params.resource);
   const missingNamespace = Boolean(descriptor?.namespaced && !namespace);
+  const capabilities = useQuery({
+    queryKey: ["generic-resource-capabilities", apiGroup, params.version, params.resource, namespace],
+    queryFn: () => api.genericResourceCapabilities({ group: apiGroup, version: params.version, resource: params.resource }, namespace || undefined),
+    enabled: Boolean(descriptor) && !missingNamespace,
+    staleTime: 30_000,
+  });
   const query = useQuery({
     queryKey: ["generic-resource", apiGroup, params.version, params.resource, namespace, params.name],
     queryFn: () => api.resource({ group: apiGroup, version: params.version, resource: params.resource }, params.name, namespace),
@@ -70,6 +82,8 @@ export function ResourceDetailPage() {
   if (!detail) return null;
   const governance = descriptor ? findGovernanceDescriptor(descriptor) : undefined;
   const relationships = governanceRelationships(params.resource, detail.object);
+  const canEdit = Boolean(capabilities.data?.update && !detail.redacted);
+  const canDelete = Boolean(capabilities.data?.delete);
   return (
     <>
       <PageHeader
@@ -85,7 +99,7 @@ export function ResourceDetailPage() {
           </>
         )}
         description={`${detail.apiVersion} · ${detail.kind}${detail.namespace ? ` · ${detail.namespace}` : ""}`}
-        actions={listLink}
+        actions={<>{canEdit ? <Button variant="outline" size="sm" onClick={() => setEditOpen(true)}><Pencil className="h-4 w-4" />编辑 YAML</Button> : null}{canDelete ? <Button variant="destructive" size="sm" onClick={() => setDeleteOpen(true)}><Trash2 className="h-4 w-4" />删除</Button> : null}{listLink}</>}
       />
       {detail.warnings?.length ? (
         <div className="mb-3 rounded-md border border-warning/35 bg-warning/10 px-3 py-2 text-xs text-warning">{detail.warnings.join("；")}</div>
@@ -141,6 +155,35 @@ export function ResourceDetailPage() {
         <TabsContent value="events"><ResourceEvents namespace={namespace} objectKind={detail.kind} objectName={detail.name} /></TabsContent>
         <TabsContent value="yaml"><GenericYamlPanel yaml={detail.yaml} /></TabsContent>
       </Tabs>
+      {descriptor ? (
+        <GenericResourceEditorDialog
+          open={editOpen}
+          onOpenChange={setEditOpen}
+          descriptor={descriptor}
+          reference={{ group: apiGroup, version: params.version, resource: params.resource }}
+          namespace={namespace}
+          mode="update"
+          detail={detail}
+          onSaved={async () => {
+            await queryClient.invalidateQueries({ queryKey: ["generic-resource"] });
+            await queryClient.invalidateQueries({ queryKey: ["generic-resources"] });
+            await queryClient.invalidateQueries({ queryKey: ["resource-discovery"] });
+            await queryClient.invalidateQueries({ queryKey: ["generic-resource-capabilities"] });
+          }}
+        />
+      ) : null}
+      <DeleteResourceDialog
+        open={deleteOpen}
+        onOpenChange={setDeleteOpen}
+        resourceKind={detail.kind}
+        name={detail.name}
+        description="通用资源删除会立即提交到 Kubernetes API，并记录审计事件。"
+        onConfirm={async () => {
+          await api.deleteGenericResource({ group: apiGroup, version: params.version, resource: params.resource }, detail.name, namespace, detail.resourceVersion, "Background");
+          await queryClient.invalidateQueries({ queryKey: ["generic-resources"] });
+          await navigate({ to: "/resources/$group/$version/$resource", params: { group: params.group, version: params.version, resource: params.resource }, search: { namespace: namespace || undefined } });
+        }}
+      />
     </>
   );
 }

@@ -626,6 +626,72 @@ paths:
         "409": { $ref: "#/components/responses/Conflict" }
         "501": { $ref: "#/components/responses/NotSupported" }
         "503": { $ref: "#/components/responses/DependencyUnavailable" }
+  /api/v1/workloads/{kind}/{namespace}/{name}/revisions:
+    get:
+      tags: [workloads]
+      summary: List retained Deployment or StatefulSet revisions
+      description: >-
+        Deployment revisions are derived from owned ReplicaSets. StatefulSet
+        revisions are derived from owned ControllerRevisions. Revisions are
+        ordered newest first and never expose manifest content in this view.
+      parameters:
+        - { $ref: "#/components/parameters/KindPath" }
+        - { $ref: "#/components/parameters/NamespacePath" }
+        - { $ref: "#/components/parameters/Name" }
+      responses:
+        "200":
+          description: Retained workload revisions
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/WorkloadRevision" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "501": { $ref: "#/components/responses/NotSupported" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
+  /api/v1/workloads/{kind}/{namespace}/{name}/rollback:
+    post:
+      tags: [workloads]
+      summary: Roll a Deployment or StatefulSet back to one retained revision
+      description: >-
+        Uses a targeted merge patch to restore the retained pod template and
+        change-cause annotation while preserving the current replica count,
+        status, and other concurrent changes outside the pod template.
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      parameters:
+        - { $ref: "#/components/parameters/KindPath" }
+        - { $ref: "#/components/parameters/NamespacePath" }
+        - { $ref: "#/components/parameters/Name" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [revision]
+              properties:
+                revision: { type: integer, format: int64, minimum: 1 }
+      responses:
+        "202":
+          description: Rollback accepted
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OperationStatus" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "501": { $ref: "#/components/responses/NotSupported" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
   /api/v1/pods:
     get:
       tags: [workloads]
@@ -1566,6 +1632,39 @@ paths:
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "503": { $ref: "#/components/responses/DependencyUnavailable" }
+  /api/v1/resources/capabilities:
+    get:
+      tags: [resources]
+      summary: Get current-user write capabilities for one discovered resource type
+      description: >-
+        Evaluates create, update/patch and delete access for the authenticated
+        user in the selected namespace. Secret generic create and update remain
+        disabled because the dedicated Secret workflow owns those writes.
+      parameters:
+        - name: group
+          in: query
+          required: true
+          schema: { type: string }
+          description: Use an empty value or `_core` for the core API group.
+        - name: version
+          in: query
+          required: true
+          schema: { type: string }
+        - name: resource
+          in: query
+          required: true
+          schema: { type: string }
+        - $ref: "#/components/parameters/Namespace"
+      responses:
+        "200":
+          description: Current-user resource capabilities
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ResourceCapabilities" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
   /api/v1/resources/{group}/{version}/{resource}:
     get:
       tags: [resources]
@@ -1596,6 +1695,37 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "503": { $ref: "#/components/responses/DependencyUnavailable" }
+    post:
+      tags: [resources]
+      summary: Create one discovered Kubernetes resource from YAML
+      description: >-
+        Validates one YAML document and its discovered GVR before authorization.
+        A real create always performs an internal API Server dry run first.
+        Generic Secret creation is disabled; use the dedicated Secret editor.
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      parameters:
+        - $ref: "#/components/parameters/ResourceGroupPath"
+        - $ref: "#/components/parameters/ResourceVersionPath"
+        - $ref: "#/components/parameters/ResourceNamePath"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/GenericResourceMutation" }
+      responses:
+        "201":
+          description: Resource created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/GenericResourceDetail" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "501": { $ref: "#/components/responses/NotSupported" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
   /api/v1/resources/{group}/{version}/{resource}/{name}:
     get:
       tags: [resources]
@@ -1620,6 +1750,76 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
+    put:
+      tags: [resources]
+      summary: Update one discovered Kubernetes resource from YAML
+      description: >-
+        Requires update or patch access. A real update always performs an
+        internal API Server dry run first. Generic Secret updates are disabled.
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      parameters:
+        - $ref: "#/components/parameters/ResourceGroupPath"
+        - $ref: "#/components/parameters/ResourceVersionPath"
+        - $ref: "#/components/parameters/ResourceNamePath"
+        - $ref: "#/components/parameters/Name"
+        - $ref: "#/components/parameters/Namespace"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/GenericResourceMutation" }
+      responses:
+        "200":
+          description: Resource updated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/GenericResourceDetail" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "501": { $ref: "#/components/responses/NotSupported" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
+    delete:
+      tags: [resources]
+      summary: Delete one discovered Kubernetes resource
+      description: >-
+        Deletes through the discovered GVR after delete authorization. A caller
+        supplied resourceVersion is used as a Kubernetes precondition.
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      parameters:
+        - $ref: "#/components/parameters/ResourceGroupPath"
+        - $ref: "#/components/parameters/ResourceVersionPath"
+        - $ref: "#/components/parameters/ResourceNamePath"
+        - $ref: "#/components/parameters/Name"
+        - $ref: "#/components/parameters/Namespace"
+        - name: resourceVersion
+          in: query
+          schema: { type: string }
+        - name: propagation
+          in: query
+          schema:
+            type: string
+            enum: [Background, Foreground, Orphan]
+            default: Background
+      responses:
+        "202":
+          description: Deletion accepted
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OperationStatus" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "501": { $ref: "#/components/responses/NotSupported" }
         "503": { $ref: "#/components/responses/DependencyUnavailable" }
 components:
   securitySchemes:
@@ -2189,6 +2389,22 @@ components:
         labels:
           type: object
           additionalProperties: { type: string }
+    WorkloadRevision:
+      type: object
+      required: [kind, name, revision, current, status, replicas, readyReplicas, images, createdAt]
+      properties:
+        kind: { type: string, enum: [Deployment, StatefulSet] }
+        name: { type: string }
+        revision: { type: integer, format: int64 }
+        current: { type: boolean }
+        changeCause: { type: string }
+        status: { type: string }
+        replicas: { type: integer }
+        readyReplicas: { type: integer }
+        images:
+          type: array
+          items: { type: string }
+        createdAt: { type: string, format: date-time }
     DeploymentEnvVar:
       type: object
       required: [name, value]
@@ -2975,3 +3191,19 @@ components:
         warnings:
           type: array
           items: { type: string }
+    GenericResourceMutation:
+      type: object
+      required: [yaml]
+      properties:
+        namespace:
+          type: string
+          description: Selected namespace. Must agree with metadata.namespace for namespaced resources.
+        yaml:
+          type: string
+          minLength: 1
+          description: Exactly one YAML document up to 1 MiB with a matching apiVersion, kind and metadata.name.
+        resourceVersion: { type: string }
+        dryRun:
+          type: boolean
+          default: false
+          description: When true, validates without writing. Real writes still perform an internal dry run first.

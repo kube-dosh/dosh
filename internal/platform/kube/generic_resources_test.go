@@ -2,6 +2,7 @@ package kube
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"strings"
@@ -215,20 +216,23 @@ func TestListResourceRulesUsesSelfSubjectRulesReviewAndCaches(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListResourceRules() error = %v", err)
 	}
-	if len(warnings) != 0 || len(rules.Namespaced) != 1 || len(rules.Cluster) != 1 {
+	if len(warnings) != 0 || len(rules.Namespaced) != 1 || len(rules.Cluster) != 0 {
 		t.Fatalf("rules = %#v warnings = %#v", rules, warnings)
 	}
-	if calls != 2 {
-		t.Fatalf("SelfSubjectRulesReview calls = %d, want 2", calls)
+	if calls != 1 {
+		t.Fatalf("SelfSubjectRulesReview calls = %d, want 1", calls)
 	}
-	if len(namespaces) != 2 || namespaces[0] != "prod" || namespaces[1] != "" {
+	if len(namespaces) != 1 || namespaces[0] != "prod" {
 		t.Fatalf("review namespaces = %#v", namespaces)
 	}
 	if _, _, err := client.ListResourceRules(context.Background(), actor, "prod"); err != nil {
 		t.Fatalf("cached ListResourceRules() error = %v", err)
 	}
-	if calls != 2 {
+	if calls != 1 {
 		t.Fatalf("cache miss: SelfSubjectRulesReview calls = %d", calls)
+	}
+	if _, _, err := client.ListResourceRules(context.Background(), actor, ""); !errors.Is(err, domain.ErrInvalid) {
+		t.Fatalf("empty namespace error = %v, want ErrInvalid", err)
 	}
 }
 
@@ -237,5 +241,67 @@ func TestGenericResourceInterfaceRequiresDynamicClient(t *testing.T) {
 	_, err := client.ListGenericResources(context.Background(), domain.ResourceDescriptor{Version: "v1", Resource: "pods"}, domain.ListQuery{}, domain.PageRequest{})
 	if err == nil {
 		t.Fatal("ListGenericResources() error = nil, want unavailable dynamic client")
+	}
+}
+
+func TestGenericResourceMutationsPreserveDryRunVersionAndDeletionPolicy(t *testing.T) {
+	widgetGVR := schema.GroupVersionResource{Group: "example.io", Version: "v1", Resource: "widgets"}
+	dynamicClient := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(
+		runtime.NewScheme(), map[schema.GroupVersionResource]string{widgetGVR: "WidgetList"},
+	)
+	var creates, updates, patches []bool
+	var deleteOptions metav1.DeleteOptions
+	var patchBody []byte
+	dynamicClient.PrependReactor("create", "widgets", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		options := action.(k8stesting.CreateActionImpl).GetCreateOptions()
+		creates = append(creates, len(options.DryRun) == 1 && options.DryRun[0] == metav1.DryRunAll)
+		return true, action.(k8stesting.CreateAction).GetObject(), nil
+	})
+	dynamicClient.PrependReactor("update", "widgets", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		options := action.(k8stesting.UpdateActionImpl).GetUpdateOptions()
+		updates = append(updates, len(options.DryRun) == 1 && options.DryRun[0] == metav1.DryRunAll)
+		return true, action.(k8stesting.UpdateAction).GetObject(), nil
+	})
+	dynamicClient.PrependReactor("patch", "widgets", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		patch := action.(k8stesting.PatchActionImpl)
+		options := patch.GetPatchOptions()
+		patches = append(patches, len(options.DryRun) == 1 && options.DryRun[0] == metav1.DryRunAll)
+		patchBody = patch.GetPatch()
+		return true, &unstructured.Unstructured{Object: map[string]any{
+			"apiVersion": "example.io/v1", "kind": "Widget",
+			"metadata": map[string]any{"name": "sample", "namespace": "prod", "resourceVersion": "9"},
+		}}, nil
+	})
+	dynamicClient.PrependReactor("delete", "widgets", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		deleteOptions = action.(k8stesting.DeleteActionImpl).GetDeleteOptions()
+		return true, nil, nil
+	})
+	client := NewForClients(k8sfake.NewSimpleClientset(), dynamicClient, nil, testConfig())
+	descriptor := domain.ResourceDescriptor{Group: "example.io", Version: "v1", Resource: "widgets", Kind: "Widget", Namespaced: true}
+	object := map[string]any{
+		"apiVersion": "example.io/v1", "kind": "Widget",
+		"metadata": map[string]any{"name": "sample", "namespace": "prod", "resourceVersion": "7"},
+	}
+
+	if _, err := client.CreateGenericResource(context.Background(), descriptor, "prod", object, true); err != nil {
+		t.Fatalf("CreateGenericResource() error = %v", err)
+	}
+	if _, err := client.UpdateGenericResource(context.Background(), descriptor, "prod", object, "7", true); err != nil {
+		t.Fatalf("UpdateGenericResource() error = %v", err)
+	}
+	if _, err := client.ApplyGenericResource(context.Background(), descriptor, "prod", object, "8", true); err != nil {
+		t.Fatalf("ApplyGenericResource() error = %v", err)
+	}
+	if err := client.DeleteGenericResource(context.Background(), descriptor, "prod", "sample", "9", domain.DeletePropagationForeground); err != nil {
+		t.Fatalf("DeleteGenericResource() error = %v", err)
+	}
+	if len(creates) != 1 || !creates[0] || len(updates) != 1 || !updates[0] || len(patches) != 1 || !patches[0] {
+		t.Fatalf("dry-run flags creates=%#v updates=%#v patches=%#v", creates, updates, patches)
+	}
+	if !strings.Contains(string(patchBody), `"resourceVersion":"8"`) {
+		t.Fatalf("apply patch does not contain requested resourceVersion: %s", patchBody)
+	}
+	if deleteOptions.PropagationPolicy == nil || *deleteOptions.PropagationPolicy != metav1.DeletePropagationForeground || deleteOptions.Preconditions == nil || deleteOptions.Preconditions.ResourceVersion == nil || *deleteOptions.Preconditions.ResourceVersion != "9" {
+		t.Fatalf("delete options = %#v", deleteOptions)
 	}
 }

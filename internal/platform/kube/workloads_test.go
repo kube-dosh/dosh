@@ -745,3 +745,103 @@ func TestCreateDeploymentMapsAlreadyExistsAndPreviewMatches(t *testing.T) {
 		}
 	}
 }
+
+func TestListWorkloadRevisionsFiltersOwnedDeploymentReplicaSets(t *testing.T) {
+	deployment := testDeployment()
+	deployment.UID = "deployment-uid"
+	deployment.Annotations = map[string]string{"deployment.kubernetes.io/revision": "2"}
+	owned := &appsv1.ReplicaSet{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "api-old", Namespace: "prod", CreationTimestamp: metav1.Unix(100, 0),
+			Annotations:     map[string]string{"deployment.kubernetes.io/revision": "1", "kubernetes.io/change-cause": "initial"},
+			OwnerReferences: []metav1.OwnerReference{{APIVersion: "apps/v1", Kind: "Deployment", Name: deployment.Name, UID: deployment.UID, Controller: boolPointer(true), BlockOwnerDeletion: boolPointer(true)}},
+		},
+		Spec: appsv1.ReplicaSetSpec{Replicas: int32Pointer(0), Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "api", Image: "registry.test/api:1"}}}}},
+	}
+	current := &appsv1.ReplicaSet{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "api-current", Namespace: "prod", CreationTimestamp: metav1.Unix(200, 0),
+			Annotations:     map[string]string{"deployment.kubernetes.io/revision": "2"},
+			OwnerReferences: []metav1.OwnerReference{{APIVersion: "apps/v1", Kind: "Deployment", Name: deployment.Name, UID: deployment.UID, Controller: boolPointer(true), BlockOwnerDeletion: boolPointer(true)}},
+		},
+		Spec:   appsv1.ReplicaSetSpec{Replicas: int32Pointer(2), Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "api", Image: "registry.test/api:2"}}}}},
+		Status: appsv1.ReplicaSetStatus{ReadyReplicas: 2, AvailableReplicas: 2},
+	}
+	unowned := &appsv1.ReplicaSet{ObjectMeta: metav1.ObjectMeta{
+		Name: "other", Namespace: "prod", Annotations: map[string]string{"deployment.kubernetes.io/revision": "99"},
+	}}
+	client, _ := newFakeKubeClient(deployment, owned, current, unowned)
+
+	revisions, err := client.ListWorkloadRevisions(context.Background(), "deployment", "prod", "api")
+	if err != nil {
+		t.Fatalf("ListWorkloadRevisions() error = %v", err)
+	}
+	if len(revisions) != 2 || revisions[0].Revision != 2 || !revisions[0].Current || revisions[1].Revision != 1 || revisions[1].Current {
+		t.Fatalf("revisions = %#v", revisions)
+	}
+	if revisions[1].ChangeCause != "initial" || len(revisions[1].Images) != 1 || revisions[1].Images[0] != "registry.test/api:1" {
+		t.Fatalf("old revision = %#v", revisions[1])
+	}
+}
+
+func TestListWorkloadRevisionsReadsStatefulSetControllerRevisions(t *testing.T) {
+	replicas := int32(1)
+	statefulSet := &appsv1.StatefulSet{
+		ObjectMeta: metav1.ObjectMeta{Name: "db", Namespace: "prod", UID: "statefulset-uid"},
+		Spec:       appsv1.StatefulSetSpec{Replicas: &replicas, Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "db", Image: "postgres:17"}}}}},
+		Status:     appsv1.StatefulSetStatus{CurrentRevision: "db-2"},
+	}
+	snapshot := &appsv1.StatefulSet{Spec: appsv1.StatefulSetSpec{Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "db", Image: "postgres:16"}}}}}}
+	raw, err := json.Marshal(snapshot)
+	if err != nil {
+		t.Fatalf("marshal snapshot: %v", err)
+	}
+	revision := &appsv1.ControllerRevision{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "db-1", Namespace: "prod",
+			OwnerReferences: []metav1.OwnerReference{{APIVersion: "apps/v1", Kind: "StatefulSet", Name: statefulSet.Name, UID: statefulSet.UID, Controller: boolPointer(true), BlockOwnerDeletion: boolPointer(true)}},
+		},
+		Revision: 1,
+		Data:     runtime.RawExtension{Raw: raw},
+	}
+	client, _ := newFakeKubeClient(statefulSet, revision)
+
+	items, err := client.ListWorkloadRevisions(context.Background(), "statefulset", "prod", "db")
+	if err != nil {
+		t.Fatalf("ListWorkloadRevisions() error = %v", err)
+	}
+	if len(items) != 1 || items[0].Revision != 1 || items[0].Current || items[0].Images[0] != "postgres:16" {
+		t.Fatalf("revisions = %#v", items)
+	}
+}
+
+func TestRollbackDeploymentRestoresPodTemplateAndChangeCause(t *testing.T) {
+	deployment := testDeployment()
+	deployment.UID = "deployment-uid"
+	deployment.Annotations = map[string]string{"deployment.kubernetes.io/revision": "2"}
+	target := &appsv1.ReplicaSet{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "api-old", Namespace: "prod",
+			Annotations:     map[string]string{"deployment.kubernetes.io/revision": "1", "kubernetes.io/change-cause": "rollback target"},
+			OwnerReferences: []metav1.OwnerReference{{APIVersion: "apps/v1", Kind: "Deployment", Name: deployment.Name, UID: deployment.UID, Controller: boolPointer(true), BlockOwnerDeletion: boolPointer(true)}},
+		},
+		Spec: appsv1.ReplicaSetSpec{Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "api", Image: "registry.test/api:1"}}}}},
+	}
+	client, clientset := newFakeKubeClient(deployment, target)
+	if err := client.RollbackWorkload(context.Background(), "deployment", "prod", "api", 1); err != nil {
+		t.Fatalf("RollbackWorkload() error = %v", err)
+	}
+	updated, err := clientset.AppsV1().Deployments("prod").Get(context.Background(), "api", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("get deployment: %v", err)
+	}
+	if updated.Spec.Template.Spec.Containers[0].Image != "registry.test/api:1" || updated.Annotations["kubernetes.io/change-cause"] != "rollback target" {
+		t.Fatalf("updated deployment = %#v", updated)
+	}
+	if updated.Spec.Replicas == nil || *updated.Spec.Replicas != 2 || updated.Labels["team"] != "platform" {
+		t.Fatalf("rollback changed unrelated fields: replicas=%v labels=%v", updated.Spec.Replicas, updated.Labels)
+	}
+}
+
+func int32Pointer(value int32) *int32 { return &value }
+func boolPointer(value bool) *bool    { return &value }

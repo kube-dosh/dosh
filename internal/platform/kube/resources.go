@@ -16,6 +16,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/dynamic"
 )
 
@@ -438,6 +439,93 @@ func (c *Client) GetGenericResource(ctx context.Context, descriptor domain.Resou
 	return item.Object, nil
 }
 
+func (c *Client) CreateGenericResource(ctx context.Context, descriptor domain.ResourceDescriptor, namespace string, object map[string]any, dryRun bool) (map[string]any, error) {
+	ctx, cancel := c.withTimeout(ctx)
+	defer cancel()
+	resource, err := c.genericResourceInterface(descriptor, namespace)
+	if err != nil {
+		return nil, err
+	}
+	options := metav1.CreateOptions{FieldManager: "dosh"}
+	if dryRun {
+		options.DryRun = []string{metav1.DryRunAll}
+	}
+	item, err := resource.Create(ctx, &unstructured.Unstructured{Object: object}, options)
+	if err != nil {
+		return nil, mapKubeError(err)
+	}
+	return item.Object, nil
+}
+
+func (c *Client) UpdateGenericResource(ctx context.Context, descriptor domain.ResourceDescriptor, namespace string, object map[string]any, resourceVersion string, dryRun bool) (map[string]any, error) {
+	ctx, cancel := c.withTimeout(ctx)
+	defer cancel()
+	resource, err := c.genericResourceInterface(descriptor, namespace)
+	if err != nil {
+		return nil, err
+	}
+	item := &unstructured.Unstructured{Object: object}
+	if resourceVersion != "" {
+		item.SetResourceVersion(resourceVersion)
+	}
+	options := metav1.UpdateOptions{FieldManager: "dosh"}
+	if dryRun {
+		options.DryRun = []string{metav1.DryRunAll}
+	}
+	result, err := resource.Update(ctx, item, options)
+	if err != nil {
+		return nil, mapKubeError(err)
+	}
+	return result.Object, nil
+}
+
+func (c *Client) ApplyGenericResource(ctx context.Context, descriptor domain.ResourceDescriptor, namespace string, object map[string]any, resourceVersion string, dryRun bool) (map[string]any, error) {
+	ctx, cancel := c.withTimeout(ctx)
+	defer cancel()
+	resource, err := c.genericResourceInterface(descriptor, namespace)
+	if err != nil {
+		return nil, err
+	}
+	item := &unstructured.Unstructured{Object: object}
+	if resourceVersion != "" {
+		item.SetResourceVersion(resourceVersion)
+	}
+	body, err := json.Marshal(item.Object)
+	if err != nil {
+		return nil, fmt.Errorf("%w: encode generic resource: %v", domain.ErrInvalid, err)
+	}
+	options := metav1.PatchOptions{FieldManager: "dosh"}
+	if dryRun {
+		options.DryRun = []string{metav1.DryRunAll}
+	}
+	result, err := resource.Patch(ctx, item.GetName(), types.ApplyPatchType, body, options)
+	if err != nil {
+		return nil, mapKubeError(err)
+	}
+	return result.Object, nil
+}
+
+func (c *Client) DeleteGenericResource(ctx context.Context, descriptor domain.ResourceDescriptor, namespace, name, resourceVersion string, propagation domain.DeletionPropagation) error {
+	ctx, cancel := c.withTimeout(ctx)
+	defer cancel()
+	resource, err := c.genericResourceInterface(descriptor, namespace)
+	if err != nil {
+		return err
+	}
+	policy := metav1.DeletePropagationBackground
+	switch propagation {
+	case domain.DeletePropagationForeground:
+		policy = metav1.DeletePropagationForeground
+	case domain.DeletePropagationOrphan:
+		policy = metav1.DeletePropagationOrphan
+	}
+	options := metav1.DeleteOptions{PropagationPolicy: &policy}
+	if resourceVersion != "" {
+		options.Preconditions = &metav1.Preconditions{ResourceVersion: &resourceVersion}
+	}
+	return mapKubeError(resource.Delete(ctx, name, options))
+}
+
 func (c *Client) genericResourceInterface(descriptor domain.ResourceDescriptor, namespace string) (dynamic.ResourceInterface, error) {
 	if c.dynamic == nil {
 		return nil, fmt.Errorf("%w: dynamic Kubernetes client is unavailable", domain.ErrUnavailable)
@@ -465,17 +553,19 @@ func genericResourceSummary(descriptor domain.ResourceDescriptor, item unstructu
 	}
 }
 
-// ListResourceRules returns the normalized SelfSubjectRulesReview result for
-// the authenticated actor. The review runs as the actor through the
-// impersonation transport, so application credentials cannot widen or narrow
-// the result. Namespace and cluster rules are cached separately for a short
-// period to keep Discovery page loads bounded.
+// ListResourceRules returns the normalized namespaced SelfSubjectRulesReview
+// result for the authenticated actor. Kubernetes requires a namespace for this
+// review, so cluster-scoped resources are authorized by the application layer
+// with bounded SubjectAccessReview calls instead.
 func (c *Client) ListResourceRules(ctx context.Context, actor domain.Actor, namespace string) (domain.ResourceRules, []string, error) {
 	if c.clientset == nil {
 		return domain.ResourceRules{}, nil, fmt.Errorf("%w: Kubernetes clientset is unavailable", domain.ErrUnavailable)
 	}
 	if actor.Username == "" {
 		return domain.ResourceRules{}, nil, domain.ErrForbidden
+	}
+	if namespace == "" {
+		return domain.ResourceRules{}, nil, fmt.Errorf("%w: namespace is required for resource rules review", domain.ErrInvalid)
 	}
 	key := actor.Username + "\x00" + strings.Join(actor.Groups, "\x00") + "\x00" + namespace
 	c.resourceRulesMu.Lock()
@@ -491,33 +581,14 @@ func (c *Client) ListResourceRules(ctx context.Context, actor domain.Actor, name
 	defer cancel()
 	var result domain.ResourceRules
 	var warnings []string
-	var firstErr error
-	if namespace != "" {
-		rules, incomplete, err := c.selfSubjectResourceRules(ctx, namespace)
-		if err != nil {
-			firstErr = err
-			warnings = append(warnings, "无法读取当前命名空间的 RBAC 规则，命名空间资源已从 Discovery 中隐藏")
-		} else {
-			result.Namespaced = rules
-			if incomplete {
-				warnings = append(warnings, "当前命名空间的 RBAC 规则不完整，部分已授权资源可能被隐藏")
-			}
-		}
+	rules, incomplete, err := c.selfSubjectResourceRules(ctx, namespace)
+	if err != nil {
+		warnings = append(warnings, "无法读取当前命名空间的 RBAC 规则，命名空间资源已从 Discovery 中隐藏")
+		return result, warnings, err
 	}
-	clusterRules, clusterIncomplete, clusterErr := c.selfSubjectResourceRules(ctx, "")
-	if clusterErr != nil {
-		if firstErr == nil {
-			firstErr = clusterErr
-		}
-		warnings = append(warnings, "无法读取集群级 RBAC 规则，集群级资源已从 Discovery 中隐藏")
-	} else {
-		result.Cluster = clusterRules
-		if clusterIncomplete {
-			warnings = append(warnings, "集群级 RBAC 规则不完整，部分已授权资源可能被隐藏")
-		}
-	}
-	if firstErr != nil && len(result.Namespaced) == 0 && len(result.Cluster) == 0 {
-		return domain.ResourceRules{}, warnings, firstErr
+	result.Namespaced = rules
+	if incomplete {
+		warnings = append(warnings, "当前命名空间的 RBAC 规则不完整，部分已授权资源可能被隐藏")
 	}
 
 	c.resourceRulesMu.Lock()

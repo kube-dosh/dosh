@@ -305,6 +305,19 @@ export interface WorkloadDetail extends WorkloadSummary {
   containers: WorkloadContainer[];
 }
 
+export interface WorkloadRevision {
+  kind: string;
+  name: string;
+  revision: number;
+  current: boolean;
+  changeCause?: string;
+  status: string;
+  replicas: number;
+  readyReplicas: number;
+  images: string[];
+  createdAt: string;
+}
+
 export interface WorkloadContainer {
   name: string;
   image: string;
@@ -390,6 +403,10 @@ export interface WorkloadImageUpdateInput {
 export interface CronJobSuspendInput {
   suspend: boolean;
   resourceVersion?: string;
+}
+
+export interface WorkloadRollbackInput {
+  revision: number;
 }
 
 export interface DeploymentEnvVar {
@@ -773,6 +790,13 @@ export interface GenericResourceDetail extends GenericResourceSummary {
   yaml: string;
   redacted?: boolean;
   warnings?: string[];
+}
+
+export interface GenericResourceMutationInput {
+  namespace?: string;
+  yaml: string;
+  resourceVersion?: string;
+  dryRun?: boolean;
 }
 
 export type WorkloadKind = "deployment" | "statefulset" | "daemonset" | "job" | "cronjob";

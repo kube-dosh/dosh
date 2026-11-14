@@ -99,3 +99,13 @@ type GenericResourceDetail struct {
 	Redacted        bool              `json:"redacted,omitempty"`
 	Warnings        []string          `json:"warnings,omitempty"`
 }
+
+// GenericResourceMutation is the bounded input for creating or updating one
+// discovered resource through YAML. Namespace is the selected list scope and
+// must agree with metadata.namespace for namespaced resources.
+type GenericResourceMutation struct {
+	Namespace       string `json:"namespace,omitempty"`
+	YAML            string `json:"yaml"`
+	ResourceVersion string `json:"resourceVersion,omitempty"`
+	DryRun          bool   `json:"dryRun"`
+}

@@ -1236,6 +1236,113 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/workloads/{kind}/{namespace}/{name}/revisions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List retained Deployment or StatefulSet revisions
+         * @description Deployment revisions are derived from owned ReplicaSets. StatefulSet revisions are derived from owned ControllerRevisions. Revisions are ordered newest first and never expose manifest content in this view.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    kind: components["parameters"]["KindPath"];
+                    namespace: components["parameters"]["NamespacePath"];
+                    name: components["parameters"]["Name"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Retained workload revisions */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            items: components["schemas"]["WorkloadRevision"][];
+                        };
+                    };
+                };
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+                404: components["responses"]["NotFound"];
+                501: components["responses"]["NotSupported"];
+                503: components["responses"]["DependencyUnavailable"];
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/workloads/{kind}/{namespace}/{name}/rollback": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Roll a Deployment or StatefulSet back to one retained revision
+         * @description Uses a targeted merge patch to restore the retained pod template and change-cause annotation while preserving the current replica count, status, and other concurrent changes outside the pod template.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    kind: components["parameters"]["KindPath"];
+                    namespace: components["parameters"]["NamespacePath"];
+                    name: components["parameters"]["Name"];
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": {
+                        /** Format: int64 */
+                        revision: number;
+                    };
+                };
+            };
+            responses: {
+                /** @description Rollback accepted */
+                202: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["OperationStatus"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+                404: components["responses"]["NotFound"];
+                409: components["responses"]["Conflict"];
+                501: components["responses"]["NotSupported"];
+                503: components["responses"]["DependencyUnavailable"];
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/pods": {
         parameters: {
             query?: never;
@@ -2999,6 +3106,55 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/resources/capabilities": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get current-user write capabilities for one discovered resource type
+         * @description Evaluates create, update/patch and delete access for the authenticated user in the selected namespace. Secret generic create and update remain disabled because the dedicated Secret workflow owns those writes.
+         */
+        get: {
+            parameters: {
+                query: {
+                    /** @description Use an empty value or `_core` for the core API group. */
+                    group: string;
+                    version: string;
+                    resource: string;
+                    namespace?: components["parameters"]["Namespace"];
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Current-user resource capabilities */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ResourceCapabilities"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                401: components["responses"]["Unauthorized"];
+                404: components["responses"]["NotFound"];
+                503: components["responses"]["DependencyUnavailable"];
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/resources/{group}/{version}/{resource}": {
         parameters: {
             query?: never;
@@ -3053,7 +3209,46 @@ export interface paths {
             };
         };
         put?: never;
-        post?: never;
+        /**
+         * Create one discovered Kubernetes resource from YAML
+         * @description Validates one YAML document and its discovered GVR before authorization. A real create always performs an internal API Server dry run first. Generic Secret creation is disabled; use the dedicated Secret editor.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Kubernetes API group, or `_core` for the core API group. */
+                    group: components["parameters"]["ResourceGroupPath"];
+                    version: components["parameters"]["ResourceVersionPath"];
+                    /** @description Plural Kubernetes resource name, for example `pods` or `prometheuses`. */
+                    resource: components["parameters"]["ResourceNamePath"];
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["GenericResourceMutation"];
+                };
+            };
+            responses: {
+                /** @description Resource created */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["GenericResourceDetail"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+                409: components["responses"]["Conflict"];
+                501: components["responses"]["NotSupported"];
+                503: components["responses"]["DependencyUnavailable"];
+            };
+        };
         delete?: never;
         options?: never;
         head?: never;
@@ -3105,9 +3300,93 @@ export interface paths {
                 503: components["responses"]["DependencyUnavailable"];
             };
         };
-        put?: never;
+        /**
+         * Update one discovered Kubernetes resource from YAML
+         * @description Requires update or patch access. A real update always performs an internal API Server dry run first. Generic Secret updates are disabled.
+         */
+        put: {
+            parameters: {
+                query?: {
+                    namespace?: components["parameters"]["Namespace"];
+                };
+                header?: never;
+                path: {
+                    /** @description Kubernetes API group, or `_core` for the core API group. */
+                    group: components["parameters"]["ResourceGroupPath"];
+                    version: components["parameters"]["ResourceVersionPath"];
+                    /** @description Plural Kubernetes resource name, for example `pods` or `prometheuses`. */
+                    resource: components["parameters"]["ResourceNamePath"];
+                    name: components["parameters"]["Name"];
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["GenericResourceMutation"];
+                };
+            };
+            responses: {
+                /** @description Resource updated */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["GenericResourceDetail"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+                404: components["responses"]["NotFound"];
+                409: components["responses"]["Conflict"];
+                501: components["responses"]["NotSupported"];
+                503: components["responses"]["DependencyUnavailable"];
+            };
+        };
         post?: never;
-        delete?: never;
+        /**
+         * Delete one discovered Kubernetes resource
+         * @description Deletes through the discovered GVR after delete authorization. A caller supplied resourceVersion is used as a Kubernetes precondition.
+         */
+        delete: {
+            parameters: {
+                query?: {
+                    namespace?: components["parameters"]["Namespace"];
+                    resourceVersion?: string;
+                    propagation?: "Background" | "Foreground" | "Orphan";
+                };
+                header?: never;
+                path: {
+                    /** @description Kubernetes API group, or `_core` for the core API group. */
+                    group: components["parameters"]["ResourceGroupPath"];
+                    version: components["parameters"]["ResourceVersionPath"];
+                    /** @description Plural Kubernetes resource name, for example `pods` or `prometheuses`. */
+                    resource: components["parameters"]["ResourceNamePath"];
+                    name: components["parameters"]["Name"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Deletion accepted */
+                202: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["OperationStatus"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+                404: components["responses"]["NotFound"];
+                409: components["responses"]["Conflict"];
+                501: components["responses"]["NotSupported"];
+                503: components["responses"]["DependencyUnavailable"];
+            };
+        };
         options?: never;
         head?: never;
         patch?: never;
@@ -3465,6 +3744,21 @@ export interface components {
             labels?: {
                 [key: string]: string;
             };
+        };
+        WorkloadRevision: {
+            /** @enum {string} */
+            kind: "Deployment" | "StatefulSet";
+            name: string;
+            /** Format: int64 */
+            revision: number;
+            current: boolean;
+            changeCause?: string;
+            status: string;
+            replicas: number;
+            readyReplicas: number;
+            images: string[];
+            /** Format: date-time */
+            createdAt: string;
         };
         DeploymentEnvVar: {
             name: string;
@@ -4041,6 +4335,18 @@ export interface components {
             yaml: string;
             redacted?: boolean;
             warnings?: string[];
+        };
+        GenericResourceMutation: {
+            /** @description Selected namespace. Must agree with metadata.namespace for namespaced resources. */
+            namespace?: string;
+            /** @description Exactly one YAML document up to 1 MiB with a matching apiVersion, kind and metadata.name. */
+            yaml: string;
+            resourceVersion?: string;
+            /**
+             * @description When true, validates without writing. Real writes still perform an internal dry run first.
+             * @default false
+             */
+            dryRun: boolean;
         };
     };
     responses: {

@@ -2,9 +2,9 @@
 
 | 项目 | 内容 |
 |---|---|
-| 状态 | 第二阶段已实现：Discovery、类型感知列表、按身份过滤、通用只读列表/详情、RBAC、Secret 脱敏与审计、前端资源浏览器与治理入口 |
-| 目标 | 从固定资源控制台走向通用 Kubernetes 控制台，为 CRD、Operator 资源和后续动态写入提供统一底座 |
-| 边界 | 本阶段不开放任意 API 代理、CRD 写入、动态表单或客户端指定上游 URL |
+| 状态 | 第三阶段已实现：Discovery、类型感知列表、按身份过滤、通用列表/详情、受控 YAML 写入、Deployment/StatefulSet 发布历史与回滚、Secret 脱敏与审计、资源浏览器与治理入口 |
+| 目标 | 从固定资源控制台走向通用 Kubernetes 控制台，为 CRD、Operator 资源和后续动态表单提供统一底座 |
+| 边界 | 不开放任意 API 代理、客户端指定上游 URL、跨资源批量原子写入或绕过 SubjectAccessReview 的读写路径；通用 Secret 创建/更新仍由专用页面承担 |
 
 ## 1. EARS 任务清单
 
@@ -50,11 +50,11 @@
 
 ### GR-011 通用对象浏览
 
-当用户选择资源类型时，系统应展示该类型的对象列表、命名空间筛选、分页、详情、事件和只读 YAML；Namespaced 资源缺少 namespace 时应给出可恢复提示。
+当用户选择资源类型时，系统应展示该类型的对象列表、命名空间筛选、分页、详情、事件和 YAML；Namespaced 资源缺少 namespace 时应给出可恢复提示。
 
 ### GR-012 固定视图保留
 
-系统应保留 Pod、Service、ConfigMap、Secret、存储、节点、工作负载等现有固定页面。它们继续提供经过编排的写操作、关联关系和排障入口；资源浏览器提供通用只读兜底，不替代这些高价值工作流。
+系统应保留 Pod、Service、ConfigMap、Secret、存储、节点、工作负载等现有固定页面。它们继续提供经过编排的写操作、关联关系和排障入口；资源浏览器提供通用读写兜底，不替代这些高价值工作流。
 
 ### GR-013 安全边界
 
@@ -84,17 +84,34 @@
 
 当用户请求 `previous=true` 时，系统应读取上一次容器实例日志；在建立日志流前必须执行 `get pods/log` SubjectAccessReview，并对成功、失败和拒绝记录 `stream-pod-logs` 审计。前端应提供 Previous 开关、容器、tailLines、时间戳和当前日志窗口关键词筛选。
 
+### GR-020 通用资源创建
+
+当用户对已发现资源提交创建请求时，系统应校验 `group/version/resource`、单文档、1 MiB 上限、`apiVersion`、`kind`、`metadata.name` 和命名空间，执行 `create` SubjectAccessReview；非 Dry Run 请求必须先在 API Server 执行一次同操作 Dry Run，再正式创建，并记录成功或失败审计。通用 Secret 创建必须拒绝并提示使用专用页面。
+
+### GR-021 通用资源更新
+
+当用户更新已发现资源时，系统应校验路径名称与 YAML 名称一致，优先要求 `update`，仅在 `update` 被拒绝且身份具备 `patch` 时回退到 Server-Side Apply；正式写入前必须执行同操作 Dry Run，并携带可用 `resourceVersion`。通用 Secret 更新必须拒绝。
+
+### GR-022 通用资源删除与能力查询
+
+当用户查询资源能力时，系统应基于 Discovery 动词和当前身份 SubjectAccessReview 返回 create/update/delete；当用户删除资源时，应要求 `delete` 权限、支持 Background/Foreground/Orphan 策略、可携带 `resourceVersion` 前置条件，并记录删除审计。前端必须以后端能力查询结果而非仅 Discovery 动词决定按钮状态。
+
+### GR-023 工作负载发布历史与回滚
+
+当用户查看 Deployment 或 StatefulSet 时，系统应展示 ReplicaSet 或 ControllerRevision 形成的 revision、镜像、变更原因、当前标记和可用状态；当用户发起回滚且具备 `update` 权限时，系统应校验正整数 revision，通过定向 Merge Patch 恢复目标 Pod 模板和 change-cause，保留副本数、状态及其他并发字段，并记录 `rollback` 审计。
+
 ## 2. 实现落点
 
 | 层 | 文件 | 职责 |
 |---|---|---|
 | domain | `internal/domain/resources.go` | ResourceDescriptor、ResourceReference、通用摘要和详情 DTO |
-| app | `internal/modules/resources/app/service.go` | GVR 校验、SAR、Secret 脱敏、managedFields 清理和审计 |
-| http | `internal/modules/resources/http/handler.go` | Discovery、列表、详情路由与稳定错误映射 |
-| kube | `internal/platform/kube/resources.go` | API Discovery、动态客户端读取、缓存、分页和搜索 |
+| app | `internal/modules/resources/app/service.go` | GVR 校验、SAR、通用读写、能力查询、Secret 脱敏、managedFields 清理和审计 |
+| http | `internal/modules/resources/http/handler.go` | Discovery、列表、详情、能力、创建/更新/删除路由与稳定错误映射 |
+| kube | `internal/platform/kube/resources.go` | API Discovery、动态客户端读写、缓存、分页和搜索 |
+| workloads | `internal/modules/workloads/**`、`internal/platform/kube/workloads.go` | 发布历史读取、revision 解析、回滚和冲突映射 |
 | bootstrap | `internal/bootstrap/app.go`、`router.go` | 依赖装配和受保护路由挂载 |
-| frontend | `web/src/features/resources/`、`web/src/features/governance/` | 类型目录、类型列、对象列表、详情、事件、只读 YAML 和治理入口 |
-| contract | `api/openapi.yaml`、`web/src/api/schema.d.ts` | Discovery 与通用读取 REST 契约 |
+| frontend | `web/src/features/resources/`、`web/src/features/workloads/`、`web/src/features/governance/` | 类型目录、对象列表/详情、YAML 编辑器、发布历史、回滚和治理入口 |
+| contract | `api/openapi.yaml`、`web/src/api/schema.d.ts` | Discovery、通用读写、能力查询、发布历史与回滚 REST 契约 |
 
 ## 3. 验证矩阵
 
@@ -106,13 +123,17 @@
   - Table API 成功、priority 列过滤、Table API 回退和 cells 映射。
   - SelfSubjectRulesReview 过滤、规则缓存、失败关闭和集群级搜索范围。
   - Pod 日志 `pods/log` 授权、Previous 参数和审计。
+  - 通用创建/更新 Dry Run、Secret 保护、update→patch 回退、能力查询和删除策略。
+  - Deployment ReplicaSet 与 StatefulSet ControllerRevision 历史、回滚冲突和 change-cause 恢复。
 - `cd web && npm run api:check && npm run typecheck`
 - `cd web && npm test -- --run`
 - `make arch`
 
 ## 4. 后续阶段
 
-1. 基于 OpenAPI Schema 的 CRD 创建/编辑、Dry Run、Server-Side Apply 和删除审计。
-2. 将 CRD 资源接入事件对象跳转、保存视图和按资源类型收藏。
-3. 为 Discovery 过滤增加更细的 watch/create/update/delete 能力标记。
-4. 增加跨 Pod 日志聚合和可配置日志后端，不在浏览器端做无界全量扫描。
+1. 基于 OpenAPI Schema 的字段校验、动态表单和 CRD 模板。
+2. 为 Discovery 增加多个 served version 选择，而不只展示 preferred version。
+3. 增加 RBAC、CRD、Namespace、Webhook 等高风险资源的写入策略分层和二次确认。
+4. 将回滚改为仅 Patch Pod 模板，并增加回滚前 Diff。
+5. 将 CRD 资源接入事件对象跳转、保存视图和按资源类型收藏。
+6. 增加跨 Pod 日志聚合和可配置日志后端，不在浏览器端做无界全量扫描。

@@ -48,15 +48,15 @@ Dosh 不替代 Kubernetes，也不绕过 Kubernetes。所有身份、权限和�
 | 集群总览 | 集群版本、CNI、节点与 Pod 健康度、工作负载数量、CPU/内存使用和调度容量；Metrics API 不可用时自动回退到 requests 数据 |
 | 节点管理 | 节点状态、角色、容量、标签、污点、Pod 分布、事件和日志；按权限执行停止/恢复调度 |
 | 工作负载 | Deployment、StatefulSet、DaemonSet、Job、CronJob；详情、实例、容器配置、关联 Service、事件、日志和 YAML |
-| 工作负载操作 | 创建 Deployment、扩缩容、滚动重启、更新镜像、暂停/恢复 CronJob、删除，以及按资源级权限编辑 YAML |
+| 工作负载操作 | 创建 Deployment、扩缩容、滚动重启、更新镜像、暂停/恢复 CronJob、删除、查看 Deployment/StatefulSet 发布历史并回滚，以及按资源级权限编辑 YAML |
 | Pod | 状态、容器、重启次数、资源、节点、事件、日志和 YAML；支持选择容器查看实时日志 |
 | 网络 | Service 与 Ingress 列表和详情；按权限创建、编辑、删除 ClusterIP、NodePort、LoadBalancer 和 Ingress |
 | 配置与密钥 | ConfigMap、Secret 的查看、创建、编辑、删除、数据查看和 YAML；Secret 数据仅对有权限且经过审计的请求返回 |
 | 存储 | PVC 创建与管理；PV、StorageClass 查看与关联关系导航 |
 | 命名空间 | 创建、详情、YAML 和受保护的级联删除；`default` 与 `kube-*` 始终拒绝删除 |
 | 事件 | 集群事件检索、命名空间过滤、Warning 识别、对象快速跳转和实时事件流 |
-| 资源浏览器 | 通过 Kubernetes API Discovery 浏览内置资源与 CRD 类型；按 API Group、Kind、资源名筛选；提供通用列表、详情、只读 YAML、事件和命名空间过滤，对象读取受 Kubernetes RBAC 约束 |
-| YAML 创建 | 按模板编辑、Dry Run、创建或 Server-Side Apply；支持多文档顺序提交和常用内置资源白名单 |
+| 资源浏览器 | 通过 Kubernetes API Discovery 浏览内置资源与 CRD 类型；按 API Group、Kind、资源名筛选；提供通用列表、详情、事件、YAML 创建/编辑/删除和命名空间过滤，所有读写均受 Kubernetes RBAC 约束；通用 Secret 写入仍由专用页面承担 |
+| YAML 创建 | 按模板编辑、Dry Run、创建或 Server-Side Apply；支持多文档顺序提交和常用内置资源白名单；CRD 与其他已发现资源通过资源浏览器进入 YAML 写入 |
 | 集群配置 | Kubernetes 版本、平台、CNI、控制面地址、DNS 域名、Pod/Service 网段和节点 Pod CIDR |
 | 审计 | 查看认证与写操作审计记录；审计同时写入标准输出，可选 HTTPS Webhook 和 HMAC 签名 |
 | 服务端证书 | 查看 HTTPS 证书有效期、SAN、密钥算法、指纹和加载状态；证书更新后按周期热加载 |
@@ -238,7 +238,7 @@ TLS 证书更新后，Dosh 默认每 30 秒检查一次挂载文件并热加载�
 
 - **Kubernetes**：Chart 要求 Kubernetes `1.30+`。
 - **Metrics**：未安装 Metrics Server 时，CPU/内存展示 Pod requests 和节点 allocatable，不影响资源管理。
-- **YAML 创建**：支持常用内置资源；暂不开放 Namespace、Node 和 CRD 的任意 YAML 写入。
+- **YAML 创建**：`/yaml/create` 使用受控的内置资源白名单，暂不开放 Namespace 和 Node；CRD 与其他已发现资源通过资源浏览器的通用 YAML 编辑器创建、更新和删除，Secret 通用写入关闭并继续使用专用页面。
 - **存储**：PVC 支持受权限保护的创建、编辑和删除；PV、StorageClass 以查看和关联导航为主。
 - **Secret**：拥有读取权限的用户可以查看 Secret 数据；该行为受 RBAC 约束并写入审计，不提供额外的二次遮蔽层。
 - **浏览器**：遵循同一套响应式界面，建议使用较新的 Chrome、Edge、Firefox 或 Safari。

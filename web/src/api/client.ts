@@ -12,6 +12,7 @@ import type {
   DeploymentPreview,
   EventItem,
   GenericResourceDetail,
+  GenericResourceMutationInput,
   GenericResourceSearch,
   GenericResourceSummary,
   IngressDetail,
@@ -38,6 +39,7 @@ import type {
   PodDetail,
   PodSummary,
   Problem,
+  ResourceCapabilities,
   ResourceDiscovery,
   ResourceReference,
   SecretReveal,
@@ -55,6 +57,8 @@ import type {
   WorkloadContainerConfigUpdateInput,
   WorkloadImageUpdateInput,
   WorkloadProbe,
+  WorkloadRevision,
+  WorkloadRollbackInput,
   WorkloadSummary,
   YAMLResource,
 } from "./types";
@@ -383,6 +387,15 @@ export const api = {
       method: "POST",
       body: JSON.stringify(input),
     }),
+  workloadRevisions: async (kind: string, namespace: string, name: string) => {
+    const value = await request<{ items?: WorkloadRevision[] }>(`/api/v1/workloads/${kind}/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}/revisions`);
+    return list(value.items);
+  },
+  rollbackWorkload: (kind: string, namespace: string, name: string, input: WorkloadRollbackInput) =>
+    request<{ status: string }>(`/api/v1/workloads/${kind}/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}/rollback`, {
+      method: "POST",
+      body: JSON.stringify(input),
+    }),
   updateWorkloadContainerConfig: (kind: string, namespace: string, name: string, container: string, input: WorkloadContainerConfigUpdateInput) =>
     request<{ status: string }>(`/api/v1/workloads/${kind}/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}/containers/${encodeURIComponent(container)}/config`, {
       method: "PUT",
@@ -482,6 +495,25 @@ export const api = {
   resource: async (reference: ResourceReference, name: string, namespace?: string) => {
     const value = await request<GenericResourceDetail>(`${resourceBasePath(reference)}/${encodeURIComponent(name)}${query({ namespace })}`);
     return { ...value, object: value.object ?? {}, yaml: value.yaml ?? "", warnings: list(value.warnings) };
+  },
+  genericResourceCapabilities: (reference: ResourceReference, namespace?: string) =>
+    request<ResourceCapabilities>(`/api/v1/resources/capabilities?${new URLSearchParams({
+      group: reference.group, version: reference.version, resource: reference.resource, ...(namespace ? { namespace } : {}),
+    }).toString()}`),
+  createGenericResource: async (reference: ResourceReference, input: GenericResourceMutationInput) => {
+    const value = await request<GenericResourceDetail>(resourceBasePath(reference), { method: "POST", body: JSON.stringify(input) });
+    return { ...value, object: value.object ?? {}, yaml: value.yaml ?? "", warnings: list(value.warnings) };
+  },
+  updateGenericResource: async (reference: ResourceReference, name: string, input: GenericResourceMutationInput) => {
+    const value = await request<GenericResourceDetail>(`${resourceBasePath(reference)}/${encodeURIComponent(name)}`, { method: "PUT", body: JSON.stringify(input) });
+    return { ...value, object: value.object ?? {}, yaml: value.yaml ?? "", warnings: list(value.warnings) };
+  },
+  deleteGenericResource: (reference: ResourceReference, name: string, namespace?: string, resourceVersion?: string, propagation = "Background") => {
+    const params = new URLSearchParams();
+    if (namespace) params.set("namespace", namespace);
+    if (resourceVersion) params.set("resourceVersion", resourceVersion);
+    params.set("propagation", propagation);
+    return request<{ status: string }>(`${resourceBasePath(reference)}/${encodeURIComponent(name)}?${params.toString()}`, { method: "DELETE" });
   },
   applyYAML: (yaml: string, resourceVersion?: string, dryRun = false) =>
     request<YAMLResource>("/api/v1/yaml/apply", {

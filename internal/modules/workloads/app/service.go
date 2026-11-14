@@ -23,6 +23,8 @@ type Repository interface {
 	UpdateWorkloadImage(ctx context.Context, kind, namespace, name string, update domain.WorkloadImageUpdate) error
 	UpdateWorkloadContainerConfig(ctx context.Context, kind, namespace, name string, update domain.WorkloadContainerConfigUpdate) error
 	SetCronJobSuspend(ctx context.Context, namespace, name string, update domain.CronJobSuspendUpdate) error
+	ListWorkloadRevisions(ctx context.Context, kind, namespace, name string) ([]domain.WorkloadRevision, error)
+	RollbackWorkload(ctx context.Context, kind, namespace, name string, revision int64) error
 	DeleteWorkload(ctx context.Context, kind, namespace, name string, propagation domain.DeletionPropagation) error
 	ListPods(ctx context.Context, query domain.ListQuery) ([]domain.PodSummary, error)
 	ListPodsPage(ctx context.Context, query domain.ListQuery, page domain.PageRequest) (domain.PageResult[domain.PodSummary], error)
@@ -138,6 +140,40 @@ func (s *Service) Delete(ctx context.Context, actor domain.Actor, kind, namespac
 	}
 	err := s.repository.DeleteWorkload(ctx, kind, namespace, name, policy)
 	s.audit(ctx, actor, "delete", kind, namespace, name, err)
+	return err
+}
+
+func (s *Service) Revisions(ctx context.Context, kind, namespace, name string) ([]domain.WorkloadRevision, error) {
+	if err := ValidateKind(kind); err != nil {
+		return nil, err
+	}
+	if !strings.EqualFold(kind, "deployment") && !strings.EqualFold(kind, "statefulset") {
+		return nil, fmt.Errorf("%w: revisions are not supported for %s", domain.ErrUnsupported, kind)
+	}
+	return s.repository.ListWorkloadRevisions(ctx, kind, namespace, name)
+}
+
+func (s *Service) Rollback(ctx context.Context, actor domain.Actor, kind, namespace, name string, revision int64) error {
+	if err := ValidateKind(kind); err != nil {
+		s.audit(ctx, actor, "rollback", kind, namespace, name, err)
+		return err
+	}
+	if !strings.EqualFold(kind, "deployment") && !strings.EqualFold(kind, "statefulset") {
+		err := fmt.Errorf("%w: rollback is not supported for %s", domain.ErrUnsupported, kind)
+		s.audit(ctx, actor, "rollback", kind, namespace, name, err)
+		return err
+	}
+	if revision < 1 {
+		err := fmt.Errorf("%w: revision must be positive", domain.ErrInvalid)
+		s.audit(ctx, actor, "rollback", kind, namespace, name, err)
+		return err
+	}
+	access := workloadAccess(kind, "update", namespace, name, "")
+	if err := s.authorize(ctx, actor, "rollback", kind, namespace, name, access); err != nil {
+		return err
+	}
+	err := s.repository.RollbackWorkload(ctx, kind, namespace, name, revision)
+	s.audit(ctx, actor, "rollback", kind, namespace, name, err)
 	return err
 }
 

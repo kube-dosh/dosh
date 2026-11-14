@@ -28,11 +28,12 @@ import { workloadCapabilities } from "@/lib/capabilities";
 import { ResourceEvents } from "@/features/events/resource-events";
 import { PodLogs } from "@/features/workloads/pod-logs";
 import { WorkloadContainerConfigPanel } from "@/features/workloads/workload-container-config-panel";
+import { WorkloadRevisionHistory } from "@/features/workloads/workload-revision-history";
 import { WorkloadServicesPanel } from "@/features/workloads/workload-services-panel";
 import { formatAge, formatDate } from "@/lib/utils";
 
 const podColumn = createColumnHelper<PodSummary>();
-const workloadTabs = ["overview", "config", "pods", "services", "events", "logs", "yaml"] as const;
+const workloadTabs = ["overview", "config", "pods", "services", "events", "logs", "history", "yaml"] as const;
 type WorkloadTab = (typeof workloadTabs)[number];
 
 const kubernetesKinds: Record<string, string> = {
@@ -70,7 +71,9 @@ export function WorkloadDetailPage() {
   const [confirmName, setConfirmName] = useState("");
   const kind = params.kind.toLowerCase();
   const kindLabel = workloadKindLabel(kind);
-  const tab = isWorkloadTab(search.tab) ? search.tab : "overview";
+  const supportsRevisions = ["deployment", "statefulset"].includes(kind);
+  const requestedTab = isWorkloadTab(search.tab) ? search.tab : "overview";
+  const tab = requestedTab === "history" && !supportsRevisions ? "overview" : requestedTab;
   const changeTab = (value: string) => {
     if (!isWorkloadTab(value)) return;
     void navigate({
@@ -91,10 +94,12 @@ export function WorkloadDetailPage() {
   const canUpdateImage = workloadCaps.update && ["deployment", "statefulset", "daemonset"].includes(kind);
   const canUpdateContainerConfig = workloadCaps.update && ["deployment", "statefulset", "daemonset"].includes(kind);
   const canSuspend = workloadCaps.update && kind === "cronjob";
+  const canRollback = workloadCaps.update && supportsRevisions;
   const canDelete = workloadCaps.delete;
   const invalidate = async () => {
     await queryClient.invalidateQueries({ queryKey: ["workload", kind, params.namespace, params.name] });
     await queryClient.invalidateQueries({ queryKey: ["workloads"] });
+    await queryClient.invalidateQueries({ queryKey: ["workload-revisions", kind, params.namespace, params.name] });
   };
   const scale = useMutation({
     mutationFn: () => api.scaleWorkload(kind, params.namespace, params.name, replicas),
@@ -113,9 +118,9 @@ export function WorkloadDetailPage() {
       resourceVersion: imageResourceVersion || undefined,
     }),
     onSuccess: async () => {
-      toast.success("镜像已更新，滚动发布已触发");
       setImageOpen(false);
       await invalidate();
+      toast.success("镜像已更新，滚动发布已触发");
     },
     onError: (error) => {
       if (error instanceof ApiError && error.status === 409) {
@@ -187,7 +192,7 @@ export function WorkloadDetailPage() {
         }
       />
       <Tabs value={tab} onValueChange={changeTab}>
-        <TabsList><TabsTrigger value="overview">概览</TabsTrigger><TabsTrigger value="config">容器配置</TabsTrigger><TabsTrigger value="pods">实例 ({workload.pods.length})</TabsTrigger><TabsTrigger value="services">访问方式</TabsTrigger><TabsTrigger value="events">事件</TabsTrigger><TabsTrigger value="logs"><ScrollText className="h-3.5 w-3.5" />日志</TabsTrigger><TabsTrigger value="yaml"><FileCode2 className="h-3.5 w-3.5" />YAML</TabsTrigger></TabsList>
+        <TabsList><TabsTrigger value="overview">概览</TabsTrigger><TabsTrigger value="config">容器配置</TabsTrigger><TabsTrigger value="pods">实例 ({workload.pods.length})</TabsTrigger><TabsTrigger value="services">访问方式</TabsTrigger><TabsTrigger value="events">事件</TabsTrigger><TabsTrigger value="logs"><ScrollText className="h-3.5 w-3.5" />日志</TabsTrigger>{supportsRevisions ? <TabsTrigger value="history"><RefreshCw className="h-3.5 w-3.5" />发布历史</TabsTrigger> : null}<TabsTrigger value="yaml"><FileCode2 className="h-3.5 w-3.5" />YAML</TabsTrigger></TabsList>
         <TabsContent value="overview">
           <div className="grid gap-4 xl:grid-cols-[1.1fr_0.9fr]">
             <Card>
@@ -239,6 +244,7 @@ export function WorkloadDetailPage() {
         <TabsContent value="services"><WorkloadServicesPanel namespace={workload.namespace} workloadName={workload.name} workloadSelector={workload.selector} /></TabsContent>
         <TabsContent value="events"><ResourceEvents namespace={workload.namespace} objectKind={kindLabel} objectName={workload.name} /></TabsContent>
         <TabsContent value="logs"><PodLogs pods={workload.pods} emptyMessage="该工作负载当前没有可查看日志的实例。" /></TabsContent>
+        {supportsRevisions ? <TabsContent value="history"><WorkloadRevisionHistory kind={kind} namespace={workload.namespace} name={workload.name} canRollback={canRollback} onRolledBack={invalidate} /></TabsContent> : null}
         <TabsContent value="yaml"><YamlPanel type={kind} name={workload.name} namespace={workload.namespace} height="64vh" /></TabsContent>
       </Tabs>
 

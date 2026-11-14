@@ -25,6 +25,10 @@ type handlerRepository struct {
 	lastQuery     domain.ListQuery
 	lastNamespace string
 	lastName      string
+	createCalls   int
+	updateCalls   int
+	applyCalls    int
+	deleteCalls   int
 }
 
 func (r *handlerRepository) DiscoverResources(context.Context) ([]domain.ResourceDescriptor, []string, error) {
@@ -43,6 +47,30 @@ func (r *handlerRepository) ListGenericResources(_ context.Context, _ domain.Res
 func (r *handlerRepository) GetGenericResource(_ context.Context, _ domain.ResourceDescriptor, namespace, name string) (map[string]any, error) {
 	r.lastNamespace, r.lastName = namespace, name
 	return r.object, r.err
+}
+
+func (r *handlerRepository) CreateGenericResource(_ context.Context, _ domain.ResourceDescriptor, namespace string, _ map[string]any, _ bool) (map[string]any, error) {
+	r.createCalls++
+	r.lastNamespace = namespace
+	return r.object, r.err
+}
+
+func (r *handlerRepository) UpdateGenericResource(_ context.Context, _ domain.ResourceDescriptor, namespace string, _ map[string]any, _ string, _ bool) (map[string]any, error) {
+	r.updateCalls++
+	r.lastNamespace = namespace
+	return r.object, r.err
+}
+
+func (r *handlerRepository) ApplyGenericResource(_ context.Context, _ domain.ResourceDescriptor, namespace string, _ map[string]any, _ string, _ bool) (map[string]any, error) {
+	r.applyCalls++
+	r.lastNamespace = namespace
+	return r.object, r.err
+}
+
+func (r *handlerRepository) DeleteGenericResource(_ context.Context, _ domain.ResourceDescriptor, namespace, name, _ string, _ domain.DeletionPropagation) error {
+	r.deleteCalls++
+	r.lastNamespace, r.lastName = namespace, name
+	return r.err
 }
 
 type handlerAuthorizer struct{ err error }
@@ -67,6 +95,12 @@ func resourceTestRouter(repository *handlerRepository, authorizer domain.Authori
 func resourceRequest(router stdhttp.Handler, path string) *httptest.ResponseRecorder {
 	response := httptest.NewRecorder()
 	router.ServeHTTP(response, httptest.NewRequest(stdhttp.MethodGet, path, nil))
+	return response
+}
+
+func resourceMutationRequest(router stdhttp.Handler, method, path, body string) *httptest.ResponseRecorder {
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(method, path, strings.NewReader(body)))
 	return response
 }
 
@@ -175,6 +209,47 @@ func TestResourceDetailRoute(t *testing.T) {
 	}
 	if repository.lastNamespace != "prod" || repository.lastName != "sample" {
 		t.Fatalf("repository params = %q, %q", repository.lastNamespace, repository.lastName)
+	}
+}
+
+func TestResourceCapabilitiesRouteUsesCurrentActor(t *testing.T) {
+	repository := &handlerRepository{
+		descriptors: []domain.ResourceDescriptor{{Group: "example.io", Version: "v1", Resource: "widgets", Kind: "Widget", Namespaced: true, Verbs: []string{"get", "list", "create", "update", "patch", "delete"}}},
+	}
+	response := resourceRequest(resourceTestRouter(repository, handlerAuthorizer{}, domain.Actor{Username: "alice"}), "/resources/capabilities?group=example.io&version=v1&resource=widgets&namespace=prod")
+	if response.Code != stdhttp.StatusOK {
+		t.Fatalf("status = %d body = %s", response.Code, response.Body.String())
+	}
+	var capabilities domain.ResourceCapabilities
+	if err := json.Unmarshal(response.Body.Bytes(), &capabilities); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if !capabilities.Create || !capabilities.Update || !capabilities.Delete {
+		t.Fatalf("capabilities = %#v", capabilities)
+	}
+}
+
+func TestGenericResourceMutationRoutes(t *testing.T) {
+	repository := &handlerRepository{
+		descriptors: []domain.ResourceDescriptor{{Group: "example.io", Version: "v1", Resource: "widgets", Kind: "Widget", Namespaced: true, Verbs: []string{"get", "list", "create", "update", "patch", "delete"}}},
+		object: map[string]any{
+			"apiVersion": "example.io/v1", "kind": "Widget",
+			"metadata": map[string]any{"name": "sample", "namespace": "prod", "resourceVersion": "4"},
+		},
+	}
+	router := resourceTestRouter(repository, handlerAuthorizer{}, domain.Actor{Username: "alice"})
+	body := `{"namespace":"prod","yaml":"apiVersion: example.io/v1\nkind: Widget\nmetadata:\n  name: sample\n  namespace: prod\n"}`
+	create := resourceMutationRequest(router, stdhttp.MethodPost, "/resources/example.io/v1/widgets", body)
+	if create.Code != stdhttp.StatusCreated || repository.createCalls != 2 {
+		t.Fatalf("create status=%d calls=%d body=%s", create.Code, repository.createCalls, create.Body.String())
+	}
+	update := resourceMutationRequest(router, stdhttp.MethodPut, "/resources/example.io/v1/widgets/sample", body)
+	if update.Code != stdhttp.StatusOK || repository.updateCalls != 2 {
+		t.Fatalf("update status=%d calls=%d body=%s", update.Code, repository.updateCalls, update.Body.String())
+	}
+	remove := resourceMutationRequest(router, stdhttp.MethodDelete, "/resources/example.io/v1/widgets/sample?namespace=prod&propagation=Foreground&resourceVersion=3", "")
+	if remove.Code != stdhttp.StatusAccepted || repository.deleteCalls != 1 || repository.lastName != "sample" {
+		t.Fatalf("delete status=%d calls=%d name=%q body=%s", remove.Code, repository.deleteCalls, repository.lastName, remove.Body.String())
 	}
 }
 

@@ -37,7 +37,7 @@ dosh 已具备节点、工作负载、Pod、网络、配置、存储、事件和
 | 命名空间级 | Pod、Deployment、StatefulSet、DaemonSet、Job、CronJob、Service、Ingress、ConfigMap、Secret、PersistentVolumeClaim |
 | 集群级 | StorageClass、PersistentVolume |
 
-当前支持多个 YAML 文档顺序 Dry Run 和顺序应用，但不提供跨资源回滚。仍不支持 Namespace、Node 和 CRD。
+当前支持多个 YAML 文档顺序 Dry Run 和顺序应用，但不提供跨资源回滚。`/yaml/create` 仍不支持 Namespace 和 Node；CRD 与其他已发现资源通过资源浏览器的通用 YAML 编辑器进行创建、更新和删除，通用 Secret 写入保持关闭。
 
 ### 2.2 集群配置
 
@@ -240,7 +240,7 @@ cd web && npm run e2e:chromium -- --grep "YAML|集群配置"
 
 - ✅ 区分 create 与 update 的 RBAC：后端根据资源是否存在分别校验 create/update/patch，避免“有 create 无 patch”的用户被错误拦截。
 - 增加 namespace 覆盖或锁定机制，明确模板命名空间与最终对象命名空间的一致性校验。
-- 增加资源 API Discovery 与 CRD 支持，前端根据发现结果提供模板和类型校验。
+- ✅ 已增加资源 API Discovery 与 CRD 受控写入；`/yaml/create` 的模板仍以常用内置资源为主，后续增加 Schema 基础校验和类型提示。
 - 增加折叠、搜索结果导航、Schema 基础校验和编辑器全屏模式。
 - 增加应用前 Diff 预览，突出新增、修改与删除字段。
 - 增加最近使用模板、资源历史和从已有资源“另存为 YAML”。

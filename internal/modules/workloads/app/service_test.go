@@ -47,6 +47,12 @@ type fakeRepository struct {
 	podsErr        error
 	podDetail      domain.PodDetail
 	podErr         error
+	revisions      []domain.WorkloadRevision
+	revisionErr    error
+	rollbackCalls  int
+	rollbackErr    error
+	lastRevision   int64
+	lastRV         string
 }
 
 func (f *fakeRepository) ListWorkloads(_ context.Context, query domain.ListQuery) ([]domain.WorkloadSummary, error) {
@@ -98,6 +104,16 @@ func (f *fakeRepository) SetCronJobSuspend(_ context.Context, namespace, name st
 	f.lastNamespace, f.lastName = namespace, name
 	f.lastSuspend = update
 	return f.suspendErr
+}
+func (f *fakeRepository) ListWorkloadRevisions(_ context.Context, kind, namespace, name string) ([]domain.WorkloadRevision, error) {
+	f.lastKind, f.lastNamespace, f.lastName = kind, namespace, name
+	return f.revisions, f.revisionErr
+}
+func (f *fakeRepository) RollbackWorkload(_ context.Context, kind, namespace, name string, revision int64) error {
+	f.rollbackCalls++
+	f.lastKind, f.lastNamespace, f.lastName = kind, namespace, name
+	f.lastRevision = revision
+	return f.rollbackErr
 }
 func (f *fakeRepository) DeleteWorkload(_ context.Context, _ string, _ string, _ string, propagation domain.DeletionPropagation) error {
 	f.deletePolicy = propagation
@@ -688,5 +704,55 @@ func TestWorkloadAccessMapsResourcesAndSubresources(t *testing.T) {
 	}
 	if err := ValidateKind("pod"); !errors.Is(err, domain.ErrUnsupported) {
 		t.Fatalf("ValidateKind(pod) error = %v", err)
+	}
+}
+
+func TestRevisionsValidateKindAndDelegate(t *testing.T) {
+	t.Parallel()
+	repo := &fakeRepository{revisions: []domain.WorkloadRevision{{Kind: "Deployment", Name: "api", Revision: 2}}}
+	service := New(repo, fakeGuard{allow: true}, &fakeAuditor{})
+	items, err := service.Revisions(context.Background(), "deployment", "prod", "api")
+	if err != nil {
+		t.Fatalf("Revisions() error = %v", err)
+	}
+	if len(items) != 1 || items[0].Revision != 2 || repo.lastKind != "deployment" || repo.lastNamespace != "prod" || repo.lastName != "api" {
+		t.Fatalf("items=%#v last=(%q,%q,%q)", items, repo.lastKind, repo.lastNamespace, repo.lastName)
+	}
+	for _, kind := range []string{"daemonset", "job", "cronjob", "pod"} {
+		if _, err := service.Revisions(context.Background(), kind, "prod", "api"); !errors.Is(err, domain.ErrUnsupported) {
+			t.Fatalf("Revisions(%s) error = %v, want ErrUnsupported", kind, err)
+		}
+	}
+}
+
+func TestRollbackRequiresPermissionAndAudits(t *testing.T) {
+	t.Parallel()
+	auditor := &fakeAuditor{}
+	service := New(&fakeRepository{}, fakeGuard{allow: false}, auditor)
+	if err := service.Rollback(context.Background(), domain.Actor{Username: "viewer"}, "deployment", "prod", "api", 1); !errors.Is(err, domain.ErrForbidden) {
+		t.Fatalf("Rollback() error = %v, want ErrForbidden", err)
+	}
+	if len(auditor.results) != 1 || auditor.results[0] != "denied" || auditor.actions[0] != "rollback" {
+		t.Fatalf("audit results=%#v actions=%#v", auditor.results, auditor.actions)
+	}
+
+	repo := &fakeRepository{}
+	auditor = &fakeAuditor{}
+	service = New(repo, fakeGuard{allow: true}, auditor)
+	if err := service.Rollback(context.Background(), domain.Actor{Username: "admin"}, "deployment", "prod", "api", 0); !errors.Is(err, domain.ErrInvalid) {
+		t.Fatalf("Rollback(invalid revision) error = %v", err)
+	}
+	if repo.rollbackCalls != 0 || len(auditor.results) != 1 || auditor.results[0] != "failure" {
+		t.Fatalf("invalid rollback calls=%d audit=%#v", repo.rollbackCalls, auditor.results)
+	}
+
+	repo = &fakeRepository{rollbackErr: domain.ErrUnavailable}
+	auditor = &fakeAuditor{}
+	service = New(repo, fakeGuard{allow: true}, auditor)
+	if err := service.Rollback(context.Background(), domain.Actor{Username: "admin"}, "deployment", "prod", "api", 2); !errors.Is(err, domain.ErrUnavailable) {
+		t.Fatalf("Rollback(dependency) error = %v", err)
+	}
+	if repo.rollbackCalls != 1 || repo.lastRevision != 2 || len(auditor.results) != 1 || auditor.results[0] != "failure" {
+		t.Fatalf("rollback calls=%d revision=%d audit=%#v", repo.rollbackCalls, repo.lastRevision, auditor.results)
 	}
 }

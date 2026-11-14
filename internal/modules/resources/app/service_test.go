@@ -28,6 +28,12 @@ type fakeResourceRepository struct {
 	seenResources  []string
 	listCalls      int
 	getCalls       int
+	mutation       map[string]any
+	mutationErr    error
+	mutationErrAt  int
+	lastMutation   string
+	lastMutations  int
+	mutationDryRun []bool
 }
 
 func (r *fakeResourceRepository) DiscoverResources(context.Context) ([]domain.ResourceDescriptor, []string, error) {
@@ -51,13 +57,55 @@ func (r *fakeResourceRepository) GetGenericResource(_ context.Context, descripto
 	return r.object, r.getErr
 }
 
+func (r *fakeResourceRepository) recordMutation(action string, descriptor domain.ResourceDescriptor, namespace string, dryRun bool) error {
+	r.lastMutation = action
+	r.lastMutations++
+	r.mutationDryRun = append(r.mutationDryRun, dryRun)
+	r.lastDescriptor, r.lastNamespace = descriptor, namespace
+	if r.mutationErrAt > 0 && r.lastMutations == r.mutationErrAt {
+		return r.mutationErr
+	}
+	return nil
+}
+
+func (r *fakeResourceRepository) CreateGenericResource(_ context.Context, descriptor domain.ResourceDescriptor, namespace string, _ map[string]any, dryRun bool) (map[string]any, error) {
+	if err := r.recordMutation("create", descriptor, namespace, dryRun); err != nil {
+		return nil, err
+	}
+	return r.mutation, nil
+}
+
+func (r *fakeResourceRepository) UpdateGenericResource(_ context.Context, descriptor domain.ResourceDescriptor, namespace string, _ map[string]any, _ string, dryRun bool) (map[string]any, error) {
+	if err := r.recordMutation("update", descriptor, namespace, dryRun); err != nil {
+		return nil, err
+	}
+	return r.mutation, nil
+}
+
+func (r *fakeResourceRepository) ApplyGenericResource(_ context.Context, descriptor domain.ResourceDescriptor, namespace string, _ map[string]any, _ string, dryRun bool) (map[string]any, error) {
+	if err := r.recordMutation("apply", descriptor, namespace, dryRun); err != nil {
+		return nil, err
+	}
+	return r.mutation, nil
+}
+
+func (r *fakeResourceRepository) DeleteGenericResource(_ context.Context, descriptor domain.ResourceDescriptor, namespace, name, _ string, _ domain.DeletionPropagation) error {
+	r.lastMutation, r.lastMutations = "delete", r.lastMutations+1
+	r.lastDescriptor, r.lastNamespace, r.lastName = descriptor, namespace, name
+	return r.mutationErr
+}
+
 type recordingAuthorizer struct {
 	accesses []domain.Access
 	err      error
+	denied   map[string]bool
 }
 
 func (a *recordingAuthorizer) Require(_ context.Context, _ domain.Actor, access domain.Access) error {
 	a.accesses = append(a.accesses, access)
+	if a.denied[access.Verb] {
+		return domain.ErrForbidden
+	}
 	return a.err
 }
 
@@ -72,11 +120,11 @@ func (a *recordingAuditor) Record(_ context.Context, _ domain.Actor, event domai
 func resourceServiceFixture() (*Service, *fakeResourceRepository, *recordingAuthorizer, *recordingAuditor) {
 	repository := &fakeResourceRepository{
 		descriptors: []domain.ResourceDescriptor{
-			{Group: "", Version: "v1", Resource: "pods", Kind: "Pod", Namespaced: true},
-			{Group: "", Version: "v1", Resource: "secrets", Kind: "Secret", Namespaced: true},
-			{Group: "", Version: "v1", Resource: "configmaps", Kind: "ConfigMap", Namespaced: true},
-			{Group: "", Version: "v1", Resource: "nodes", Kind: "Node"},
-			{Group: "example.io", Version: "v1", Resource: "widgets", Kind: "Widget", Namespaced: true},
+			{Group: "", Version: "v1", Resource: "pods", Kind: "Pod", Namespaced: true, Verbs: []string{"get", "list", "create", "update", "patch", "delete"}},
+			{Group: "", Version: "v1", Resource: "secrets", Kind: "Secret", Namespaced: true, Verbs: []string{"get", "list", "create", "update", "patch", "delete"}},
+			{Group: "", Version: "v1", Resource: "configmaps", Kind: "ConfigMap", Namespaced: true, Verbs: []string{"get", "list", "create", "update", "patch", "delete"}},
+			{Group: "", Version: "v1", Resource: "nodes", Kind: "Node", Verbs: []string{"get", "list", "update", "delete"}},
+			{Group: "example.io", Version: "v1", Resource: "widgets", Kind: "Widget", Namespaced: true, Verbs: []string{"get", "list", "create", "update", "patch", "delete"}},
 		},
 	}
 	authorizer := &recordingAuthorizer{}
@@ -366,5 +414,173 @@ func TestServiceGetDoesNotRedactRegularResources(t *testing.T) {
 	}
 	if !strings.Contains(detail.YAML, "mode: production") {
 		t.Fatalf("YAML did not contain object data: %s", detail.YAML)
+	}
+}
+
+func genericWidgetManifest(name string) string {
+	return `apiVersion: example.io/v1
+kind: Widget
+metadata:
+  name: ` + name + `
+  namespace: prod
+spec:
+  size: large
+`
+}
+
+func TestServiceCreateRunsImplicitDryRunBeforeWrite(t *testing.T) {
+	service, repository, _, auditor := resourceServiceFixture()
+	repository.mutation = map[string]any{
+		"apiVersion": "example.io/v1", "kind": "Widget",
+		"metadata": map[string]any{"name": "sample", "namespace": "prod", "resourceVersion": "3"},
+	}
+
+	detail, err := service.Create(context.Background(), domain.Actor{Username: "alice"}, domain.ResourceReference{
+		Group: "example.io", Version: "v1", Resource: "widgets",
+	}, domain.GenericResourceMutation{YAML: genericWidgetManifest("sample"), Namespace: "prod"})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	if detail.Name != "sample" || detail.Namespace != "prod" {
+		t.Fatalf("detail = %#v", detail)
+	}
+	if repository.lastMutations != 2 || len(repository.mutationDryRun) != 2 || !repository.mutationDryRun[0] || repository.mutationDryRun[1] {
+		t.Fatalf("mutation dry-run sequence = %#v, calls = %d", repository.mutationDryRun, repository.lastMutations)
+	}
+	if len(auditor.events) != 1 || auditor.events[0].Action != "create-generic-resource" || auditor.events[0].Result != "success" {
+		t.Fatalf("audit events = %#v", auditor.events)
+	}
+}
+
+func TestServiceCreateStopsWhenImplicitDryRunFails(t *testing.T) {
+	service, repository, _, auditor := resourceServiceFixture()
+	repository.mutationErr = domain.ErrInvalid
+	repository.mutationErrAt = 1
+
+	_, err := service.Create(context.Background(), domain.Actor{Username: "alice"}, domain.ResourceReference{
+		Group: "example.io", Version: "v1", Resource: "widgets",
+	}, domain.GenericResourceMutation{YAML: genericWidgetManifest("sample"), Namespace: "prod"})
+	if !errors.Is(err, domain.ErrInvalid) {
+		t.Fatalf("Create() error = %v, want ErrInvalid", err)
+	}
+	if repository.lastMutations != 1 || len(repository.mutationDryRun) != 1 || !repository.mutationDryRun[0] {
+		t.Fatalf("mutation calls = %#v, want one dry-run", repository.mutationDryRun)
+	}
+	if len(auditor.events) != 1 || auditor.events[0].Result != "failure" {
+		t.Fatalf("audit events = %#v", auditor.events)
+	}
+}
+
+func TestServiceExplicitDryRunDoesNotWrite(t *testing.T) {
+	service, repository, _, auditor := resourceServiceFixture()
+	repository.mutation = map[string]any{
+		"apiVersion": "example.io/v1", "kind": "Widget",
+		"metadata": map[string]any{"name": "sample", "namespace": "prod"},
+	}
+
+	_, err := service.Create(context.Background(), domain.Actor{Username: "alice"}, domain.ResourceReference{
+		Group: "example.io", Version: "v1", Resource: "widgets",
+	}, domain.GenericResourceMutation{YAML: genericWidgetManifest("sample"), Namespace: "prod", DryRun: true})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	if repository.lastMutations != 1 || len(repository.mutationDryRun) != 1 || !repository.mutationDryRun[0] {
+		t.Fatalf("mutation calls = %#v, want one dry-run", repository.mutationDryRun)
+	}
+	if len(auditor.events) != 1 || auditor.events[0].Action != "dry-run-generic-resource" {
+		t.Fatalf("audit events = %#v", auditor.events)
+	}
+}
+
+func TestServiceRejectsGenericSecretCreation(t *testing.T) {
+	service, repository, authorizer, _ := resourceServiceFixture()
+	_, err := service.Create(context.Background(), domain.Actor{Username: "alice"}, domain.ResourceReference{
+		Version: "v1", Resource: "secrets",
+	}, domain.GenericResourceMutation{YAML: `apiVersion: v1
+kind: Secret
+metadata:
+  name: credentials
+  namespace: prod
+`, Namespace: "prod"})
+	if !errors.Is(err, domain.ErrUnsupported) {
+		t.Fatalf("Create() error = %v, want ErrUnsupported", err)
+	}
+	if repository.lastMutations != 0 || len(authorizer.accesses) != 0 {
+		t.Fatalf("secret creation reached repository/authorizer: %d, %#v", repository.lastMutations, authorizer.accesses)
+	}
+}
+
+func TestServiceUpdatePreflightsAndFallsBackToApply(t *testing.T) {
+	service, repository, authorizer, auditor := resourceServiceFixture()
+	authorizer.denied = map[string]bool{"update": true}
+	repository.mutation = map[string]any{
+		"apiVersion": "example.io/v1", "kind": "Widget",
+		"metadata": map[string]any{"name": "sample", "namespace": "prod", "resourceVersion": "4"},
+	}
+
+	_, err := service.Update(context.Background(), domain.Actor{Username: "alice"}, domain.ResourceReference{
+		Group: "example.io", Version: "v1", Resource: "widgets",
+	}, "sample", domain.GenericResourceMutation{YAML: genericWidgetManifest("sample"), Namespace: "prod", ResourceVersion: "3"})
+	if err != nil {
+		t.Fatalf("Update() error = %v", err)
+	}
+	if repository.lastMutation != "apply" || repository.lastMutations != 2 || len(repository.mutationDryRun) != 2 || !repository.mutationDryRun[0] || repository.mutationDryRun[1] {
+		t.Fatalf("mutation = %q calls=%d dry-runs=%#v", repository.lastMutation, repository.lastMutations, repository.mutationDryRun)
+	}
+	if len(authorizer.accesses) != 2 || authorizer.accesses[0].Verb != "update" || authorizer.accesses[1].Verb != "patch" {
+		t.Fatalf("authorization = %#v", authorizer.accesses)
+	}
+	if len(auditor.events) != 1 || auditor.events[0].Action != "update-generic-resource" || auditor.events[0].Result != "success" {
+		t.Fatalf("audit events = %#v", auditor.events)
+	}
+}
+
+func TestServiceCapabilitiesUseCurrentActorAndProtectSecrets(t *testing.T) {
+	service, _, authorizer, _ := resourceServiceFixture()
+	authorizer.denied = map[string]bool{"delete": true}
+
+	capabilities, err := service.Capabilities(context.Background(), domain.Actor{Username: "alice"}, domain.ResourceReference{
+		Group: "example.io", Version: "v1", Resource: "widgets",
+	}, "prod")
+	if err != nil {
+		t.Fatalf("Capabilities() error = %v", err)
+	}
+	if !capabilities.Create || !capabilities.Update || capabilities.Delete {
+		t.Fatalf("capabilities = %#v", capabilities)
+	}
+
+	secretCapabilities, err := service.Capabilities(context.Background(), domain.Actor{Username: "alice"}, domain.ResourceReference{
+		Version: "v1", Resource: "secrets",
+	}, "prod")
+	if err != nil {
+		t.Fatalf("Secret Capabilities() error = %v", err)
+	}
+	if secretCapabilities.Create || secretCapabilities.Update || secretCapabilities.Delete {
+		t.Fatalf("secret capabilities = %#v", secretCapabilities)
+	}
+
+	if _, err := service.Capabilities(context.Background(), domain.Actor{Username: "alice"}, domain.ResourceReference{
+		Group: "example.io", Version: "v1", Resource: "widgets",
+	}, ""); !errors.Is(err, domain.ErrInvalid) {
+		t.Fatalf("missing namespace error = %v, want ErrInvalid", err)
+	}
+}
+
+func TestServiceDiscoveryFiltersClusterResourcesWithSubjectAccessReview(t *testing.T) {
+	service, repository, authorizer, _ := resourceServiceFixture()
+	repository.rules = domain.ResourceRules{
+		Namespaced: []domain.ResourceRule{{Verbs: []string{"list"}, APIGroups: []string{""}, Resources: []string{"pods"}}},
+	}
+	authorizer.denied = map[string]bool{"list": true}
+
+	items, warnings, err := service.Discovery(context.Background(), domain.Actor{Username: "alice"}, "prod")
+	if err != nil {
+		t.Fatalf("Discovery() error = %v", err)
+	}
+	if len(items) != 1 || items[0].Resource != "pods" {
+		t.Fatalf("Discovery() items = %#v", items)
+	}
+	if len(warnings) != 0 {
+		t.Fatalf("Discovery() warnings = %#v", warnings)
 	}
 }

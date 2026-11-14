@@ -351,6 +351,23 @@ type WorkloadDetail struct {
 	Containers []WorkloadContainer `json:"containers"`
 }
 
+// WorkloadRevision describes one retained pod-template revision for a
+// Deployment or StatefulSet. Replica counts are available for Deployment
+// revisions backed by ReplicaSets; StatefulSet ControllerRevisions expose the
+// current marker and images only.
+type WorkloadRevision struct {
+	Kind          string    `json:"kind"`
+	Name          string    `json:"name"`
+	Revision      int64     `json:"revision"`
+	Current       bool      `json:"current"`
+	ChangeCause   string    `json:"changeCause,omitempty"`
+	Status        string    `json:"status"`
+	Replicas      int32     `json:"replicas"`
+	ReadyReplicas int32     `json:"readyReplicas"`
+	Images        []string  `json:"images"`
+	CreatedAt     time.Time `json:"createdAt"`
+}
+
 // WorkloadContainer describes one regular container in a workload pod
 // template. Runtime-only fields such as ready state and restart counts remain
 // on PodDetail; this type is scoped to declarative template configuration.
