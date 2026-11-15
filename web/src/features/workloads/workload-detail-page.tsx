@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useParams, useSearch } from "@tanstack/react-router";
 import { createColumnHelper } from "@tanstack/react-table";
-import { Boxes, FileCode2, Loader2, Minus, Pause, Pencil, Play, Plus, RefreshCw, ScrollText, Trash2 } from "lucide-react";
+import { Boxes, FileCode2, Loader2, Minus, Pause, Pencil, Play, Plus, RefreshCw, ScrollText, TerminalSquare, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { ApiError, api } from "@/api/client";
 import type { PodSummary } from "@/api/types";
@@ -27,6 +27,7 @@ import { useCapabilities } from "@/features/auth/use-session";
 import { workloadCapabilities } from "@/lib/capabilities";
 import { ResourceEvents } from "@/features/events/resource-events";
 import { PodLogs } from "@/features/workloads/pod-logs";
+import { PodTerminal } from "@/features/workloads/pod-terminal";
 import { WorkloadContainerConfigPanel } from "@/features/workloads/workload-container-config-panel";
 import { WorkloadRevisionHistory } from "@/features/workloads/workload-revision-history";
 import { WorkloadServicesPanel } from "@/features/workloads/workload-services-panel";
@@ -69,6 +70,7 @@ export function WorkloadDetailPage() {
   const [imageResourceVersion, setImageResourceVersion] = useState("");
   const [replicas, setReplicas] = useState(1);
   const [confirmName, setConfirmName] = useState("");
+  const [terminalPod, setTerminalPod] = useState<PodSummary | null>(null);
   const kind = params.kind.toLowerCase();
   const kindLabel = workloadKindLabel(kind);
   const supportsRevisions = ["deployment", "statefulset"].includes(kind);
@@ -87,7 +89,14 @@ export function WorkloadDetailPage() {
     queryKey: ["workload", kind, params.namespace, params.name],
     queryFn: () => api.workload(kind, params.namespace, params.name),
   });
+  const podTerminalQuery = useQuery({
+    queryKey: ["pod", terminalPod?.namespace, terminalPod?.name],
+    queryFn: () => api.pod(terminalPod!.namespace, terminalPod!.name),
+    enabled: Boolean(terminalPod),
+    refetchInterval: (current) => current.state.data?.containers.some((container) => container.ephemeral && container.state !== "Running") ? 2_000 : 20_000,
+  });
   const capabilities = useCapabilities(params.namespace).data;
+  const canExec = Boolean(capabilities?.podExec);
   const workloadCaps = workloadCapabilities(capabilities, kind);
   const canScale = workloadCaps.scale && ["deployment", "statefulset"].includes(kind);
   const canRestart = workloadCaps.update && !["job", "cronjob"].includes(kind);
@@ -235,6 +244,7 @@ export function WorkloadDetailPage() {
               podColumn.accessor("node", { header: "节点", cell: (info) => info.getValue() ? <Link to="/nodes/$name" params={{ name: info.getValue() }} search={{}} className="font-mono text-xs font-medium text-primary hover:underline">{info.getValue()}</Link> : <span className="text-muted-foreground">—</span> }),
               podColumn.accessor("ip", { header: "IP", cell: (info) => <span className="font-mono text-xs">{info.getValue()}</span> }),
               podColumn.accessor("createdAt", { header: "年龄", cell: (info) => formatAge(info.getValue()) }),
+              podColumn.display({ id: "terminal", header: "终端", size: 52, cell: (info) => <Button variant="ghost" size="sm" className="h-8 px-2" aria-label={`进入终端 ${info.row.original.name}`} title={canExec ? "进入该 Pod 的容器终端" : "需要 create pods/exec 权限"} disabled={!canExec} onClick={() => setTerminalPod(info.row.original)}><TerminalSquare className="h-4 w-4" /></Button> }),
             ]}
             data={workload.pods}
             empty={<div className="flex flex-col items-center gap-2"><Boxes className="h-6 w-6" /><span>该工作负载当前没有 Pod</span></div>}
@@ -247,6 +257,16 @@ export function WorkloadDetailPage() {
         {supportsRevisions ? <TabsContent value="history"><WorkloadRevisionHistory kind={kind} namespace={workload.namespace} name={workload.name} canRollback={canRollback} onRolledBack={invalidate} /></TabsContent> : null}
         <TabsContent value="yaml"><YamlPanel type={kind} name={workload.name} namespace={workload.namespace} height="64vh" /></TabsContent>
       </Tabs>
+
+      <Dialog open={terminalPod !== null} onOpenChange={(open) => { if (!open) setTerminalPod(null); }}>
+        <DialogContent className="w-[calc(100%-1rem)] max-w-6xl p-3 sm:p-5">
+          <DialogHeader>
+            <DialogTitle>Pod 终端 · {terminalPod?.name}</DialogTitle>
+            <DialogDescription>{terminalPod?.namespace}/{terminalPod?.name} · 选择目标 Pod 后再选择需要进入的容器。终端会话受 RBAC、会话限额和审计保护。</DialogDescription>
+          </DialogHeader>
+          {podTerminalQuery.isLoading ? <LoadingState label="正在加载 Pod 容器" /> : podTerminalQuery.isError ? <ErrorState error={podTerminalQuery.error} onRetry={() => void podTerminalQuery.refetch()} /> : podTerminalQuery.data ? <PodTerminal namespace={podTerminalQuery.data.namespace} name={podTerminalQuery.data.name} containers={podTerminalQuery.data.containers} canDebugContainer={Boolean(capabilities?.podEphemeralDebug)} onContainerCreated={() => podTerminalQuery.refetch()} /> : null}
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={scaleOpen} onOpenChange={setScaleOpen}>
         <DialogContent className="max-w-md">

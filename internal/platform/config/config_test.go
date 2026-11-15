@@ -10,18 +10,22 @@ import (
 
 func validConfig() Config {
 	return Config{
-		ListenAddr:        ":32626",
-		AuthMode:          "local",
-		AdminUsername:     "admin",
-		AdminPasswordHash: "$argon2id$v=19$m=65536,t=3,p=2$c2FsdHNhbHRzYWx0c2FsdA$aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-		SessionKey:        base64.StdEncoding.EncodeToString([]byte("0123456789abcdef0123456789abcdef")),
-		SessionTTL:        8 * time.Hour,
-		RequestTimeout:    15 * time.Second,
-		MaxBodyBytes:      2 * 1024 * 1024,
-		KubeQPS:           50,
-		KubeBurst:         100,
-		ClusterName:       "kubedo-lab",
-		LogLevel:          "info",
+		ListenAddr:            ":32626",
+		AuthMode:              "local",
+		AdminUsername:         "admin",
+		AdminPasswordHash:     "$argon2id$v=19$m=65536,t=3,p=2$c2FsdHNhbHRzYWx0c2FsdA$aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		SessionKey:            base64.StdEncoding.EncodeToString([]byte("0123456789abcdef0123456789abcdef")),
+		SessionTTL:            8 * time.Hour,
+		RequestTimeout:        15 * time.Second,
+		MaxBodyBytes:          2 * 1024 * 1024,
+		TerminalIdleTimeout:   15 * time.Minute,
+		TerminalMaxDuration:   2 * time.Hour,
+		TerminalMaxSessions:   4,
+		TerminalMaxOutputRate: 2 * 1024 * 1024,
+		KubeQPS:               50,
+		KubeBurst:             100,
+		ClusterName:           "kubedo-lab",
+		LogLevel:              "info",
 	}
 }
 

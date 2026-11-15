@@ -51,6 +51,7 @@ type Capabilities struct {
 	NodeCordon        bool                            `json:"nodeCordon"`
 	NodeDrain         bool                            `json:"nodeDrain"`
 	PodExec           bool                            `json:"podExec"`
+	PodEphemeralDebug bool                            `json:"podEphemeralDebug"`
 	HelmReleases      bool                            `json:"helmReleases"`
 	ReloadCertificate bool                            `json:"reloadCertificate"`
 	ResourceActions   map[string]ResourceCapabilities `json:"resourceActions,omitempty"`
@@ -99,23 +100,25 @@ type AuditEvent struct {
 	Name      string
 	Result    string
 	Err       error
+	Details   map[string]any
 }
 
 // AuditRecord is the transport-neutral representation of one audit event
 // retained for interactive inspection. Durable retention remains the
 // responsibility of stdout collection or the configured webhook sink.
 type AuditRecord struct {
-	ID        uint64    `json:"id"`
-	Timestamp time.Time `json:"timestamp"`
-	User      string    `json:"user"`
-	Groups    []string  `json:"groups,omitempty"`
-	Action    string    `json:"action"`
-	Resource  string    `json:"resource"`
-	Namespace string    `json:"namespace,omitempty"`
-	Name      string    `json:"name,omitempty"`
-	Result    string    `json:"result"`
-	RequestID string    `json:"requestId,omitempty"`
-	Error     string    `json:"error,omitempty"`
+	ID        uint64         `json:"id"`
+	Timestamp time.Time      `json:"timestamp"`
+	User      string         `json:"user"`
+	Groups    []string       `json:"groups,omitempty"`
+	Action    string         `json:"action"`
+	Resource  string         `json:"resource"`
+	Namespace string         `json:"namespace,omitempty"`
+	Name      string         `json:"name,omitempty"`
+	Result    string         `json:"result"`
+	RequestID string         `json:"requestId,omitempty"`
+	Error     string         `json:"error,omitempty"`
+	Details   map[string]any `json:"details,omitempty"`
 }
 
 type AuditQuery struct {
@@ -547,6 +550,7 @@ type Container struct {
 	Name               string `json:"name"`
 	Image              string `json:"image"`
 	Init               bool   `json:"init,omitempty"`
+	Ephemeral          bool   `json:"ephemeral,omitempty"`
 	Ready              bool   `json:"ready"`
 	RestartCount       int32  `json:"restartCount"`
 	State              string `json:"state"`
@@ -606,6 +610,38 @@ type PodTerminalOptions struct {
 	Command   []string
 	TTY       bool
 	Size      TerminalSize
+}
+
+// TerminalLimits bounds interactive sessions so a single authenticated user
+// cannot exhaust server resources with idle or runaway shells.
+type TerminalLimits struct {
+	IdleTimeout             time.Duration
+	MaxDuration             time.Duration
+	MaxSessionsPerUser      int
+	MaxOutputBytesPerSecond int64
+}
+
+func DefaultTerminalLimits() TerminalLimits {
+	return TerminalLimits{
+		IdleTimeout:             15 * time.Minute,
+		MaxDuration:             2 * time.Hour,
+		MaxSessionsPerUser:      4,
+		MaxOutputBytesPerSecond: 2 * 1024 * 1024,
+	}
+}
+
+// PodEphemeralContainerRequest creates a short-lived debug container. The
+// server generates the container name and restricts the command to a shell
+// allow-list; the workload image, target and RBAC remain the source of truth.
+type PodEphemeralContainerRequest struct {
+	Image               string `json:"image"`
+	TargetContainerName string `json:"targetContainerName,omitempty"`
+	Shell               string `json:"shell,omitempty"`
+}
+
+type PodEphemeralContainerResult struct {
+	Name   string `json:"name"`
+	Status string `json:"status"`
 }
 
 // HelmReleaseSummary is one read-only Helm release revision exposed without

@@ -126,7 +126,7 @@
 
 ### GR-030 Pod 交互终端
 
-当用户具备 `create pods/exec` 且容器存在时，系统应通过同源 WebSocket 将浏览器输入/输出桥接到 Kubernetes SPDY exec。Shell 仅允许白名单中的 `sh`、`bash`、`ash`；PTY 尺寸必须在 20–300 列、5–100 行内；单次输入和命令参数有界；打开和关闭分别生成审计。终端不承诺支持 `vim`、`top` 等依赖完整终端能力的全屏程序，移动端以命令输入模式优先。
+当用户具备 `create pods/exec` 且容器存在时，系统应通过同源 WebSocket 将浏览器输入/输出桥接到 Kubernetes SPDY exec。Shell 仅允许白名单中的 `sh`、`bash`、`ash`；PTY 尺寸必须在 20–300 列、5–100 行内；单次输入和命令参数有界；打开和关闭分别生成审计。当用户具备 `update pods/ephemeralcontainers` 时，系统应允许为缺少 Shell 的容器创建服务端命名、Shell 白名单约束并经审计的 Ephemeral Container，并支持选择目标容器和指定调试镜像。终端必须执行每用户并发会话、空闲、最大时长和每秒输出限额；打开、拒绝、关闭、超时、限额和字节数必须写入审计。终端不承诺支持 `vim`、`top` 等依赖完整终端能力的全屏程序，移动端以命令输入模式优先。
 
 ### GR-031 Helm Release 可见性
 
@@ -150,7 +150,7 @@
 
 ### GR-036 新页面移动端验收
 
-当用户在 320px、390px、大字体或 Android 视口访问 Helm、权限检查、资源偏好、终端、排空和回滚确认时，页面与弹窗不得横向溢出；新页面必须进入 Chromium、Firefox、明暗主题和 axe 验收矩阵。
+当用户在 320px、390px、大字体或 Android 视口访问 Helm、权限检查、资源偏好、终端、Ephemeral Container 弹窗、排空和回滚确认时，页面与弹窗不得横向溢出；新页面必须进入 Chromium、Firefox、明暗主题和 axe 验收矩阵。
 
 ## 2. 实现落点
 
@@ -161,7 +161,7 @@
 | http | `internal/modules/resources/http/handler.go` | Discovery、Schema、列表、详情、能力、创建/更新/删除路由与稳定错误映射 |
 | kube | `internal/platform/kube/resources.go`、`resource_schema.go` | API Discovery、OpenAPI v2 读取与缓存、动态客户端读写、分页和搜索 |
 | nodes | `internal/modules/nodes/**`、`internal/platform/kube/node_drain.go` | 排空计划、PDB/DaemonSet/mirror/bare Pod 分类、Eviction API 执行和部分失败结果 |
-| workloads | `internal/modules/workloads/**`、`internal/platform/kube/workloads.go`、`pod_exec.go` | 发布历史/模板快照、回滚 Diff、日志时间范围、Init Container、SPDY Exec 与审计包装 |
+| workloads | `internal/modules/workloads/**`、`internal/platform/kube/workloads.go`、`pod_exec.go`、`pods.go` | 发布历史/模板快照、回滚 Diff、日志时间范围、Init/Ephemeral Container、SPDY Exec、会话限额、Ephemeral Debug 与审计详情 |
 | releases | `internal/modules/releases/**`、`internal/platform/kube/helm_releases.go` | Helm v3 Secret 解码、最新 revision/历史、values/manifest 脱敏和 Secret 权限门禁 |
 | auth | `internal/modules/auth/**` | 当前身份 SubjectAccessReview 解释、reason/guidance 与 `kubectl auth can-i` 复现命令 |
 | bootstrap | `internal/bootstrap/app.go`、`router.go` | 依赖装配和受保护路由挂载 |
@@ -183,13 +183,13 @@
   - 多 served version Discovery、preferred 标记、OpenAPI 定义匹配/引用裁剪/缓存/降级。
   - 高风险能力分级、名称确认和 HTTP 边界；Schema 必填/类型预检与 Schema 不可用降级。
   - 排空计划分类、PDB 检测、mirror/已结束 Pod 跳过、PDB 拒绝中止和部分结果计数。
-  - 终端 shell/尺寸白名单、`pods/exec` 授权、打开/关闭审计、Init Container 详情和 `sinceSeconds` 透传。
+  - 终端 shell/尺寸白名单、`pods/exec` 授权、会话并发/空闲/时长/输出限额、打开/关闭审计、Ephemeral Container 创建授权与 `sinceSeconds` 透传。
   - Helm gzip/base64 解码、最新 revision/历史、损坏 Secret warning、values/manifest/环境变量敏感值遮蔽。
   - 权限解释 allowed/read_only/rbac_denied/unavailable、匿名身份提示和 HTTP 参数校验。
   - 本地收藏、保存视图、列偏好、最近资源、模板和草稿的持久化与损坏数据降级。
 - `cd web && npm run api:check && npm run typecheck`
 - `cd web && npm test -- --run`
-- Playwright Chromium/Firefox：多版本切换、动态表单、Diff、风险确认、排空、终端、Helm、权限检查、本地模板、回滚 Diff、390px/320px/大字体/Android 和弹窗后代边界。
+- Playwright Chromium/Firefox：多版本切换、动态表单、Diff、风险确认、排空、终端、Ephemeral Container 创建与移动端弹窗、Helm、权限检查、本地模板、回滚 Diff、390px/320px/大字体/Android 和弹窗后代边界。
 - axe：资源浏览器、Helm、权限检查、列表、详情在亮暗主题下无 serious/critical 问题。
 - `make arch`
 
@@ -198,4 +198,4 @@
 1. 将全局搜索从节点/工作负载/Pod 扩展到已发现资源，并支持最近对象与收藏类型。
 2. 为 CRD Schema 增加字段级文档、更多组合类型提示和从已有对象一键另存模板。
 3. 增加跨 Pod 日志聚合、可配置日志后端和 Loki 等外部数据源，不在浏览器端做无界全量扫描。
-4. 评估 Ephemeral Container、Port-forward 和 Helm rollback；后者必须保持显式权限、二次确认和审计，不因“只读 Helm 可见性”自动获得写能力。
+4. 评估 Port-forward 和 Helm rollback；后者必须保持显式权限、二次确认和审计，不因“只读 Helm 可见性”自动获得写能力。

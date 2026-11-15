@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 	"unicode/utf8"
 
 	"dosh/internal/domain"
@@ -22,11 +23,16 @@ import (
 )
 
 type Handler struct {
-	service *workloadsapp.Service
+	service  *workloadsapp.Service
+	terminal domain.TerminalLimits
 }
 
-func New(service *workloadsapp.Service) *Handler {
-	return &Handler{service: service}
+func New(service *workloadsapp.Service, limits ...domain.TerminalLimits) *Handler {
+	terminal := domain.DefaultTerminalLimits()
+	if len(limits) > 0 {
+		terminal = limits[0]
+	}
+	return &Handler{service: service, terminal: terminal}
 }
 
 func (h *Handler) List(w stdhttp.ResponseWriter, r *stdhttp.Request) {
@@ -492,6 +498,7 @@ func (h *Handler) Mount(r chi.Router) {
 	r.Get("/pods/{namespace}/{name}", h.GetPod)
 	r.Delete("/pods/{namespace}/{name}", h.DeletePod)
 	r.Get("/pods/{namespace}/{name}/logs", h.Logs)
+	r.Post("/pods/{namespace}/{name}/ephemeral-containers", h.CreateEphemeralContainer)
 	r.Get("/pods/{namespace}/{name}/terminal", h.Terminal)
 }
 
@@ -501,6 +508,21 @@ type terminalMessage struct {
 	Columns uint16 `json:"columns,omitempty"`
 	Rows    uint16 `json:"rows,omitempty"`
 	Message string `json:"message,omitempty"`
+	Reason  string `json:"reason,omitempty"`
+}
+
+func (h *Handler) CreateEphemeralContainer(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	var request domain.PodEphemeralContainerRequest
+	if !httpx.DecodeJSON(w, r, &request) {
+		return
+	}
+	actor, _ := domain.ActorFromContext(r.Context())
+	result, err := h.service.CreateEphemeralContainer(r.Context(), actor, chi.URLParam(r, "namespace"), chi.URLParam(r, "name"), request)
+	if err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	httpx.JSON(w, stdhttp.StatusCreated, result)
 }
 
 // Terminal upgrades the request to a same-origin WebSocket and bridges it to a
@@ -537,11 +559,46 @@ func (h *Handler) Terminal(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 			return websocket.JSON.Send(conn, message) == nil
 		}
 		send(terminalMessage{Type: "ready"})
+		governor := newTerminalGovernor(h.terminal)
+		var terminateOnce sync.Once
+		terminate := func(reason, message string) {
+			terminateOnce.Do(func() {
+				setTerminalCloseReason(session, reason)
+				_ = send(terminalMessage{Type: "exit", Message: message, Reason: reason})
+				_ = session.Close()
+				_ = conn.Close()
+			})
+		}
+		bridgeDone := make(chan struct{})
+		defer close(bridgeDone)
+		go func() {
+			interval := terminalCheckInterval(h.terminal)
+			ticker := time.NewTicker(interval)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-bridgeDone:
+					return
+				case now := <-ticker.C:
+					reason, message := governor.expired(now)
+					if reason != "" {
+						terminate(reason, message)
+						return
+					}
+				}
+			}
+		}()
 		go func() {
 			buffer := make([]byte, 4096)
 			for {
 				count, err := session.Read(buffer)
 				if count > 0 {
+					now := time.Now()
+					governor.touch(now)
+					if !governor.accountOutput(now, count) {
+						terminate("output_limit", "终端输出超过服务端限额，会话已自动关闭。请缩小命令输出范围后重新连接。")
+						return
+					}
 					if !send(terminalMessage{Type: "output", Data: base64.StdEncoding.EncodeToString(buffer[:count])}) {
 						return
 					}
@@ -552,7 +609,7 @@ func (h *Handler) Terminal(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 					if waitErr != nil {
 						message = waitErr.Error()
 					}
-					_ = send(terminalMessage{Type: "exit", Message: message})
+					terminate("remote_exit", message)
 					return
 				}
 			}
@@ -560,6 +617,7 @@ func (h *Handler) Terminal(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		for {
 			var message terminalMessage
 			if err := websocket.JSON.Receive(conn, &message); err != nil {
+				terminate("client_disconnect", "客户端已断开终端连接。")
 				return
 			}
 			switch message.Type {
@@ -573,17 +631,80 @@ func (h *Handler) Terminal(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 					_ = send(terminalMessage{Type: "error", Message: "单次输入过大"})
 					continue
 				}
+				governor.touch(time.Now())
 				if _, err := session.Write(data); err != nil {
-					_ = send(terminalMessage{Type: "error", Message: err.Error()})
+					terminate("write_error", err.Error())
 					return
 				}
 			case "resize":
 				if message.Columns >= 20 && message.Columns <= 300 && message.Rows >= 5 && message.Rows <= 100 {
+					governor.touch(time.Now())
 					session.Resize(domain.TerminalSize{Columns: message.Columns, Rows: message.Rows})
 				}
 			}
 		}
 	}).ServeHTTP(w, r)
+}
+
+type terminalGovernor struct {
+	limits      domain.TerminalLimits
+	started     time.Time
+	mu          sync.Mutex
+	lastActive  time.Time
+	windowStart time.Time
+	windowBytes int64
+}
+
+func newTerminalGovernor(limits domain.TerminalLimits) *terminalGovernor {
+	now := time.Now()
+	return &terminalGovernor{limits: limits, started: now, lastActive: now, windowStart: now}
+}
+
+func (g *terminalGovernor) touch(now time.Time) {
+	g.mu.Lock()
+	g.lastActive = now
+	g.mu.Unlock()
+}
+
+func (g *terminalGovernor) accountOutput(now time.Time, bytes int) bool {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if now.Sub(g.windowStart) >= time.Second {
+		g.windowStart = now
+		g.windowBytes = 0
+	}
+	g.windowBytes += int64(bytes)
+	return g.limits.MaxOutputBytesPerSecond <= 0 || g.windowBytes <= g.limits.MaxOutputBytesPerSecond
+}
+
+func (g *terminalGovernor) expired(now time.Time) (string, string) {
+	g.mu.Lock()
+	started, lastActive := g.started, g.lastActive
+	g.mu.Unlock()
+	if g.limits.MaxDuration > 0 && now.Sub(started) >= g.limits.MaxDuration {
+		return "max_duration", "终端达到服务端最大会话时长，已自动关闭。请重新连接后继续操作。"
+	}
+	if g.limits.IdleTimeout > 0 && now.Sub(lastActive) >= g.limits.IdleTimeout {
+		return "idle_timeout", "终端长时间无输入或输出，已自动关闭。请重新连接后继续操作。"
+	}
+	return "", ""
+}
+
+func terminalCheckInterval(limits domain.TerminalLimits) time.Duration {
+	interval := time.Second
+	if limits.IdleTimeout > 0 && limits.IdleTimeout/4 < interval {
+		interval = limits.IdleTimeout / 4
+	}
+	if interval < 100*time.Millisecond {
+		return 100 * time.Millisecond
+	}
+	return interval
+}
+
+func setTerminalCloseReason(session domain.PodTerminalSession, reason string) {
+	if setter, ok := session.(interface{ SetCloseReason(string) }); ok {
+		setter.SetCloseReason(reason)
+	}
 }
 
 func sameOriginWebSocket(r *stdhttp.Request) bool {

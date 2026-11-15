@@ -55,6 +55,7 @@ func (s *SessionService) Capabilities(ctx context.Context, actor domain.Actor, n
 		NodeCordon:        s.allowed(ctx, actor, domain.Access{Verb: "update", Resource: "nodes"}),
 		NodeDrain:         s.allowed(ctx, actor, domain.Access{Verb: "update", Resource: "nodes"}),
 		PodExec:           s.allowed(ctx, actor, domain.Access{Verb: "create", Resource: "pods", Subresource: "exec", Namespace: namespace}),
+		PodEphemeralDebug: s.allowed(ctx, actor, domain.Access{Verb: "update", Resource: "pods", Subresource: "ephemeralcontainers", Namespace: namespace}),
 		HelmReleases:      s.allowed(ctx, actor, domain.Access{Verb: "list", Resource: "secrets", Namespace: namespace}),
 		ReloadCertificate: s.allowed(ctx, actor, domain.Access{Verb: "update", APIGroup: "dosh.io", Resource: "server-certificates"}),
 		ResourceActions:   s.resourceActions(ctx, actor, namespace),

@@ -24,7 +24,7 @@ const actions = [
   "delete-service", "dry-run", "login", "login_started", "logout", "reload", "restart", "resume",
   "reveal", "scale", "suspend", "uncordon", "update-configmap", "update-container-config",
   "update-image", "update-ingress", "update-labels", "update-persistentvolumeclaim", "update-secret",
-  "update-service", "update-taints",
+  "update-service", "update-taints", "exec", "exec-close", "create-ephemeral-container",
 ];
 const results = ["success", "failure", "denied"] as const;
 
@@ -117,6 +117,12 @@ export function AuditPage() {
                 <div>
                   <p className="mb-1 font-medium">错误信息</p>
                   <pre className="soft-wrap max-h-56 max-w-full overflow-auto whitespace-pre-wrap rounded-md border bg-muted/40 p-3 font-mono text-xs text-destructive-strong">{selected.error}</pre>
+                </div>
+              ) : null}
+              {selected.details && Object.keys(selected.details).length ? (
+                <div>
+                  <p className="mb-1 font-medium">操作详情</p>
+                  <pre className="soft-wrap max-h-56 max-w-full overflow-auto whitespace-pre-wrap break-all rounded-md border bg-muted/40 p-3 font-mono text-xs">{JSON.stringify(selected.details, null, 2)}</pre>
                 </div>
               ) : null}
             </div>

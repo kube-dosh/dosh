@@ -2,6 +2,7 @@ package kube
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"sort"
 
@@ -99,7 +100,7 @@ func (c *Client) GetPod(ctx context.Context, namespace, name string) (domain.Pod
 		PodSummary:     summary,
 		QOSClass:       string(pod.Status.QOSClass),
 		ServiceAccount: pod.Spec.ServiceAccountName,
-		Containers:     make([]domain.Container, 0, len(pod.Spec.Containers)+len(pod.Spec.InitContainers)),
+		Containers:     make([]domain.Container, 0, len(pod.Spec.Containers)+len(pod.Spec.InitContainers)+len(pod.Spec.EphemeralContainers)),
 		Conditions:     make([]domain.Condition, 0, len(pod.Status.Conditions)),
 	}
 	for _, condition := range pod.Status.Conditions {
@@ -109,7 +110,98 @@ func (c *Client) GetPod(ctx context.Context, namespace, name string) (domain.Pod
 	}
 	detail.Containers = append(detail.Containers, podContainerDetails(pod.Spec.InitContainers, pod.Status.InitContainerStatuses, true)...)
 	detail.Containers = append(detail.Containers, podContainerDetails(pod.Spec.Containers, pod.Status.ContainerStatuses, false)...)
+	detail.Containers = append(detail.Containers, podEphemeralContainerDetails(pod.Spec.EphemeralContainers, pod.Status.EphemeralContainerStatuses)...)
 	return detail, nil
+}
+
+func podEphemeralContainerDetails(containers []corev1.EphemeralContainer, statuses []corev1.ContainerStatus) []domain.Container {
+	statusByName := make(map[string]corev1.ContainerStatus, len(statuses))
+	for _, status := range statuses {
+		statusByName[status.Name] = status
+	}
+	result := make([]domain.Container, 0, len(containers))
+	for _, container := range containers {
+		item := domain.Container{Name: container.Name, Image: container.Image, Ephemeral: true}
+		if q, ok := container.Resources.Requests[corev1.ResourceCPU]; ok {
+			item.CPURequestMilli = q.MilliValue()
+		}
+		if q, ok := container.Resources.Limits[corev1.ResourceCPU]; ok {
+			item.CPULimitMilli = q.MilliValue()
+		}
+		if q, ok := container.Resources.Requests[corev1.ResourceMemory]; ok {
+			item.MemoryRequestBytes = q.Value()
+		}
+		if q, ok := container.Resources.Limits[corev1.ResourceMemory]; ok {
+			item.MemoryLimitBytes = q.Value()
+		}
+		if status, ok := statusByName[container.Name]; ok {
+			item.Ready = status.Ready
+			item.RestartCount = status.RestartCount
+			switch {
+			case status.State.Running != nil:
+				item.State = "Running"
+			case status.State.Waiting != nil:
+				item.State = "Waiting"
+				item.Reason = status.State.Waiting.Reason
+			case status.State.Terminated != nil:
+				item.State = "Terminated"
+				item.Reason = status.State.Terminated.Reason
+			default:
+				item.State = "Unknown"
+			}
+		}
+		result = append(result, item)
+	}
+	return result
+}
+
+func (c *Client) AddPodEphemeralContainer(ctx context.Context, namespace, name string, request domain.PodEphemeralContainerRequest, containerName string) (string, error) {
+	ctx, cancel := c.withTimeout(ctx)
+	defer cancel()
+	pod, err := c.clientset.CoreV1().Pods(namespace).Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		return "", mapKubeError(err)
+	}
+	for _, existing := range pod.Spec.EphemeralContainers {
+		if existing.Name == containerName {
+			return "", fmt.Errorf("%w: ephemeral container %q already exists", domain.ErrAlreadyExists, containerName)
+		}
+	}
+	if request.TargetContainerName != "" && !podHasTargetContainer(pod, request.TargetContainerName) {
+		return "", fmt.Errorf("%w: target container %q is not present in pod %s/%s", domain.ErrNotFound, request.TargetContainerName, namespace, name)
+	}
+	shell := request.Shell
+	if shell == "" {
+		shell = "sh"
+	}
+	shellPath := "/bin/" + shell
+	debug := corev1.EphemeralContainer{
+		EphemeralContainerCommon: corev1.EphemeralContainerCommon{
+			Name: containerName, Image: request.Image,
+			Command: []string{shellPath, "-c", "while true; do sleep 3600; done"},
+			Stdin:   true, TTY: true,
+		},
+		TargetContainerName: request.TargetContainerName,
+	}
+	pod.Spec.EphemeralContainers = append(pod.Spec.EphemeralContainers, debug)
+	if _, err := c.clientset.CoreV1().Pods(namespace).UpdateEphemeralContainers(ctx, name, pod, metav1.UpdateOptions{}); err != nil {
+		return "", mapKubeError(err)
+	}
+	return containerName, nil
+}
+
+func podHasTargetContainer(pod *corev1.Pod, name string) bool {
+	for _, container := range pod.Spec.Containers {
+		if container.Name == name {
+			return true
+		}
+	}
+	for _, container := range pod.Spec.InitContainers {
+		if container.Name == name {
+			return true
+		}
+	}
+	return false
 }
 
 func podContainerDetails(containers []corev1.Container, statuses []corev1.ContainerStatus, init bool) []domain.Container {

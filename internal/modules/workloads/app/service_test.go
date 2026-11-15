@@ -56,6 +56,10 @@ type fakeRepository struct {
 	terminalErr    error
 	terminalOpts   domain.PodTerminalOptions
 	terminal       domain.PodTerminalSession
+	ephemeralCalls int
+	ephemeralErr   error
+	ephemeralOpts  domain.PodEphemeralContainerRequest
+	ephemeralName  string
 	lastRevision   int64
 	lastRV         string
 }
@@ -160,6 +164,18 @@ func (f *fakeRepository) OpenPodTerminal(_ context.Context, _ string, _ string, 
 	return &fakeTerminalSession{}, nil
 }
 
+func (f *fakeRepository) AddPodEphemeralContainer(_ context.Context, _ string, _ string, request domain.PodEphemeralContainerRequest, containerName string) (string, error) {
+	f.ephemeralCalls++
+	f.ephemeralOpts = request
+	if f.ephemeralErr != nil {
+		return "", f.ephemeralErr
+	}
+	if f.ephemeralName != "" {
+		return f.ephemeralName, nil
+	}
+	return containerName, nil
+}
+
 type fakeTerminalSession struct {
 	closed int
 }
@@ -193,12 +209,14 @@ type fakeAuditor struct {
 	events  int
 	results []string
 	actions []string
+	details []map[string]any
 }
 
 func (a *fakeAuditor) Record(_ context.Context, _ domain.Actor, event domain.AuditEvent) {
 	a.events++
 	a.results = append(a.results, event.Result)
 	a.actions = append(a.actions, event.Action)
+	a.details = append(a.details, event.Details)
 }
 
 func TestScaleEnforcesGuardAndKind(t *testing.T) {
@@ -363,6 +381,9 @@ func TestOpenTerminalValidatesShellSizeAndAuthorization(t *testing.T) {
 	if len(auditor.actions) != 2 || auditor.actions[1] != "exec-close" {
 		t.Fatalf("close audit = %#v", auditor.actions)
 	}
+	if auditor.details[1]["container"] != "api" || auditor.details[1]["reason"] != "client_closed" {
+		t.Fatalf("close audit details = %#v", auditor.details[1])
+	}
 
 	deniedRepo := &fakeRepository{}
 	deniedAuditor := &fakeAuditor{}
@@ -372,6 +393,97 @@ func TestOpenTerminalValidatesShellSizeAndAuthorization(t *testing.T) {
 	}
 	if deniedRepo.terminalCalls != 0 || len(deniedAuditor.results) != 1 || deniedAuditor.results[0] != "denied" {
 		t.Fatalf("denied calls = %d audit = %#v", deniedRepo.terminalCalls, deniedAuditor.results)
+	}
+}
+
+func TestOpenTerminalEnforcesPerUserSessionLimit(t *testing.T) {
+	t.Parallel()
+	repo := &fakeRepository{}
+	auditor := &fakeAuditor{}
+	limits := domain.DefaultTerminalLimits()
+	limits.MaxSessionsPerUser = 1
+	service := New(repo, fakeGuard{allow: true}, auditor, limits)
+	actor := domain.Actor{Username: "alice"}
+	options := domain.PodTerminalOptions{Container: "api", Command: []string{"/bin/sh"}, TTY: true, Size: domain.TerminalSize{Columns: 100, Rows: 30}}
+
+	first, err := service.OpenTerminal(context.Background(), actor, "prod", "api-0", options)
+	if err != nil {
+		t.Fatalf("first OpenTerminal() error = %v", err)
+	}
+	if _, err := service.OpenTerminal(context.Background(), actor, "prod", "api-0", options); !errors.Is(err, domain.ErrRateLimited) {
+		t.Fatalf("second OpenTerminal() error = %v, want ErrRateLimited", err)
+	}
+	if repo.terminalCalls != 1 {
+		t.Fatalf("repository calls = %d, want 1", repo.terminalCalls)
+	}
+	last := auditor.details[len(auditor.details)-1]
+	if last["reason"] != "session_limit" {
+		t.Fatalf("limit audit details = %#v", last)
+	}
+	if err := first.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+	third, err := service.OpenTerminal(context.Background(), actor, "prod", "api-0", options)
+	if err != nil {
+		t.Fatalf("third OpenTerminal() error = %v", err)
+	}
+	_ = third.Close()
+}
+
+func TestCreateEphemeralContainerValidatesAuthorizesAndAudits(t *testing.T) {
+	t.Parallel()
+	repo := &fakeRepository{}
+	auditor := &fakeAuditor{}
+	var access domain.Access
+	service := New(repo, fakeGuard{allow: true, access: &access}, auditor)
+	actor := domain.Actor{Username: "alice"}
+	result, err := service.CreateEphemeralContainer(context.Background(), actor, "prod", "api-0", domain.PodEphemeralContainerRequest{
+		Image: "busybox:1.36", TargetContainerName: "api", Shell: "sh",
+	})
+	if err != nil {
+		t.Fatalf("CreateEphemeralContainer() error = %v", err)
+	}
+	if !strings.HasPrefix(result.Name, "debug-") || result.Status != "created" {
+		t.Fatalf("result = %#v", result)
+	}
+	if access != (domain.Access{Verb: "update", Resource: "pods", Subresource: "ephemeralcontainers", Namespace: "prod", Name: "api-0"}) {
+		t.Fatalf("authorization access = %#v", access)
+	}
+	if repo.ephemeralCalls != 1 || repo.ephemeralOpts.Image != "busybox:1.36" || repo.ephemeralOpts.TargetContainerName != "api" {
+		t.Fatalf("repository options = %#v calls=%d", repo.ephemeralOpts, repo.ephemeralCalls)
+	}
+	if len(auditor.actions) != 1 || auditor.actions[0] != "create-ephemeral-container" || auditor.results[0] != "success" {
+		t.Fatalf("audit = %#v %#v", auditor.actions, auditor.results)
+	}
+	if auditor.details[0]["container"] != result.Name || auditor.details[0]["targetContainer"] != "api" {
+		t.Fatalf("audit details = %#v", auditor.details[0])
+	}
+
+	for name, request := range map[string]domain.PodEphemeralContainerRequest{
+		"missing image": {Shell: "sh"},
+		"bad image":     {Image: "busybox 1.36", Shell: "sh"},
+		"bad shell":     {Image: "busybox:1.36", Shell: "zsh"},
+	} {
+		if _, err := service.CreateEphemeralContainer(context.Background(), actor, "prod", "api-0", request); !errors.Is(err, domain.ErrInvalid) {
+			t.Fatalf("%s error = %v, want ErrInvalid", name, err)
+		}
+	}
+	if repo.ephemeralCalls != 1 {
+		t.Fatalf("invalid requests reached repository: %d", repo.ephemeralCalls)
+	}
+
+	repo.ephemeralErr = domain.ErrConflict
+	if _, err := service.CreateEphemeralContainer(context.Background(), actor, "prod", "api-0", domain.PodEphemeralContainerRequest{Image: "busybox:1.36", Shell: "sh"}); !errors.Is(err, domain.ErrConflict) {
+		t.Fatalf("conflict error = %v", err)
+	}
+
+	deniedRepo := &fakeRepository{}
+	denied := New(deniedRepo, fakeGuard{allow: false}, &fakeAuditor{})
+	if _, err := denied.CreateEphemeralContainer(context.Background(), actor, "prod", "api-0", domain.PodEphemeralContainerRequest{Image: "busybox:1.36"}); !errors.Is(err, domain.ErrForbidden) {
+		t.Fatalf("denied error = %v", err)
+	}
+	if deniedRepo.ephemeralCalls != 0 {
+		t.Fatalf("denied request reached repository %d times", deniedRepo.ephemeralCalls)
 	}
 }
 

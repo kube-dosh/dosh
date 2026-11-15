@@ -52,47 +52,51 @@ func TestSameOriginWebSocket(t *testing.T) {
 }
 
 type workloadRepo struct {
-	scaleCalls       int
-	restartCalls     int
-	imageCalls       int
-	containerCalls   int
-	suspendCalls     int
-	deleteCalls      int
-	lastKind         string
-	lastNamespace    string
-	lastName         string
-	lastReplicas     int32
-	lastResourceVer  string
-	lastImage        domain.WorkloadImageUpdate
-	lastContainer    domain.WorkloadContainerConfigUpdate
-	lastSuspend      domain.CronJobSuspendUpdate
-	lastPropagation  domain.DeletionPropagation
-	lastTailLines    int64
-	lastSinceSeconds int64
-	lastQuery        domain.ListQuery
-	scaleErr         error
-	restartErr       error
-	imageErr         error
-	containerErr     error
-	suspendErr       error
-	deleteErr        error
-	logsErr          error
-	logsPayload      string
-	logsReader       io.ReadCloser
-	workloads        []domain.WorkloadSummary
-	workloadDetail   domain.WorkloadDetail
-	pods             []domain.PodSummary
-	podDetail        domain.PodDetail
-	listWorkloadsErr error
-	createCalls      []bool
-	previewCalls     int
-	createErr        error
-	previewYAML      string
-	revisions        []domain.WorkloadRevision
-	revisionErr      error
-	rollbackCalls    int
-	rollbackErr      error
-	lastRevision     int64
+	scaleCalls        int
+	restartCalls      int
+	imageCalls        int
+	containerCalls    int
+	suspendCalls      int
+	deleteCalls       int
+	lastKind          string
+	lastNamespace     string
+	lastName          string
+	lastReplicas      int32
+	lastResourceVer   string
+	lastImage         domain.WorkloadImageUpdate
+	lastContainer     domain.WorkloadContainerConfigUpdate
+	lastSuspend       domain.CronJobSuspendUpdate
+	lastPropagation   domain.DeletionPropagation
+	lastTailLines     int64
+	lastSinceSeconds  int64
+	lastQuery         domain.ListQuery
+	scaleErr          error
+	restartErr        error
+	imageErr          error
+	containerErr      error
+	suspendErr        error
+	deleteErr         error
+	logsErr           error
+	logsPayload       string
+	logsReader        io.ReadCloser
+	workloads         []domain.WorkloadSummary
+	workloadDetail    domain.WorkloadDetail
+	pods              []domain.PodSummary
+	podDetail         domain.PodDetail
+	listWorkloadsErr  error
+	createCalls       []bool
+	previewCalls      int
+	createErr         error
+	previewYAML       string
+	revisions         []domain.WorkloadRevision
+	revisionErr       error
+	rollbackCalls     int
+	rollbackErr       error
+	lastRevision      int64
+	ephemeralCalls    int
+	ephemeralErr      error
+	lastEphemeral     domain.PodEphemeralContainerRequest
+	lastEphemeralName string
 }
 
 func (r *workloadRepo) ListWorkloads(_ context.Context, query domain.ListQuery) ([]domain.WorkloadSummary, error) {
@@ -188,6 +192,13 @@ func (r *workloadRepo) ListPodsPage(ctx context.Context, query domain.ListQuery,
 func (r *workloadRepo) GetPod(_ context.Context, namespace, name string) (domain.PodDetail, error) {
 	r.lastNamespace, r.lastName = namespace, name
 	return r.podDetail, nil
+}
+func (r *workloadRepo) AddPodEphemeralContainer(_ context.Context, namespace, name string, request domain.PodEphemeralContainerRequest, containerName string) (string, error) {
+	r.ephemeralCalls++
+	r.lastNamespace, r.lastName = namespace, name
+	r.lastEphemeral = request
+	r.lastEphemeralName = containerName
+	return containerName, r.ephemeralErr
 }
 
 func (r *workloadRepo) DeletePod(_ context.Context, namespace, name string) error {
@@ -416,6 +427,58 @@ func TestWriteErrorMapping(t *testing.T) {
 				t.Fatalf("status = %d, want %d; body = %s", response.Code, tt.wantStatus, response.Body.String())
 			}
 		})
+	}
+}
+
+func TestCreateEphemeralContainerEndpoint(t *testing.T) {
+	server := newWorkloadTestServer(t)
+	response := performWorkloadJSON(server.router, http.MethodPost, "/api/v1/pods/prod/api-0/ephemeral-containers", `{"image":"busybox:1.36","targetContainerName":"api","shell":"sh"}`, server.authHeaders())
+	if response.Code != http.StatusCreated {
+		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+	}
+	if server.repo.ephemeralCalls != 1 || server.repo.lastEphemeral.Image != "busybox:1.36" || server.repo.lastEphemeral.TargetContainerName != "api" {
+		t.Fatalf("ephemeral call = %d %#v", server.repo.ephemeralCalls, server.repo.lastEphemeral)
+	}
+	var payload domain.PodEphemeralContainerResult
+	if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if payload.Name == "" || payload.Name != server.repo.lastEphemeralName || payload.Status != "created" {
+		t.Fatalf("response = %#v, generated name = %q", payload, server.repo.lastEphemeralName)
+	}
+
+	response = performWorkloadJSON(server.router, http.MethodPost, "/api/v1/pods/prod/api-0/ephemeral-containers", `{"image":"busybox 1.36"}`, server.authHeaders())
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("invalid image status = %d, body = %s", response.Code, response.Body.String())
+	}
+	if server.repo.ephemeralCalls != 1 {
+		t.Fatalf("invalid request reached repository: %d", server.repo.ephemeralCalls)
+	}
+}
+
+func TestTerminalGovernorEnforcesIdleRateAndDurationLimits(t *testing.T) {
+	limits := domain.TerminalLimits{IdleTimeout: 10 * time.Second, MaxDuration: time.Minute, MaxOutputBytesPerSecond: 1024}
+	now := time.Unix(100, 0)
+	governor := newTerminalGovernor(limits)
+	governor.started = now
+	governor.lastActive = now
+	governor.windowStart = now
+
+	if reason, _ := governor.expired(now.Add(9 * time.Second)); reason != "" {
+		t.Fatalf("unexpected early expiry %q", reason)
+	}
+	if !governor.accountOutput(now.Add(time.Second), 1024) {
+		t.Fatal("first output window should be allowed")
+	}
+	if governor.accountOutput(now.Add(time.Second+time.Millisecond), 1) {
+		t.Fatal("output over the per-second budget should be rejected")
+	}
+	if reason, _ := governor.expired(now.Add(11 * time.Second)); reason != "idle_timeout" {
+		t.Fatalf("idle reason = %q", reason)
+	}
+	governor.touch(now.Add(20 * time.Second))
+	if reason, _ := governor.expired(now.Add(70 * time.Second)); reason != "max_duration" {
+		t.Fatalf("duration reason = %q", reason)
 	}
 }
 

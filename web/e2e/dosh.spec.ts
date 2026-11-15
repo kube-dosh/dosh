@@ -54,6 +54,7 @@ const session: SessionResponse = {
     nodeCordon: true,
     nodeDrain: true,
     podExec: true,
+    podEphemeralDebug: true,
     helmReleases: true,
     reloadCertificate: true,
     resourceActions: {
@@ -424,10 +425,10 @@ async function openResourceMenu(page: Page, resource: string) {
 type NodeSchedulingRequest = { method: string; path: string; csrf: string | null };
 type NodeMetadataRequest = { method: string; path: string; csrf: string | null; body: Record<string, unknown> };
 
-async function installApiMocks(page: Page, options: { authenticated?: boolean; authMode?: "local" | "token"; overview?: Overview; overviewStatus?: number; nodeSchedulingRequests?: NodeSchedulingRequest[]; nodeMetadataRequests?: NodeMetadataRequest[]; expireSessionOnNodes?: boolean; noIngressController?: boolean; podName?: string; podExec?: boolean } = {}) {
+async function installApiMocks(page: Page, options: { authenticated?: boolean; authMode?: "local" | "token"; overview?: Overview; overviewStatus?: number; nodeSchedulingRequests?: NodeSchedulingRequest[]; nodeMetadataRequests?: NodeMetadataRequest[]; expireSessionOnNodes?: boolean; noIngressController?: boolean; podName?: string; podExec?: boolean; podEphemeralDebug?: boolean; ephemeralRequests?: Array<{ image: string; targetContainerName?: string; shell?: string }> } = {}) {
   const authenticated = options.authenticated ?? true;
   const authMode = options.authMode ?? "local";
-  const sessionResponse: SessionResponse = { ...session, authMode, capabilities: { ...session.capabilities, podExec: options.podExec ?? session.capabilities.podExec } };
+  const sessionResponse: SessionResponse = { ...session, authMode, capabilities: { ...session.capabilities, podExec: options.podExec ?? session.capabilities.podExec, podEphemeralDebug: options.podEphemeralDebug ?? session.capabilities.podEphemeralDebug } };
   const listedPod = options.podName ? { ...podSummary, name: options.podName } : podSummary;
   let signedIn = authenticated;
   let nodeSchedulingDisabled = false;
@@ -686,6 +687,10 @@ async function installApiMocks(page: Page, options: { authenticated?: boolean; a
       return json(route, { status: "updated" });
     }
     if (path === "/api/v1/pods") return json(route, list([listedPod]));
+    if (path === "/api/v1/pods/default/web-abcdef-12345/ephemeral-containers" && method === "POST") {
+      options.ephemeralRequests?.push(request.postDataJSON() as { image: string; targetContainerName?: string; shell?: string });
+      return json(route, { name: "debug-e2e01", status: "created" }, 201);
+    }
     if (path === "/api/v1/pods/default/web-abcdef-12345") return json(route, podDetail);
     if (path === "/api/v1/pods/default/web-abcdef-12345/logs") {
       return route.fulfill({
@@ -1287,6 +1292,46 @@ test("Pod 终端在无 pods/exec 权限时保留入口并解释原因", async ({
   await expect(page.getByRole("link", { name: "前往权限检查" })).toBeVisible();
   await expect(page.getByRole("application", { name: "Pod 容器终端" })).toHaveCount(0);
   await expectNoPageOverflow(page, "pod terminal permission state");
+});
+
+test("Pod 终端可创建受审计的 Ephemeral Container 调试容器", async ({ page }) => {
+  const ephemeralRequests: Array<{ image: string; targetContainerName?: string; shell?: string }> = [];
+  await installApiMocks(page, { ephemeralRequests });
+  await page.goto("/pods/default/web-abcdef-12345?tab=terminal");
+  await page.getByRole("button", { name: "调试容器", exact: true }).click();
+
+  const dialog = page.getByRole("dialog", { name: "创建 Ephemeral Container" });
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByLabel("调试目标容器")).toContainText("web");
+  await expect(dialog.getByText(/update pods\/ephemeralcontainers/)).toBeVisible();
+  await dialog.getByRole("button", { name: "创建调试容器" }).click();
+
+  await expect.poll(() => ephemeralRequests).toEqual([{ image: "busybox:1.36", targetContainerName: "web", shell: "sh" }]);
+  await expect(dialog).toBeHidden();
+  await expect(page.getByText(/调试容器 debug-e2e01 已创建/)).toBeVisible();
+  await expectNoPageOverflow(page, "ephemeral container desktop");
+});
+
+test("Ephemeral Container 弹窗在 320px 与 390px 视口内完整可用", async ({ page }) => {
+  await installApiMocks(page);
+  await page.goto("/pods/default/web-abcdef-12345?tab=terminal");
+
+  for (const viewport of [{ width: 320, height: 720 }, { width: 390, height: 844 }]) {
+    await page.setViewportSize(viewport);
+    await page.getByRole("button", { name: "调试容器", exact: true }).click();
+    const dialog = page.getByRole("dialog", { name: "创建 Ephemeral Container" });
+    await expect(dialog).toBeVisible();
+    await expectElementInsideViewport(page, dialog, `${viewport.width}px ephemeral dialog`);
+    await expectNoPageOverflow(page, `${viewport.width}px ephemeral dialog`);
+
+    await dialog.getByLabel("调试目标容器").click();
+    await expect(page.getByRole("option", { name: /web · Running/ })).toBeVisible();
+    await expectNoPageOverflow(page, `${viewport.width}px ephemeral target menu`);
+    await page.keyboard.press("Escape");
+    await expectNoSeriousAccessibilityViolations(page, `${viewport.width}px ephemeral dialog`);
+    await page.keyboard.press("Escape");
+    await expect(dialog).toBeHidden();
+  }
 });
 
 test("发布历史回滚确认展示 Pod 模板 Diff", async ({ page }) => {

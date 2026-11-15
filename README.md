@@ -49,7 +49,7 @@ Dosh does not replace Kubernetes or bypass it. Authentication, authorization, an
 | Nodes | Status, roles, capacity, labels, taints, Pod placement, events, and logs; cordon/uncordon and PDB-aware drain planning/execution according to permissions |
 | Workloads | Deployments, StatefulSets, DaemonSets, Jobs, and CronJobs; details, Pods, container configuration, related Services, events, logs, and YAML |
 | Workload actions | Create Deployments, scale, rolling restart, update images, suspend/resume CronJobs, delete resources, inspect Deployment/StatefulSet revision history with a rollback Pod-template diff, roll back revisions, and edit YAML within resource-level permissions |
-| Pods | Status, regular and Init Containers, restart counts, resources, owner and node deep links, events, logs, YAML, and an audited interactive shell through WebSocket when `pods/exec` is allowed |
+| Pods | Status, regular, Init, and Ephemeral Containers, restart counts, resources, owner and node deep links, events, logs, YAML, and an audited interactive shell through WebSocket when `pods/exec` is allowed; authorized users can add a bounded Ephemeral debug container when the target image has no shell |
 | Logs | Live single-Pod logs, previous container instance, Init Container selection, tail lines, timestamps, time range, keyword filtering, and bounded non-stream reads |
 | Helm | Read-only release list, current values, rendered manifest, notes, warnings, and revision history from Helm Secrets; common sensitive keys and Secret payloads are redacted server-side. Requires `list secrets`. |
 | Access review | Explain the current identity's SubjectAccessReview decision, distinguish Dosh read-only mode from RBAC denial, and generate the matching `kubectl auth can-i` command |

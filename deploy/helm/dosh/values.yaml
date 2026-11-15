@@ -119,6 +119,13 @@ runtime:
   requestTimeout: 15s
   maxRequestBody: 2097152
 
+terminal:
+  idleTimeout: 15m
+  maxDuration: 2h
+  maxSessionsPerUser: 4
+  # 每个终端会话每秒最多发送给浏览器的输出字节数，防止无界命令输出拖垮服务。
+  maxOutputBytesPerSecond: 2097152
+
 resources:
   requests:
     cpu: 100m

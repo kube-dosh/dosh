@@ -2,11 +2,15 @@ package app
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
 	"strings"
 	"sync"
+	"sync/atomic"
+	"time"
 
 	"dosh/internal/domain"
 )
@@ -33,16 +37,27 @@ type Repository interface {
 	DeletePod(ctx context.Context, namespace, name string) error
 	StreamPodLogs(ctx context.Context, namespace, name, container string, follow, previous bool, tailLines int64, timestamps bool, sinceSeconds int64, limitBytes int64) (io.ReadCloser, error)
 	OpenPodTerminal(ctx context.Context, namespace, name string, options domain.PodTerminalOptions) (domain.PodTerminalSession, error)
+	AddPodEphemeralContainer(ctx context.Context, namespace, name string, request domain.PodEphemeralContainerRequest, containerName string) (string, error)
 }
 
 type Service struct {
 	repository Repository
 	authorizer domain.Authorizer
 	auditor    domain.Auditor
+	terminal   domain.TerminalLimits
+	terminalMu sync.Mutex
+	active     map[string]int
 }
 
-func New(repository Repository, authorizer domain.Authorizer, auditor domain.Auditor) *Service {
-	return &Service{repository: repository, authorizer: authorizer, auditor: auditor}
+func New(repository Repository, authorizer domain.Authorizer, auditor domain.Auditor, limits ...domain.TerminalLimits) *Service {
+	terminal := domain.DefaultTerminalLimits()
+	if len(limits) > 0 {
+		terminal = limits[0]
+	}
+	return &Service{
+		repository: repository, authorizer: authorizer, auditor: auditor,
+		terminal: terminal, active: make(map[string]int),
+	}
 }
 
 var supportedKinds = map[string]bool{
@@ -249,15 +264,125 @@ func (s *Service) OpenTerminal(ctx context.Context, actor domain.Actor, namespac
 		s.audit(ctx, actor, "exec", "pod", namespace, name, err)
 		return nil, err
 	}
+	release, err := s.acquireTerminal(actor)
+	if err != nil {
+		s.auditor.Record(ctx, actor, domain.AuditEvent{
+			Action: "exec", Resource: "pod", Namespace: namespace, Name: name, Result: "failure", Err: err,
+			Details: map[string]any{"container": options.Container, "reason": "session_limit"},
+		})
+		return nil, err
+	}
 	session, err := s.repository.OpenPodTerminal(ctx, namespace, name, options)
 	if err != nil {
+		release()
 		s.audit(ctx, actor, "exec", "pod", namespace, name, err)
 		return nil, err
 	}
-	s.audit(ctx, actor, "exec", "pod", namespace, name, nil)
+	s.auditor.Record(ctx, actor, domain.AuditEvent{
+		Action: "exec", Resource: "pod", Namespace: namespace, Name: name, Result: "success",
+		Details: map[string]any{"container": options.Container, "command": options.Command, "tty": options.TTY},
+	})
 	return &auditedTerminalSession{
 		PodTerminalSession: session, service: s, ctx: ctx, actor: actor,
-		namespace: namespace, name: name,
+		namespace: namespace, name: name, container: options.Container,
+		started: time.Now(), release: release, closeReason: "client_closed",
+	}, nil
+}
+
+// CreateEphemeralContainer adds a debug container through the
+// pods/ephemeralcontainers subresource. The generated name and allow-listed
+// shell keep the request narrow while Kubernetes remains the final validator.
+func (s *Service) CreateEphemeralContainer(ctx context.Context, actor domain.Actor, namespace, name string, request domain.PodEphemeralContainerRequest) (domain.PodEphemeralContainerResult, error) {
+	const action = "create-ephemeral-container"
+	if strings.TrimSpace(namespace) == "" || strings.TrimSpace(name) == "" {
+		err := fmt.Errorf("%w: namespace and pod are required", domain.ErrInvalid)
+		s.audit(ctx, actor, action, "pod", namespace, name, err)
+		return domain.PodEphemeralContainerResult{}, err
+	}
+	request.Image = strings.TrimSpace(request.Image)
+	if request.Image == "" || len(request.Image) > 512 || strings.ContainsAny(request.Image, " \t\r\n\x00") {
+		err := fmt.Errorf("%w: debug image must be a single non-empty image reference", domain.ErrInvalid)
+		s.audit(ctx, actor, action, "pod", namespace, name, err)
+		return domain.PodEphemeralContainerResult{}, err
+	}
+	request.Shell = strings.TrimSpace(request.Shell)
+	if request.Shell == "" {
+		request.Shell = "sh"
+	}
+	if !supportedShell([]string{"/bin/" + request.Shell}) {
+		err := fmt.Errorf("%w: debug shell must be sh, bash or ash", domain.ErrInvalid)
+		s.audit(ctx, actor, action, "pod", namespace, name, err)
+		return domain.PodEphemeralContainerResult{}, err
+	}
+	if len(request.TargetContainerName) > 253 || strings.ContainsAny(request.TargetContainerName, "\r\n\x00") {
+		err := fmt.Errorf("%w: target container name is invalid", domain.ErrInvalid)
+		s.audit(ctx, actor, action, "pod", namespace, name, err)
+		return domain.PodEphemeralContainerResult{}, err
+	}
+	access := domain.Access{Verb: "update", Resource: "pods", Subresource: "ephemeralcontainers", Namespace: namespace, Name: name}
+	if err := s.authorize(ctx, actor, action, "pod", namespace, name, access); err != nil {
+		return domain.PodEphemeralContainerResult{}, err
+	}
+	containerName, err := generatedDebugContainerName()
+	if err != nil {
+		s.audit(ctx, actor, action, "pod", namespace, name, err)
+		return domain.PodEphemeralContainerResult{}, err
+	}
+	created, err := s.repository.AddPodEphemeralContainer(ctx, namespace, name, request, containerName)
+	details := map[string]any{
+		"container": containerName, "image": request.Image, "shell": request.Shell,
+	}
+	if request.TargetContainerName != "" {
+		details["targetContainer"] = request.TargetContainerName
+	}
+	result := "success"
+	if err != nil {
+		result = "failure"
+		if errors.Is(err, domain.ErrForbidden) || errors.Is(err, domain.ErrReadOnly) {
+			result = "denied"
+		}
+	}
+	s.auditor.Record(ctx, actor, domain.AuditEvent{
+		Action: action, Resource: "pod", Namespace: namespace, Name: name, Result: result, Err: err, Details: details,
+	})
+	if err != nil {
+		return domain.PodEphemeralContainerResult{}, err
+	}
+	if created == "" {
+		created = containerName
+	}
+	return domain.PodEphemeralContainerResult{Name: created, Status: "created"}, nil
+}
+
+func generatedDebugContainerName() (string, error) {
+	buffer := make([]byte, 4)
+	if _, err := rand.Read(buffer); err != nil {
+		return "", fmt.Errorf("generate debug container name: %w", err)
+	}
+	return "debug-" + hex.EncodeToString(buffer), nil
+}
+
+func (s *Service) acquireTerminal(actor domain.Actor) (func(), error) {
+	key := actor.Username
+	if key == "" {
+		key = "anonymous"
+	}
+	s.terminalMu.Lock()
+	defer s.terminalMu.Unlock()
+	if s.terminal.MaxSessionsPerUser > 0 && s.active[key] >= s.terminal.MaxSessionsPerUser {
+		return nil, fmt.Errorf("%w: terminal session limit reached for this user", domain.ErrRateLimited)
+	}
+	s.active[key]++
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			s.terminalMu.Lock()
+			defer s.terminalMu.Unlock()
+			s.active[key]--
+			if s.active[key] <= 0 {
+				delete(s.active, key)
+			}
+		})
 	}, nil
 }
 
@@ -275,20 +400,77 @@ func supportedShell(command []string) bool {
 
 type auditedTerminalSession struct {
 	domain.PodTerminalSession
-	service   *Service
-	ctx       context.Context
-	actor     domain.Actor
-	namespace string
-	name      string
-	closeOnce sync.Once
+	service     *Service
+	ctx         context.Context
+	actor       domain.Actor
+	namespace   string
+	name        string
+	container   string
+	started     time.Time
+	release     func()
+	output      atomic.Int64
+	input       atomic.Int64
+	reasonMu    sync.Mutex
+	closeReason string
+	closeErr    error
+	closeOnce   sync.Once
 }
 
 func (s *auditedTerminalSession) Close() error {
-	err := s.PodTerminalSession.Close()
+	return s.CloseWithReason("")
+}
+
+func (s *auditedTerminalSession) Read(buffer []byte) (int, error) {
+	count, err := s.PodTerminalSession.Read(buffer)
+	s.output.Add(int64(count))
+	return count, err
+}
+
+func (s *auditedTerminalSession) Write(buffer []byte) (int, error) {
+	count, err := s.PodTerminalSession.Write(buffer)
+	s.input.Add(int64(count))
+	return count, err
+}
+
+func (s *auditedTerminalSession) SetCloseReason(reason string) {
+	if reason == "" {
+		return
+	}
+	s.reasonMu.Lock()
+	s.closeReason = reason
+	s.reasonMu.Unlock()
+}
+
+func (s *auditedTerminalSession) CloseWithReason(reason string) error {
+	s.SetCloseReason(reason)
 	s.closeOnce.Do(func() {
-		s.service.audit(s.ctx, s.actor, "exec-close", "pod", s.namespace, s.name, err)
+		s.reasonMu.Lock()
+		closeReason := s.closeReason
+		s.reasonMu.Unlock()
+		closeErr := s.PodTerminalSession.Close()
+		if s.release != nil {
+			s.release()
+		}
+		s.reasonMu.Lock()
+		s.closeErr = closeErr
+		s.reasonMu.Unlock()
+		result := "success"
+		if closeErr != nil {
+			result = "failure"
+		}
+		s.service.auditor.Record(s.ctx, s.actor, domain.AuditEvent{
+			Action: "exec-close", Resource: "pod", Namespace: s.namespace, Name: s.name,
+			Result: result, Err: closeErr,
+			Details: map[string]any{
+				"container": s.container, "reason": closeReason,
+				"durationMs":  time.Since(s.started).Milliseconds(),
+				"outputBytes": s.output.Load(), "inputBytes": s.input.Load(),
+			},
+		})
 	})
-	return err
+	s.reasonMu.Lock()
+	defer s.reasonMu.Unlock()
+	return s.closeErr
 }
 
 func (s *Service) audit(ctx context.Context, actor domain.Actor, action, resource, namespace, name string, err error) {

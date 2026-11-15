@@ -43,6 +43,8 @@ import type {
   PersistentVolumeClaimUpdateInput,
   PersistentVolumeDetail,
   PodDetail,
+  PodEphemeralContainerInput,
+  PodEphemeralContainerResult,
   PodSummary,
   Problem,
   ResourceCapabilities,
@@ -428,6 +430,11 @@ export const api = {
     }),
   pods: (params?: ListParams) => listRequest<PodSummary>(`/api/v1/pods${query(params)}`),
   pod: async (namespace: string, name: string) => normalizePodDetail(await request<PodDetail>(`/api/v1/pods/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}`)),
+  createPodEphemeralContainer: (namespace: string, name: string, input: PodEphemeralContainerInput) =>
+    request<PodEphemeralContainerResult>(`/api/v1/pods/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}/ephemeral-containers`, {
+      method: "POST",
+      body: JSON.stringify(input),
+    }),
   helmReleases: async (namespace: string) => {
     const value = await request<{ items?: HelmReleaseSummary[]; warnings?: string[] }>(`/api/v1/helm/releases${query({ namespace })}`);
     return { items: list(value.items), warnings: list(value.warnings) };

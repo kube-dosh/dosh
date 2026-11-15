@@ -67,8 +67,13 @@ export function PodDetailPage() {
   const capabilityQuery = useCapabilities(params.namespace);
   const capabilities = capabilityQuery.data;
   const canExec = Boolean(capabilities?.podExec);
+  const canEphemeralDebug = Boolean(capabilities?.podEphemeralDebug);
   const podCaps = resourceCapabilities(capabilities, "pods");
-  const query = useQuery({ queryKey: ["pod", params.namespace, params.name], queryFn: () => api.pod(params.namespace, params.name), refetchInterval: 20_000 });
+  const query = useQuery({
+    queryKey: ["pod", params.namespace, params.name],
+    queryFn: () => api.pod(params.namespace, params.name),
+    refetchInterval: (current) => current.state.data?.containers.some((container) => container.ephemeral && container.state !== "Running") ? 2_000 : 20_000,
+  });
   if (query.isLoading) return <LoadingState label="正在加载 Pod 详情" className="min-h-[60vh]" />;
   if (query.isError) return <ErrorState error={query.error} onRetry={() => void query.refetch()} />;
   const pod = query.data!;
@@ -112,12 +117,12 @@ export function PodDetailPage() {
         </TabsContent>
         <TabsContent value="logs"><LogViewer namespace={pod.namespace} name={pod.name} containers={pod.containers} /></TabsContent>
         <TabsContent value="terminal">
-          {capabilityQuery.isLoading ? <LoadingState label="正在检查终端权限" /> : capabilityQuery.isError ? <ErrorState error={capabilityQuery.error} onRetry={() => void capabilityQuery.refetch()} /> : canExec ? <PodTerminal namespace={pod.namespace} name={pod.name} containers={pod.containers} /> : <TerminalPermissionState namespace={pod.namespace} />}
+          {capabilityQuery.isLoading ? <LoadingState label="正在检查终端权限" /> : capabilityQuery.isError ? <ErrorState error={capabilityQuery.error} onRetry={() => void capabilityQuery.refetch()} /> : canExec ? <PodTerminal namespace={pod.namespace} name={pod.name} containers={pod.containers} canDebugContainer={canEphemeralDebug} onContainerCreated={() => query.refetch()} /> : <TerminalPermissionState namespace={pod.namespace} />}
         </TabsContent>
         <TabsContent value="containers">
           <DataTable columns={[
             column.accessor("name", { header: "容器", cell: (info) => <span className="font-medium">{info.getValue()}</span> }),
-            column.accessor("init", { header: "类型", cell: (info) => info.getValue() ? <Badge variant="secondary">Init</Badge> : <span className="text-xs text-muted-foreground">App</span> }),
+            column.accessor("init", { header: "类型", cell: (info) => info.row.original.ephemeral ? <Badge variant="outline">Ephemeral</Badge> : info.getValue() ? <Badge variant="secondary">Init</Badge> : <span className="text-xs text-muted-foreground">App</span> }),
             column.accessor("image", { header: "镜像", cell: (info) => <span className="block max-w-96 truncate font-mono text-xs" title={info.getValue()}>{info.getValue()}</span> }),
             column.accessor("ready", { header: "就绪", cell: (info) => <StatusBadge status={info.getValue() ? "Ready" : "NotReady"} /> }),
             column.accessor("state", { header: "状态", cell: (info) => <span>{info.getValue()}{info.row.original.reason ? ` · ${info.row.original.reason}` : ""}</span> }),

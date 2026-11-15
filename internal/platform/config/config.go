@@ -31,6 +31,10 @@ type Config struct {
 	KubeAPIServer           string
 	RequestTimeout          time.Duration
 	MaxBodyBytes            int64
+	TerminalIdleTimeout     time.Duration
+	TerminalMaxDuration     time.Duration
+	TerminalMaxSessions     int
+	TerminalMaxOutputRate   int64
 	LogLevel                string
 	ClusterName             string
 	InsecureSkipVerify      bool
@@ -75,6 +79,10 @@ func Load() (Config, error) {
 		KubeAPIServer:           strings.TrimSpace(env("DOSH_KUBE_API_SERVER", "")),
 		RequestTimeout:          durationEnv("DOSH_REQUEST_TIMEOUT", 15*time.Second, &loadErrs),
 		MaxBodyBytes:            int64(intEnv("DOSH_MAX_REQUEST_BODY", 2*1024*1024, &loadErrs)),
+		TerminalIdleTimeout:     durationEnv("DOSH_TERMINAL_IDLE_TIMEOUT", 15*time.Minute, &loadErrs),
+		TerminalMaxDuration:     durationEnv("DOSH_TERMINAL_MAX_DURATION", 2*time.Hour, &loadErrs),
+		TerminalMaxSessions:     intEnv("DOSH_TERMINAL_MAX_SESSIONS_PER_USER", 4, &loadErrs),
+		TerminalMaxOutputRate:   int64(intEnv("DOSH_TERMINAL_MAX_OUTPUT_BYTES_PER_SECOND", 2*1024*1024, &loadErrs)),
 		LogLevel:                strings.ToLower(env("DOSH_LOG_LEVEL", "info")),
 		ClusterName:             env("DOSH_CLUSTER_NAME", "kubernetes"),
 		InsecureSkipVerify:      boolEnv("DOSH_INSECURE_SKIP_VERIFY", false, &loadErrs),
@@ -118,6 +126,18 @@ func (c Config) Validate() error {
 	}
 	if c.MaxBodyBytes <= 0 || c.MaxBodyBytes > 16*1024*1024 {
 		errs = append(errs, errors.New("DOSH_MAX_REQUEST_BODY must be between 1 and 16MiB"))
+	}
+	if c.TerminalIdleTimeout < 10*time.Second || c.TerminalIdleTimeout > 2*time.Hour {
+		errs = append(errs, errors.New("DOSH_TERMINAL_IDLE_TIMEOUT must be between 10s and 2h"))
+	}
+	if c.TerminalMaxDuration < c.TerminalIdleTimeout || c.TerminalMaxDuration > 24*time.Hour {
+		errs = append(errs, errors.New("DOSH_TERMINAL_MAX_DURATION must be between DOSH_TERMINAL_IDLE_TIMEOUT and 24h"))
+	}
+	if c.TerminalMaxSessions < 1 || c.TerminalMaxSessions > 100 {
+		errs = append(errs, errors.New("DOSH_TERMINAL_MAX_SESSIONS_PER_USER must be between 1 and 100"))
+	}
+	if c.TerminalMaxOutputRate < 4096 || c.TerminalMaxOutputRate > 64*1024*1024 {
+		errs = append(errs, errors.New("DOSH_TERMINAL_MAX_OUTPUT_BYTES_PER_SECOND must be between 4KiB and 64MiB"))
 	}
 	if strings.TrimSpace(c.ClusterName) == "" {
 		errs = append(errs, errors.New("DOSH_CLUSTER_NAME must not be empty"))

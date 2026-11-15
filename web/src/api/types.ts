@@ -21,6 +21,7 @@ export interface Capabilities {
   nodeCordon: boolean;
   nodeDrain: boolean;
   podExec: boolean;
+  podEphemeralDebug: boolean;
   helmReleases: boolean;
   reloadCertificate: boolean;
   resourceActions?: Record<string, ResourceCapabilities>;
@@ -188,6 +189,7 @@ export interface AuditRecord {
   result: "success" | "failure" | "denied";
   requestId?: string;
   error?: string;
+  details?: Record<string, unknown>;
 }
 
 export interface ClusterNodeCIDR {
@@ -498,6 +500,7 @@ export interface ContainerInfo {
   name: string;
   image: string;
   init?: boolean;
+  ephemeral?: boolean;
   ready: boolean;
   restartCount: number;
   state: string;
@@ -530,6 +533,17 @@ export interface PodDetail extends PodSummary {
   conditions: Condition[];
   qosClass: string;
   serviceAccount: string;
+}
+
+export interface PodEphemeralContainerInput {
+  image: string;
+  targetContainerName?: string;
+  shell?: "sh" | "bash" | "ash";
+}
+
+export interface PodEphemeralContainerResult {
+  name: string;
+  status: string;
 }
 
 export interface HelmReleaseSummary {

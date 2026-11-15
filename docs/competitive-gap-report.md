@@ -172,8 +172,8 @@ Devtron 的参考价值主要在 Helm、发布历史、回滚和应用生命周�
 | YAML 编辑 / Schema | ✅ 通用 YAML/表单编辑、Schema 预检、字段提示和变更预览 | ◐ 基础编辑 | ✅ 编辑器和文档 | ✅ | 已支持 Schema 降级 |
 | 资源创建/编辑/删除 | ◐ 已发现资源通用写入，缺少高风险策略分层 | ✅ | ✅ | ✅ | Secret 仅专用页面；高危资源护栏不足 |
 | Pod 日志 | ◐ 单 Pod、Previous、Init Container、时间范围和关键词筛选 | ✅ | ✅ | ✅ | 缺跨 Pod 聚合 |
-| Exec / Terminal | ◐ 受 RBAC 与审计保护的容器终端 | ✅ | ✅ | ✅ | 缺 Ephemeral Container |
-| Ephemeral Debug | — | — | ✅ | ◐ | 下一阶段 |
+| Exec / Terminal | ✅ 受 RBAC、会话限额与审计保护的容器终端 | ✅ | ✅ | ✅ | 已覆盖常规容器排障 |
+| Ephemeral Debug | ✅ 受控 Ephemeral Container、目标容器选择、无 Shell 镜像调试与审计 | — | ✅ | ◐ | 已完成首版闭环 |
 | Port-forward | — | — | ✅ | ✅ | P0/P1 缺口 |
 | 工作负载 revision / rollback | ✅ Deployment/StatefulSet 历史、Pod 模板 Diff 与回滚 | ◐ 可看部分历史对象 | ◐ | ◐ | 已具备回滚前预览和一键回滚 |
 | Helm Release 管理 | ◐ 只读 Release、values、manifest 和历史 | — | ◐ 桌面插件 | ✅ | 缺升级、回滚和 diff |
@@ -207,7 +207,7 @@ Devtron 的参考价值主要在 Helm、发布历史、回滚和应用生命周�
 |---|---|---|---|---|---|---|
 | GAP-01 | 通用资源浏览器与 API Discovery | ✅ 已实现全 served version Discovery、preferred 标记、通用列表/详情、Table API、搜索、版本切换和治理入口 | Headlamp、Lens、Devtron、K8s Dashboard 均支持较通用的资源浏览 | 已解锁 Operator、CRD、HPA、PDB、NetworkPolicy、RBAC 等资源 | 后续补保存视图、收藏和更深的资源关系导航 | 已完成主体 |
 | GAP-02 | CRD 生命周期与动态 YAML | ✅ 通用 YAML 创建/编辑/删除、Dry Run、SSA、SAR、审计、OpenAPI Schema 预检、动态表单和字段级提示已实现 | Headlamp、Lens、Devtron 支持 CRD 和自定义资源编辑 | 已可通过 UI 管理复杂 CRD，Schema 不可用时仍有 YAML 降级 | 后续补 CRD 模板库、字段级文档和从已有对象另存为模板 | 已完成主体 |
-| GAP-03 | Pod Exec / Terminal / Debug | ◐ 已实现受 RBAC、同源 Cookie 会话、Shell 白名单、PTY 尺寸约束和审计保护的终端 | Headlamp、Lens、K8s Dashboard | 常规容器排障已可在控制台完成，仍需补齐无 Shell 容器的调试路径 | 后续增加 Ephemeral Container、会话超时策略和更细的终端审计 | 剩余 1–2 人周 |
+| GAP-03 | Pod Exec / Terminal / Debug | ✅ 已实现受 RBAC、同源 Cookie 会话、Shell 白名单、PTY 尺寸约束、会话限额和审计保护的终端；支持受控 Ephemeral Container 与目标容器选择 | Headlamp、Lens、K8s Dashboard | 常规容器和无 Shell 容器均可在控制台完成主要排障 | 后续评估文件传输、共享终端和更细粒度的调试镜像策略 | 已完成首版 |
 | GAP-04 | Port-forward | 无 | Headlamp、Lens | 临时访问数据库、调试端口仍需本地 kubectl | 受 RBAC、审计、显式端口和会话超时控制的端口转发；默认考虑关闭 | 4–6 人周 |
 | GAP-05 | Helm Release 管理 | ◐ 已实现 Helm v3 Secret 解码、只读列表/详情、values、manifest、notes、warnings 和 revision history，并做敏感字段服务端遮蔽 | Lens、KubeSphere、Rancher、Devtron | 已能定位 Release 状态和差异来源，但不能在 Dosh 内完成升级/回滚 | 后续补 Release diff、升级和回滚；必须显式授权、二次确认与审计 | 剩余 3–5 人周 |
 | GAP-06 | 工作负载 revision 与回滚 | ✅ Deployment/StatefulSet revision 历史、Pod 模板快照、回滚前 Diff 和定向回滚已实现 | 平台型产品普遍有发布历史 | 已提供可追踪、可预览的发布恢复路径 | 后续补更细的 rollout 状态和仅 Patch 指定字段的恢复策略 | 已完成主体 |
@@ -261,7 +261,7 @@ Dosh 的核心竞争力应该是轻量、安全、可审计、移动端可用、
 
 ### 6.2 阶段 B：排障闭环，已完成主体
 
-- ✅ GAP-03：Pod Exec / Terminal（Ephemeral Container 待补）。
+- ✅ GAP-03：Pod Exec / Terminal 与 Ephemeral Container Debug。
 - GAP-04：Port-forward，建议先管理员和受限命名空间可用。
 - ✅ GAP-08：节点 drain/evict 和 PDB 提示（故障拓扑待补）。
 - ✅ GAP-06：Deployment/StatefulSet revision 和回滚。

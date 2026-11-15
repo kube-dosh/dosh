@@ -143,7 +143,11 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 	resourcesService := resourcesapp.New(kubeClient, authorizer, auditLogger)
 	clusterConfigService := clusterconfigapp.New(kubeClient)
 	nodesService := nodesapp.New(kubeClient, authorizer, auditLogger)
-	workloadsService := workloadsapp.New(kubeClient, authorizer, auditLogger)
+	terminalLimits := domain.TerminalLimits{
+		IdleTimeout: cfg.TerminalIdleTimeout, MaxDuration: cfg.TerminalMaxDuration,
+		MaxSessionsPerUser: cfg.TerminalMaxSessions, MaxOutputBytesPerSecond: cfg.TerminalMaxOutputRate,
+	}
+	workloadsService := workloadsapp.New(kubeClient, authorizer, auditLogger, terminalLimits)
 	releasesService := releasesapp.New(kubeClient, authorizer, auditLogger)
 	eventsService := eventsapp.New(kubeClient)
 	networkService := networkapp.New(kubeClient, authorizer, auditLogger)
@@ -162,7 +166,7 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 		resources:     resourceshttp.New(resourcesService),
 		clusterConfig: clusterconfighttp.New(clusterConfigService),
 		nodes:         nodeshttp.New(nodesService),
-		workloads:     workloadshttp.New(workloadsService),
+		workloads:     workloadshttp.New(workloadsService, terminalLimits),
 		releases:      releaseshttp.New(releasesService),
 		events:        eventshttp.New(eventsService),
 		network:       networkhttp.New(networkService),

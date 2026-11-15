@@ -49,7 +49,7 @@ Dosh 不替代 Kubernetes，也不绕过 Kubernetes。所有身份、权限和�
 | 节点管理 | 节点状态、角色、容量、标签、污点、Pod 分布、事件和日志；按权限执行停止/恢复调度，以及带 PodDisruptionBudget 预检的排空计划与执行 |
 | 工作负载 | Deployment、StatefulSet、DaemonSet、Job、CronJob；详情、实例、容器配置、关联 Service、事件、日志和 YAML |
 | 工作负载操作 | 创建 Deployment、扩缩容、滚动重启、更新镜像、暂停/恢复 CronJob、删除、查看 Deployment/StatefulSet 发布历史及回滚前 Pod 模板 Diff 并回滚，以及按资源级权限编辑 YAML |
-| Pod | 状态、普通与 Init Container、重启次数、资源、归属控制器与节点深链、事件、日志和 YAML；在具备 `pods/exec` 权限时提供经审计的浏览器交互终端 |
+| Pod | 状态、普通/Init/Ephemeral Container、重启次数、资源、归属控制器与节点深链、事件、日志和 YAML；在具备 `pods/exec` 权限时提供经审计的浏览器交互终端，并允许有权限的用户为无 Shell 镜像创建受控的 Ephemeral 调试容器 |
 | 日志 | 单 Pod 实时日志、上一容器实例、Init Container、行数、时间戳、时间范围、关键词过滤和有界非流式读取 |
 | Helm | 从 Helm Secret 只读查看 Release、当前 values、渲染清单、Notes、warning 和 revision 历史；常见敏感键与 Secret 载荷在服务端遮蔽。需要 `list secrets` 权限。 |
 | 权限检查 | 解释当前身份的 SubjectAccessReview 结果，区分 Dosh 只读模式与 RBAC 拒绝，并生成对应的 `kubectl auth can-i` 命令 |

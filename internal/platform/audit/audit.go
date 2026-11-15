@@ -99,7 +99,7 @@ func (l *Logger) Record(ctx context.Context, actor domain.Actor, event domain.Au
 	record := domain.AuditRecord{
 		Timestamp: time.Now().UTC(), User: actor.Username, Groups: actor.Groups,
 		Action: event.Action, Resource: event.Resource, Namespace: event.Namespace,
-		Name: event.Name, Result: event.Result, RequestID: requestID,
+		Name: event.Name, Result: event.Result, RequestID: requestID, Details: event.Details,
 	}
 	if event.Err != nil {
 		record.Error = event.Err.Error()
@@ -115,6 +115,9 @@ func (l *Logger) Record(ctx context.Context, actor domain.Actor, event domain.Au
 		"name", event.Name,
 		"result", event.Result,
 		"request_id", requestID,
+	}
+	if len(event.Details) > 0 {
+		fields = append(fields, "details", event.Details)
 	}
 	if event.Err != nil {
 		fields = append(fields, "error", event.Err.Error())
@@ -135,6 +138,9 @@ func (l *Logger) Record(ctx context.Context, actor domain.Actor, event domain.Au
 		"name":      event.Name,
 		"result":    event.Result,
 		"requestId": requestID,
+	}
+	if len(event.Details) > 0 {
+		payload["details"] = event.Details
 	}
 	if event.Err != nil {
 		payload["error"] = event.Err.Error()
