@@ -3,9 +3,12 @@ package workloadshttp
 import (
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"io"
 	stdhttp "net/http"
+	"net/url"
 	"strconv"
+	"strings"
 	"sync"
 	"unicode/utf8"
 
@@ -504,6 +507,10 @@ type terminalMessage struct {
 // Kubernetes SPDY exec stream. The Kubernetes SubjectAccessReview is checked by
 // the application service before the remote shell is opened.
 func (h *Handler) Terminal(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	if !sameOriginWebSocket(r) {
+		httpx.Error(w, r, fmt.Errorf("%w: websocket origin must match the request host", domain.ErrForbidden))
+		return
+	}
 	actor, _ := domain.ActorFromContext(r.Context())
 	namespace := chi.URLParam(r, "namespace")
 	name := chi.URLParam(r, "name")
@@ -577,6 +584,18 @@ func (h *Handler) Terminal(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 			}
 		}
 	}).ServeHTTP(w, r)
+}
+
+func sameOriginWebSocket(r *stdhttp.Request) bool {
+	origin := strings.TrimSpace(r.Header.Get("Origin"))
+	if origin == "" {
+		return true
+	}
+	parsed, err := url.Parse(origin)
+	if err != nil || parsed.Host == "" {
+		return false
+	}
+	return strings.EqualFold(parsed.Host, r.Host)
 }
 
 func terminalCommand(shell string) []string {

@@ -308,8 +308,10 @@ kubectl get pdb -A -o wide
 
 ### 2.1.9 Pod 终端
 
-Pod 详情的“终端”页签要求当前身份具备 `create pods/exec`，并且使用有效的 Dosh 同源 Cookie
-会话；前端 CSP 仅允许同源 WebSocket 连接。终端通过同源 WebSocket 升级并桥接到 Kubernetes SPDY exec；命令只允许
+Pod 列表的“进入终端”操作、Pod 详情页头部的“进入终端”按钮和“终端”页签都指向同一个交互式终端。
+入口始终可见；当前身份缺少权限时，页面会解释需要 `create pods/exec`，而不是静默隐藏。终端要求使用
+有效的 Dosh 同源 Cookie 会话，前端 CSP 仅允许同源 WebSocket 连接，服务端同时校验 WebSocket
+`Origin` 必须与请求 Host 一致。终端通过同源 WebSocket 升级并桥接到 Kubernetes SPDY exec；命令只允许
 `sh`、`bash`、`ash`，按参数向量执行，不拼接本地 Shell。终端列数限制为 20–300、行数限制为
 5–100，打开和关闭都会写审计。
 
@@ -319,9 +321,12 @@ GET /api/v1/pods/{namespace}/{name}/terminal?container=<container>&shell=sh&cols
 
 限制：
 
+- 容器选择器包含业务容器、普通 sidecar，以及以 Init Container 形式定义但仍在运行的 native sidecar；
+  已结束的 Init Container 会保留在列表中但禁止连接，并显示终止原因。默认优先选择第一个 Running 容器。
 - 目标容器必须存在可用的 allow-list Shell；没有 Shell 的 distroless 容器当前无法进入，
   应使用 `kubectl debug` Ephemeral Container 或其他受控排障流程。
-- 全屏交互程序（例如 `vim`、`top`）不保证可用；优先使用 `ls`、`cat`、`env`、`ps` 等命令。
+- 终端使用 xterm.js 和真实 PTY，支持方向键、Tab、Ctrl+C、粘贴和全屏交互程序；`vim`、`top`
+  等程序是否可用仍取决于容器镜像、TERM、终端尺寸和 RBAC。
 - 终端不提供任意文件上传、端口转发或宿主机访问；不要在终端中输出 Secret 或 Token。
 - 相同身份还可能受 Kubernetes `pods/exec` 的容器和资源名限制；前端隐藏按钮不是权限边界。
 

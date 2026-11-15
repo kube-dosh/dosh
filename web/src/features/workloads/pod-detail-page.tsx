@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useParams, useSearch } from "@tanstack/react-router";
 import { createColumnHelper } from "@tanstack/react-table";
-import { Box, FileCode2, ScrollText, Server, TerminalSquare, Trash2 } from "lucide-react";
+import { Box, FileCode2, LockKeyhole, ScrollText, Server, TerminalSquare, Trash2 } from "lucide-react";
 import { api } from "@/api/client";
 import type { ContainerInfo } from "@/api/types";
 import { DataTable } from "@/components/data/data-table";
@@ -32,6 +32,21 @@ function isPodTab(value: string | undefined): value is PodTab {
   return podTabs.includes(value as PodTab);
 }
 
+function TerminalPermissionState({ namespace }: { namespace: string }) {
+  return (
+    <Card className="min-w-0 border-amber-500/35">
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2"><LockKeyhole className="h-5 w-5 text-amber-500" />当前身份不能进入容器终端</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-4 text-sm text-muted-foreground">
+        <p>Pod 终端需要 Kubernetes <code className="rounded bg-muted px-1 py-0.5 font-mono text-xs">create pods/exec</code> 权限，并且目标容器必须处于 Running 状态、容器内存在可用于登录的 Shell。</p>
+        <p>当前检查的命名空间是 <code className="rounded bg-muted px-1 py-0.5 font-mono text-xs">{namespace}</code>。管理员需要在该命名空间授予对应 RoleBinding 或 ClusterRoleBinding，前端隐藏或禁用按钮不是最终权限边界。</p>
+        <Button variant="outline" asChild><Link to="/access"><TerminalSquare className="h-4 w-4" />前往权限检查</Link></Button>
+      </CardContent>
+    </Card>
+  );
+}
+
 export function PodDetailPage() {
   const params = useParams({ strict: false }) as { namespace: string; name: string };
   const search = useSearch({ from: "/app/pods/$namespace/$name" });
@@ -49,7 +64,8 @@ export function PodDetailPage() {
       replace: true,
     });
   };
-  const capabilities = useCapabilities(params.namespace).data;
+  const capabilityQuery = useCapabilities(params.namespace);
+  const capabilities = capabilityQuery.data;
   const canExec = Boolean(capabilities?.podExec);
   const podCaps = resourceCapabilities(capabilities, "pods");
   const query = useQuery({ queryKey: ["pod", params.namespace, params.name], queryFn: () => api.pod(params.namespace, params.name), refetchInterval: 20_000 });
@@ -63,12 +79,13 @@ export function PodDetailPage() {
         breadcrumb={<span>工作负载 / Pod / {pod.namespace}</span>}
         description={<span className="flex flex-wrap items-center gap-2"><StatusBadge status={pod.status} /><span>{pod.ready} 就绪</span><span>·</span><span>{pod.node}</span></span>}
         actions={<div className="flex items-center gap-2">
+          <Button variant="outline" size="sm" onClick={() => changeTab("terminal")}><TerminalSquare className="h-4 w-4" />进入终端</Button>
           <Button variant="outline" size="sm" onClick={() => setYamlOpen(true)}><FileCode2 className="h-4 w-4" />YAML</Button>
           {podCaps.delete ? <Button variant="destructive" size="sm" onClick={() => setDeleteOpen(true)}><Trash2 className="h-4 w-4" />删除</Button> : null}
         </div>}
       />
       <Tabs value={tab} onValueChange={changeTab}>
-        <TabsList><TabsTrigger value="overview">概览</TabsTrigger><TabsTrigger value="containers">实例 ({pod.containers.length})</TabsTrigger><TabsTrigger value="events">事件</TabsTrigger><TabsTrigger value="logs"><ScrollText className="h-3.5 w-3.5" />日志</TabsTrigger>{canExec ? <TabsTrigger value="terminal"><TerminalSquare className="h-3.5 w-3.5" />终端</TabsTrigger> : null}<TabsTrigger value="yaml"><FileCode2 className="h-3.5 w-3.5" />YAML</TabsTrigger></TabsList>
+        <TabsList><TabsTrigger value="overview">概览</TabsTrigger><TabsTrigger value="containers">实例 ({pod.containers.length})</TabsTrigger><TabsTrigger value="events">事件</TabsTrigger><TabsTrigger value="logs"><ScrollText className="h-3.5 w-3.5" />日志</TabsTrigger><TabsTrigger value="terminal"><TerminalSquare className="h-3.5 w-3.5" />终端</TabsTrigger><TabsTrigger value="yaml"><FileCode2 className="h-3.5 w-3.5" />YAML</TabsTrigger></TabsList>
         <TabsContent value="overview">
           <div className="grid gap-4 xl:grid-cols-2">
             <Card><CardHeader><CardTitle>Pod 信息</CardTitle></CardHeader><CardContent><dl className="grid gap-5 sm:grid-cols-2">
@@ -94,7 +111,9 @@ export function PodDetailPage() {
           </div>
         </TabsContent>
         <TabsContent value="logs"><LogViewer namespace={pod.namespace} name={pod.name} containers={pod.containers} /></TabsContent>
-        <TabsContent value="terminal"><PodTerminal namespace={pod.namespace} name={pod.name} containers={pod.containers.filter((item) => !item.init)} /></TabsContent>
+        <TabsContent value="terminal">
+          {capabilityQuery.isLoading ? <LoadingState label="正在检查终端权限" /> : capabilityQuery.isError ? <ErrorState error={capabilityQuery.error} onRetry={() => void capabilityQuery.refetch()} /> : canExec ? <PodTerminal namespace={pod.namespace} name={pod.name} containers={pod.containers} /> : <TerminalPermissionState namespace={pod.namespace} />}
+        </TabsContent>
         <TabsContent value="containers">
           <DataTable columns={[
             column.accessor("name", { header: "容器", cell: (info) => <span className="font-medium">{info.getValue()}</span> }),

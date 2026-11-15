@@ -424,10 +424,10 @@ async function openResourceMenu(page: Page, resource: string) {
 type NodeSchedulingRequest = { method: string; path: string; csrf: string | null };
 type NodeMetadataRequest = { method: string; path: string; csrf: string | null; body: Record<string, unknown> };
 
-async function installApiMocks(page: Page, options: { authenticated?: boolean; authMode?: "local" | "token"; overview?: Overview; overviewStatus?: number; nodeSchedulingRequests?: NodeSchedulingRequest[]; nodeMetadataRequests?: NodeMetadataRequest[]; expireSessionOnNodes?: boolean; noIngressController?: boolean; podName?: string } = {}) {
+async function installApiMocks(page: Page, options: { authenticated?: boolean; authMode?: "local" | "token"; overview?: Overview; overviewStatus?: number; nodeSchedulingRequests?: NodeSchedulingRequest[]; nodeMetadataRequests?: NodeMetadataRequest[]; expireSessionOnNodes?: boolean; noIngressController?: boolean; podName?: string; podExec?: boolean } = {}) {
   const authenticated = options.authenticated ?? true;
   const authMode = options.authMode ?? "local";
-  const sessionResponse: SessionResponse = { ...session, authMode };
+  const sessionResponse: SessionResponse = { ...session, authMode, capabilities: { ...session.capabilities, podExec: options.podExec ?? session.capabilities.podExec } };
   const listedPod = options.podName ? { ...podSummary, name: options.podName } : podSummary;
   let signedIn = authenticated;
   let nodeSchedulingDisabled = false;
@@ -562,7 +562,7 @@ async function installApiMocks(page: Page, options: { authenticated?: boolean; a
       return json(route, { status: "deleting" }, 202);
     }
     if (path === "/api/v1/cluster/config") return json(route, clusterConfiguration);
-    if (path === "/api/v1/capabilities") return json(route, session.capabilities);
+    if (path === "/api/v1/capabilities") return json(route, sessionResponse.capabilities);
     if (path === "/api/v1/capabilities/review" && method === "GET") {
       const params = new URL(request.url()).searchParams;
       const resource = params.get("resource") ?? "pods";
@@ -1226,11 +1226,13 @@ test("通用资源收藏、视图、列偏好和本地模板可持久化", async
 
 test("Pod 日志支持时间范围和 Init Container，终端可通过同源 WebSocket 交互", async ({ page }) => {
   await installApiMocks(page);
+  let terminalInput = "";
   await page.routeWebSocket("**/api/v1/pods/**/terminal?**", (ws) => {
     ws.onMessage((message) => {
       const frame = JSON.parse(String(message)) as { type: string; data?: string };
       if (frame.type === "input") {
-        ws.send(JSON.stringify({ type: "output", data: btoa("hello from terminal\n") }));
+        terminalInput += atob(frame.data ?? "");
+        ws.send(JSON.stringify({ type: "output", data: btoa("hello from terminal\r\n") }));
       }
     });
     setTimeout(() => ws.send(JSON.stringify({ type: "ready" })), 20);
@@ -1245,13 +1247,46 @@ test("Pod 日志支持时间范围和 Init Container，终端可通过同源 Web
   await sinceRequest;
   await expect(page.getByText(/时间范围 15 分钟/)).toBeVisible();
 
-  await page.getByRole("tab", { name: /终端/ }).click();
+  await page.goto("/pods");
+  const podRow = page.getByRole("row").filter({ hasText: "web-abcdef-12345" });
+  await podRow.getByRole("button", { name: /操作 Pod/ }).click();
+  await page.getByRole("menuitem", { name: "进入终端" }).click();
+  await expect(page).toHaveURL(/tab=terminal/);
+  await expect(page.getByRole("tab", { name: /终端/ })).toHaveAttribute("aria-selected", "true");
+
+  const containerSelect = page.getByLabel("终端容器");
+  await expect(containerSelect).toContainText("web · Running");
+  await containerSelect.click();
+  await expect(page.getByRole("option", { name: /migrate · Init\/Sidecar · Terminated/ })).toBeVisible();
+  await page.getByRole("option", { name: /migrate · Init\/Sidecar · Terminated/ }).click();
+  await expect(page.getByRole("alert").filter({ hasText: "容器当前状态为 Terminated" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "连接终端" })).toBeDisabled();
+  await containerSelect.click();
+  await page.getByRole("option", { name: /web · Running/ }).click();
+  await expect(page.getByRole("button", { name: "连接终端" })).toBeEnabled();
+
   await page.getByRole("button", { name: "连接终端" }).click();
   await expect(page.getByRole("status").filter({ hasText: "已连接" })).toBeVisible();
-  await page.getByLabel("终端命令").fill("echo hello");
-  await page.getByRole("button", { name: "发送" }).click();
-  await expect(page.getByRole("log", { name: "终端输出" })).toContainText("hello from terminal");
+  await expect(page.getByRole("application", { name: "Pod 容器终端" })).toBeVisible();
+  await page.getByRole("application", { name: "Pod 容器终端" }).click();
+  await page.keyboard.type("echo hello");
+  await page.keyboard.press("Enter");
+  await expect.poll(() => terminalInput).toContain("echo hello\r");
+  await expect(page.locator(".xterm-accessibility")).toContainText("hello from terminal");
+  await page.setViewportSize({ width: 390, height: 844 });
   await expectNoPageOverflow(page, "pod terminal");
+});
+
+test("Pod 终端在无 pods/exec 权限时保留入口并解释原因", async ({ page }) => {
+  await installApiMocks(page, { podExec: false });
+  await page.setViewportSize({ width: 320, height: 720 });
+  await page.goto("/pods/default/web-abcdef-12345?tab=terminal");
+  await expect(page.getByRole("tab", { name: /终端/ })).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByRole("heading", { name: "当前身份不能进入容器终端" })).toBeVisible();
+  await expect(page.getByText(/create pods\/exec/).first()).toBeVisible();
+  await expect(page.getByRole("link", { name: "前往权限检查" })).toBeVisible();
+  await expect(page.getByRole("application", { name: "Pod 容器终端" })).toHaveCount(0);
+  await expectNoPageOverflow(page, "pod terminal permission state");
 });
 
 test("发布历史回滚确认展示 Pod 模板 Diff", async ({ page }) => {
@@ -2589,7 +2624,7 @@ test("核心运维页面在亮暗主题下无严重可访问性问题", async ({
   test.setTimeout(480_000);
   await installApiMocks(page);
   for (const theme of ["light", "dark"] as const) {
-    for (const path of ["/", "/nodes", "/workloads/deployment/default/web", "/workloads/deployment/default/web?tab=config", "/pods/default/web-abcdef-12345", "/audit", "/access", "/helm/releases?namespace=default", "/helm/releases/default/web?namespace=default", "/resources", "/resources/example.io/v1/widgets", "/resources/example.io/v1/widgets/sample-widget?namespace=default"]) {
+    for (const path of ["/", "/nodes", "/workloads/deployment/default/web", "/workloads/deployment/default/web?tab=config", "/pods/default/web-abcdef-12345", "/pods/default/web-abcdef-12345?tab=terminal", "/audit", "/access", "/helm/releases?namespace=default", "/helm/releases/default/web?namespace=default", "/resources", "/resources/example.io/v1/widgets", "/resources/example.io/v1/widgets/sample-widget?namespace=default"]) {
       await page.goto(path);
       await page.evaluate((value) => localStorage.setItem("dosh-theme", value), theme);
       await page.reload();

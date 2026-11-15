@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link, useNavigate, useSearch } from "@tanstack/react-router";
 import { createColumnHelper } from "@tanstack/react-table";
-import { CircleDot, Eye, FileCode2, ScrollText, Trash2 } from "lucide-react";
+import { CircleDot, Eye, FileCode2, ScrollText, TerminalSquare, Trash2 } from "lucide-react";
 import { api } from "@/api/client";
 import type { PodSummary } from "@/api/types";
 import { DataTable } from "@/components/data/data-table";
@@ -44,6 +44,7 @@ export function PodsPage() {
   const actions = (pod: PodSummary): ResourceAction[] => [
     { label: "查看详情", icon: <Eye className="h-4 w-4" />, onSelect: () => void navigate({ to: "/pods/$namespace/$name", params: { namespace: pod.namespace, name: pod.name } }) },
     { label: "查看日志", icon: <ScrollText className="h-4 w-4" />, onSelect: () => void navigate({ to: "/pods/$namespace/$name", params: { namespace: pod.namespace, name: pod.name }, search: { tab: "logs" } }) },
+    { label: "进入终端", icon: <TerminalSquare className="h-4 w-4" />, onSelect: () => void navigate({ to: "/pods/$namespace/$name", params: { namespace: pod.namespace, name: pod.name }, search: { tab: "terminal" } }) },
     { label: "查看 YAML", icon: <FileCode2 className="h-4 w-4" />, onSelect: () => setYamlTarget(pod) },
     { label: "删除 Pod", icon: <Trash2 className="h-4 w-4" />, onSelect: () => setDeleting(pod), destructive: true, disabled: !podCaps.delete, separatorBefore: true },
   ];

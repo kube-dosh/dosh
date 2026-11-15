@@ -25,6 +25,32 @@ import (
 
 const workloadTestPassword = "a-valid-test-password"
 
+func TestSameOriginWebSocket(t *testing.T) {
+	tests := []struct {
+		name   string
+		host   string
+		origin string
+		want   bool
+	}{
+		{name: "same origin", host: "dosh.example.test", origin: "https://dosh.example.test", want: true},
+		{name: "same origin with port", host: "dosh.example.test:32626", origin: "https://dosh.example.test:32626", want: true},
+		{name: "cross origin", host: "dosh.example.test", origin: "https://evil.example.test", want: false},
+		{name: "null origin", host: "dosh.example.test", origin: "null", want: false},
+		{name: "missing origin", host: "dosh.example.test", origin: "", want: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodGet, "https://"+test.host+"/api/v1/pods/default/api/terminal", nil)
+			if test.origin != "" {
+				request.Header.Set("Origin", test.origin)
+			}
+			if got := sameOriginWebSocket(request); got != test.want {
+				t.Fatalf("sameOriginWebSocket() = %v, want %v", got, test.want)
+			}
+		})
+	}
+}
+
 type workloadRepo struct {
 	scaleCalls       int
 	restartCalls     int
