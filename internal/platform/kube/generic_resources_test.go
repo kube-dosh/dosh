@@ -45,6 +45,8 @@ func newGenericResourceClient(objects ...runtime.Object) *Client {
 			APIResources: []metav1.APIResource{
 				{Name: "pods", SingularName: "pod", Kind: "Pod", Namespaced: true, Verbs: []string{"get", "list"}},
 				{Name: "pods/log", SingularName: "", Kind: "Pod", Namespaced: true, Verbs: []string{"get"}},
+				{Name: "pods/exec", SingularName: "", Kind: "PodExecOptions", Namespaced: true, Verbs: []string{"create"}},
+				{Name: "pods/status", SingularName: "", Kind: "Pod", Namespaced: true, Verbs: []string{"get", "patch", "update"}},
 				{Name: "bindings", SingularName: "binding", Kind: "Binding", Namespaced: true, Verbs: []string{"create"}},
 				{Name: "nodes", SingularName: "node", Kind: "Node", Verbs: []string{"get", "list"}},
 			},
@@ -91,6 +93,9 @@ func TestDiscoverResourcesIncludesAllServedVersionsAndMarksPreferred(t *testing.
 	pods, ok := byResource["/v1/pods"]
 	if !ok || pods.Kind != "Pod" || pods.Singular != "pod" || pods.Version != "v1" || !pods.Namespaced {
 		t.Fatalf("pods descriptor = %#v", pods)
+	}
+	if strings.Join(pods.Subresources, ",") != "exec,log,status" {
+		t.Fatalf("pods subresources = %#v", pods.Subresources)
 	}
 	widgets, ok := byResource["example.io/v1/widgets"]
 	if !ok || widgets.Kind != "Widget" || widgets.Version != "v1" || !widgets.Preferred || len(widgets.ShortNames) != 1 || widgets.ShortNames[0] != "wdg" || len(widgets.Categories) != 1 {

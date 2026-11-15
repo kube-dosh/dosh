@@ -3466,6 +3466,10 @@ components:
         verbs:
           type: array
           items: { type: string }
+        subresources:
+          type: array
+          items: { type: string }
+          description: Subresources advertised by API Discovery for this resource version.
         shortNames:
           type: array
           items: { type: string }

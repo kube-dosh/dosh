@@ -140,6 +140,14 @@ func descriptorsFor(list *metav1.APIResourceList, group string, preferred bool) 
 	if group != "" {
 		version = strings.TrimPrefix(list.GroupVersion, group+"/")
 	}
+	subresources := make(map[string][]string)
+	for _, resource := range list.APIResources {
+		parent, child, ok := strings.Cut(resource.Name, "/")
+		if !ok || parent == "" || child == "" {
+			continue
+		}
+		subresources[parent] = append(subresources[parent], child)
+	}
 	out := make([]domain.ResourceDescriptor, 0, len(list.APIResources))
 	for _, resource := range list.APIResources {
 		if strings.Contains(resource.Name, "/") || resource.Kind == "" {
@@ -149,18 +157,39 @@ func descriptorsFor(list *metav1.APIResourceList, group string, preferred bool) 
 			continue
 		}
 		out = append(out, domain.ResourceDescriptor{
-			Group:      group,
-			Version:    version,
-			Resource:   resource.Name,
-			Kind:       resource.Kind,
-			Singular:   resource.SingularName,
-			Namespaced: resource.Namespaced,
-			Preferred:  preferred,
-			Verbs:      append([]string(nil), resource.Verbs...),
-			ShortNames: append([]string(nil), resource.ShortNames...),
-			Categories: append([]string(nil), resource.Categories...),
+			Group:        group,
+			Version:      version,
+			Resource:     resource.Name,
+			Kind:         resource.Kind,
+			Singular:     resource.SingularName,
+			Namespaced:   resource.Namespaced,
+			Preferred:    preferred,
+			Verbs:        append([]string(nil), resource.Verbs...),
+			Subresources: uniqueSortedStrings(subresources[resource.Name]),
+			ShortNames:   append([]string(nil), resource.ShortNames...),
+			Categories:   append([]string(nil), resource.Categories...),
 		})
 	}
+	return out
+}
+
+func uniqueSortedStrings(items []string) []string {
+	if len(items) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(items))
+	out := make([]string, 0, len(items))
+	for _, item := range items {
+		if item == "" {
+			continue
+		}
+		if _, ok := seen[item]; ok {
+			continue
+		}
+		seen[item] = struct{}{}
+		out = append(out, item)
+	}
+	sort.Strings(out)
 	return out
 }
 

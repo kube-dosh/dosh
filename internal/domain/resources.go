@@ -5,16 +5,17 @@ import "time"
 // ResourceDescriptor is the stable, transport-neutral description of one
 // discoverable Kubernetes resource. Group is empty for the core API group.
 type ResourceDescriptor struct {
-	Group      string   `json:"group"`
-	Version    string   `json:"version"`
-	Resource   string   `json:"resource"`
-	Kind       string   `json:"kind"`
-	Singular   string   `json:"singularName,omitempty"`
-	Namespaced bool     `json:"namespaced"`
-	Preferred  bool     `json:"preferred,omitempty"`
-	Verbs      []string `json:"verbs"`
-	ShortNames []string `json:"shortNames,omitempty"`
-	Categories []string `json:"categories,omitempty"`
+	Group        string   `json:"group"`
+	Version      string   `json:"version"`
+	Resource     string   `json:"resource"`
+	Kind         string   `json:"kind"`
+	Singular     string   `json:"singularName,omitempty"`
+	Namespaced   bool     `json:"namespaced"`
+	Preferred    bool     `json:"preferred,omitempty"`
+	Verbs        []string `json:"verbs"`
+	Subresources []string `json:"subresources,omitempty"`
+	ShortNames   []string `json:"shortNames,omitempty"`
+	Categories   []string `json:"categories,omitempty"`
 }
 
 // ResourceSchema is the on-demand OpenAPI schema view for one discovered GVR.

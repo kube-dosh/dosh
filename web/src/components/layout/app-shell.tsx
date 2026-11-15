@@ -29,10 +29,13 @@ const nav: Array<{ href: string; label: string; icon: LucideIcon; adminOnly?: bo
   { href: "/namespaces", label: "命名空间", icon: FolderTree, match: (path: string) => path.startsWith("/namespaces") },
   { href: "/events", label: "事件", icon: Activity, match: (path: string) => path.startsWith("/events") },
   { href: "/audit", label: "审计日志", icon: ScrollText, adminOnly: true, match: (path: string) => path.startsWith("/audit") },
-  { href: "/governance", label: "治理与策略", icon: ShieldCheck, match: (path: string) => path.startsWith("/governance") },
-  { href: "/access", label: "权限检查", icon: KeyRound, match: (path: string) => path.startsWith("/access") },
   { href: "/helm/releases", label: "Helm Releases", icon: Package, match: (path: string) => path.startsWith("/helm") },
   { href: "/resources", label: "资源浏览器", icon: Layers3, match: (path: string) => path.startsWith("/resources") },
+];
+
+const secondaryNav: Array<{ href: string; label: string; icon: LucideIcon; match: (path: string) => boolean }> = [
+  { href: "/governance", label: "治理与策略", icon: ShieldCheck, match: (path: string) => path.startsWith("/governance") },
+  { href: "/access", label: "权限检查", icon: KeyRound, match: (path: string) => path.startsWith("/access") },
 ];
 
 type ClusterPresentation = {
@@ -95,6 +98,7 @@ export function AppShell() {
   const [mobileOpen, setMobileOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
+  const [otherOpen, setOtherOpen] = useState(false);
   const cluster = clusterPresentation(overview.data, overview.error);
   const { theme, toggleTheme } = useTheme();
 
@@ -111,6 +115,10 @@ export function AppShell() {
 
   useEffect(() => {
     setMobileOpen(false);
+  }, [pathname]);
+
+  useEffect(() => {
+    if (secondaryNav.some((item) => item.match(pathname))) setOtherOpen(true);
   }, [pathname]);
 
   useEffect(() => {
@@ -212,6 +220,25 @@ export function AppShell() {
               <Link to="/pods" onClick={() => setMobileOpen(false)} className={cn("flex h-9 items-center gap-3 rounded-md px-3 text-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring", pathname.startsWith("/pods") && "bg-primary/10 font-medium text-primary")}><CircleDot className="h-4 w-4" />Pod 实例</Link>
             </div>
           </nav>
+          <div className="shrink-0 px-3 py-2">
+            <button type="button" aria-expanded={otherOpen} aria-controls="other-navigation" onClick={() => setOtherOpen((current) => !current)} className="flex w-full items-center justify-between rounded-md px-3 pb-2 pt-1 text-left text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+              <span>其他功能</span>
+              <ChevronDown className={cn("h-3.5 w-3.5 transition-transform", otherOpen && "rotate-180")} />
+            </button>
+            {otherOpen ? (
+              <div id="other-navigation" className="ml-3 space-y-1 border-l pl-2">
+                {secondaryNav.map((item) => {
+                  const active = item.match(pathname);
+                  const Icon = item.icon;
+                  return (
+                    <Link key={item.href} to={item.href} aria-current={active ? "page" : undefined} onClick={() => setMobileOpen(false)} className={cn("flex h-9 items-center gap-3 rounded-md px-3 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring", active ? "bg-primary/10 font-medium text-primary" : "text-muted-foreground hover:bg-muted hover:text-foreground")}>
+                      <Icon className="h-4 w-4" />{item.label}
+                    </Link>
+                  );
+                })}
+              </div>
+            ) : null}
+          </div>
           <div className="shrink-0 border-t p-3">
             <div className="rounded-md bg-muted/55 p-3 text-xs" role="status" aria-live="polite" aria-label="集群连接状态">
               <div className="flex items-center gap-2 font-medium">

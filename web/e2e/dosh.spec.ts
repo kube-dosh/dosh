@@ -425,7 +425,7 @@ async function openResourceMenu(page: Page, resource: string) {
 type NodeSchedulingRequest = { method: string; path: string; csrf: string | null };
 type NodeMetadataRequest = { method: string; path: string; csrf: string | null; body: Record<string, unknown> };
 
-async function installApiMocks(page: Page, options: { authenticated?: boolean; authMode?: "local" | "token"; overview?: Overview; overviewStatus?: number; nodeSchedulingRequests?: NodeSchedulingRequest[]; nodeMetadataRequests?: NodeMetadataRequest[]; expireSessionOnNodes?: boolean; noIngressController?: boolean; podName?: string; podExec?: boolean; podEphemeralDebug?: boolean; ephemeralRequests?: Array<{ image: string; targetContainerName?: string; shell?: string }> } = {}) {
+async function installApiMocks(page: Page, options: { authenticated?: boolean; authMode?: "local" | "token"; overview?: Overview; overviewStatus?: number; nodeSchedulingRequests?: NodeSchedulingRequest[]; nodeMetadataRequests?: NodeMetadataRequest[]; expireSessionOnNodes?: boolean; noIngressController?: boolean; podName?: string; podExec?: boolean; podEphemeralDebug?: boolean; emptyDiscovery?: boolean; ephemeralRequests?: Array<{ image: string; targetContainerName?: string; shell?: string }> } = {}) {
   const authenticated = options.authenticated ?? true;
   const authMode = options.authMode ?? "local";
   const sessionResponse: SessionResponse = { ...session, authMode, capabilities: { ...session.capabilities, podExec: options.podExec ?? session.capabilities.podExec, podEphemeralDebug: options.podEphemeralDebug ?? session.capabilities.podEphemeralDebug } };
@@ -475,7 +475,11 @@ async function installApiMocks(page: Page, options: { authenticated?: boolean; a
     }
     if (path === "/api/v1/overview") return json(route, options.overview ?? overview, options.overviewStatus ?? 200);
     if (path === "/api/v1/resources/discovery") {
-      const resources: ResourceDescriptor[] = [
+      const resources: ResourceDescriptor[] = options.emptyDiscovery ? [] : [
+        { group: "", version: "v1", resource: "pods", kind: "Pod", namespaced: true, preferred: true, verbs: ["get", "list", "watch", "create", "delete"], subresources: ["exec", "log", "status"] },
+        { group: "", version: "v1", resource: "secrets", kind: "Secret", namespaced: true, preferred: true, verbs: ["get", "list"] },
+        { group: "apps", version: "v1", resource: "deployments", kind: "Deployment", namespaced: true, preferred: true, verbs: ["get", "list", "update", "patch"], subresources: ["scale", "status"] },
+        { group: "", version: "v1", resource: "nodes", kind: "Node", namespaced: false, preferred: true, verbs: ["get", "list", "update", "patch"], subresources: ["proxy", "status"] },
         { group: "", version: "v1", resource: "serviceaccounts", kind: "ServiceAccount", namespaced: true, verbs: ["get", "list"] },
         { group: "rbac.authorization.k8s.io", version: "v1", resource: "roles", kind: "Role", namespaced: true, verbs: ["get", "list"] },
         { group: "rbac.authorization.k8s.io", version: "v1", resource: "rolebindings", kind: "RoleBinding", namespaced: true, verbs: ["get", "list"] },
@@ -492,6 +496,12 @@ async function installApiMocks(page: Page, options: { authenticated?: boolean; a
         { group: "example.io", version: "v1", resource: "clusterwidgets", kind: "ClusterWidget", namespaced: false, preferred: true, verbs: ["get", "list", "create", "update", "patch", "delete"] },
       ];
       return json(route, { items: resources });
+    }
+    if (path === "/api/v1/resources/_core/v1/pods" && method === "GET") {
+      return json(route, list([{ apiVersion: "v1", kind: "Pod", resource: "pods", name: "web-abcdef-12345", namespace: "default", resourceVersion: "1", createdAt: "2026-11-02T00:00:00Z" }]));
+    }
+    if (path === "/api/v1/resources/_core/v1/secrets" && method === "GET") {
+      return json(route, list([{ apiVersion: "v1", kind: "Secret", resource: "secrets", name: "app-secret", namespace: "default", resourceVersion: "1", createdAt: "2026-11-02T00:00:00Z" }]));
     }
     if (path === "/api/v1/resources/capabilities") {
       const resource = new URL(request.url()).searchParams.get("resource");
@@ -1179,20 +1189,129 @@ test("Helm Release 列表、详情和历史版本可读且敏感值已遮蔽", a
   await expectNoPageOverflow(page, "helm release detail");
 });
 
-test("权限检查区分允许与 RBAC 拒绝并给出复现命令", async ({ page }) => {
+test("权限检查联动选择资源、子资源和对象，并保留手动输入回退", async ({ page }) => {
   await installApiMocks(page);
   await page.goto("/access");
+  const resource = page.getByRole("combobox", { name: "Resource", exact: true });
+  const group = page.getByRole("combobox", { name: "API Group", exact: true });
+  const subresource = page.getByRole("combobox", { name: "Subresource", exact: true });
+  const namespace = page.getByRole("combobox", { name: "Namespace", exact: true });
+  const name = page.getByRole("combobox", { name: "资源名称", exact: true });
+
   await page.getByRole("button", { name: "查看 Pod", exact: true }).click();
+  await expect(resource).toContainText("Pod · pods · core/v1");
+  await expect(group).toContainText("core（留空）");
+  await expect(namespace).toContainText("default");
+
+  await resource.click();
+  const resourceSearch = page.getByRole("searchbox", { name: "搜索 Resource", exact: true });
+  await expect(resourceSearch).toBeVisible();
+  await expect(page.getByRole("option", { name: "Pod · pods · core/v1", exact: true })).toBeVisible();
+  await expect(page.getByRole("option").last()).toHaveText("手动输入");
+  await resourceSearch.fill("deploy");
+  await expect(page.getByRole("option", { name: "Deployment · deployments · apps/v1", exact: true })).toBeVisible();
+  await expect(page.getByRole("option", { name: "Pod · pods · core/v1", exact: true })).toHaveCount(0);
+  await resourceSearch.fill("does-not-exist");
+  await expect(page.getByText("没有匹配项", { exact: true })).toBeVisible();
+  await expect(page.getByRole("option", { name: "手动输入", exact: true })).toBeVisible();
+  await page.keyboard.press("Escape");
+
+  await subresource.click();
+  await expect(page.getByRole("option", { name: "log（日志）", exact: true })).toBeVisible();
+  await expect(page.getByRole("option", { name: "exec（终端）", exact: true })).toBeVisible();
+  await expect(page.getByRole("option").last()).toHaveText("手动输入");
+  await page.getByRole("option", { name: "log（日志）", exact: true }).click();
+  await expect(subresource).toContainText("log（日志）");
+
+  await expect(name).toBeEnabled();
+  await name.click();
+  const nameSearch = page.getByRole("searchbox", { name: "搜索 资源名称", exact: true });
+  await nameSearch.fill("web");
+  await expect(page.getByRole("option", { name: "web-abcdef-12345", exact: true })).toBeVisible();
+  await expect(page.getByRole("option").last()).toHaveText("手动输入");
+  await page.getByRole("option", { name: "web-abcdef-12345", exact: true }).click();
+
+  await namespace.click();
+  await expect(page.getByRole("option", { name: "集群级资源（留空）", exact: true })).toBeVisible();
+  await expect(page.getByRole("option", { name: "production", exact: true })).toBeVisible();
+  await expect(page.getByRole("option").last()).toHaveText("手动输入");
+  await page.getByRole("option", { name: "default", exact: true }).click();
+
   await page.getByRole("button", { name: "检查权限", exact: true }).click();
   await expect(page.getByText("允许执行")).toBeVisible();
-  await expect(page.getByText(/kubectl auth can-i list pods/)).toBeVisible();
+  await expect(page.getByText(/kubectl auth can-i list pods --namespace default/)).toBeVisible();
+  await expect(page.getByText("list pods/log · default · web-abcdef-12345")).toBeVisible();
 
-  await page.getByRole("textbox", { name: "Resource", exact: true }).fill("secrets");
+  await resource.click();
+  await page.getByRole("searchbox", { name: "搜索 Resource", exact: true }).fill("secret");
+  await expect(page.getByRole("option", { name: "Pod · pods · core/v1", exact: true })).toHaveCount(0);
+  await page.getByRole("option", { name: "Secret · secrets · core/v1", exact: true }).click();
+  await expect(resource).toContainText("Secret · secrets · core/v1");
+  await expect(group).toContainText("core（留空）");
+  await expect(subresource).toContainText("无子资源（留空）");
   await page.getByRole("button", { name: "检查权限", exact: true }).click();
   await expect(page.getByText("不允许执行")).toBeVisible();
   await expect(page.getByText("RBAC denied")).toBeVisible();
   await expect(page.getByText("Kubernetes RBAC 未授权当前身份执行该操作，请检查 RoleBinding。")).toBeVisible();
+
+  await subresource.click();
+  await page.getByRole("option", { name: "手动输入", exact: true }).click();
+  const subresourceInput = page.getByRole("textbox", { name: "Subresource", exact: true });
+  await expect(subresourceInput).toBeVisible();
+  await subresourceInput.fill("logs");
+  await page.getByRole("button", { name: "返回 Subresource 列表", exact: true }).click();
+  await expect(subresource).toBeVisible();
+
+  await resource.click();
+  await page.getByRole("option", { name: "手动输入", exact: true }).click();
+  const resourceInput = page.getByRole("textbox", { name: "Resource", exact: true });
+  await expect(resourceInput).toBeVisible();
+  await resourceInput.fill("customresources.example.io");
+  await page.getByRole("button", { name: "返回 Resource 列表", exact: true }).click();
+  await expect(resource).toBeVisible();
   await expectNoPageOverflow(page, "access review");
+});
+
+test("权限检查联动选择器在 320px 与 390px 视口内完整可用", async ({ page }) => {
+  test.setTimeout(90_000);
+  await installApiMocks(page);
+
+  for (const viewport of [{ width: 320, height: 720 }, { width: 390, height: 844 }]) {
+    await page.setViewportSize(viewport);
+    await page.goto("/access");
+    await expect(page.getByRole("heading", { name: "权限检查" })).toBeVisible();
+    await expectNoPageOverflow(page, `${viewport.width}px access review`);
+
+    for (const label of ["Resource", "API Group", "Subresource", "Namespace", "资源名称"]) {
+      const trigger = page.getByRole("combobox", { name: label, exact: true });
+      await expect(trigger).toBeEnabled();
+      await trigger.click();
+      const listbox = page.getByRole("listbox");
+      await expect(listbox).toBeVisible();
+      await expectElementInsideViewport(page, listbox, `${viewport.width}px ${label} selector`);
+      await expectNoPageOverflow(page, `${viewport.width}px ${label} selector`);
+      await page.keyboard.press("Escape");
+    }
+
+    await page.getByRole("combobox", { name: "Resource", exact: true }).click();
+    await page.getByRole("searchbox", { name: "搜索 Resource", exact: true }).fill("pod");
+    await expect(page.getByRole("option", { name: "Pod · pods · core/v1", exact: true })).toBeVisible();
+    await expect(page.getByRole("option", { name: "Deployment · deployments · apps/v1", exact: true })).toHaveCount(0);
+    await expect(page.getByRole("option").last()).toHaveText("手动输入");
+    await expectNoPageOverflow(page, `${viewport.width}px access resource menu`);
+    await page.screenshot({ path: `test-results/mobile-interactions/access-review-${viewport.width}.png`, fullPage: true });
+  }
+});
+
+test("Discovery 无可用资源时权限检查自动退回手动输入", async ({ page }) => {
+  await installApiMocks(page, { emptyDiscovery: true });
+  await page.goto("/access");
+  await expect(page.getByRole("textbox", { name: "Resource", exact: true })).toHaveValue("pods");
+  await expect(page.getByRole("textbox", { name: "API Group", exact: true })).toBeVisible();
+  await expect(page.getByRole("textbox", { name: "Subresource", exact: true })).toBeVisible();
+  await expect(page.getByRole("textbox", { name: "资源名称", exact: true })).toBeVisible();
+  await expect(page.getByRole("combobox", { name: "Namespace", exact: true })).toContainText("default");
+  await expectNoPageOverflow(page, "empty discovery access review");
 });
 
 test("通用资源收藏、视图、列偏好和本地模板可持久化", async ({ page }) => {
@@ -1425,6 +1544,31 @@ test("顶部栏与侧栏读取真实集群上下文", async ({ page }) => {
   await expect(connection).toContainText("集群部分异常");
   await expect(connection).toContainText("Kubernetes v9.9.9 · TelemetryCNI");
   await expect(page.getByText("kubedo-lab")).toHaveCount(0);
+});
+
+test("其他功能默认折叠并可展开访问低频导航", async ({ page }) => {
+  await installApiMocks(page);
+  await page.goto("/");
+
+  const other = page.getByRole("button", { name: "其他功能", exact: true });
+  await expect(other).toHaveAttribute("aria-expanded", "false");
+  await expect(page.getByRole("link", { name: "治理与策略", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("link", { name: "权限检查", exact: true })).toHaveCount(0);
+
+  await other.click();
+  await expect(other).toHaveAttribute("aria-expanded", "true");
+  await page.getByRole("link", { name: "治理与策略", exact: true }).click();
+  await expect(page).toHaveURL(/\/governance$/);
+  await expect(page.getByRole("heading", { name: "治理与策略", exact: true })).toBeVisible();
+  await expect(other).toHaveAttribute("aria-expanded", "true");
+
+  await page.goto("/access");
+  await expect(page.getByRole("heading", { name: "权限检查", exact: true })).toBeVisible();
+  await expect(other).toHaveAttribute("aria-expanded", "true");
+  await other.click();
+  await expect(other).toHaveAttribute("aria-expanded", "false");
+  await expect(page.getByRole("link", { name: "权限检查", exact: true })).toHaveCount(0);
+  await expectNoPageOverflow(page, "other navigation");
 });
 
 test("总览页面包屑读取真实集群上下文", async ({ page }) => {
@@ -1929,6 +2073,34 @@ test("移动端可通过导航抽屉访问节点", async ({ page }) => {
   expect(await tableRegion.evaluate((element) => element.scrollWidth > element.clientWidth)).toBe(true);
   expect(await page.getByRole("columnheader", { name: /节点名称/ }).evaluate((element) => getComputedStyle(element).whiteSpace)).toBe("nowrap");
   expect(await page.getByRole("row").nth(1).evaluate((element) => element.getBoundingClientRect().height)).toBeLessThan(64);
+});
+
+test("移动端其他功能默认折叠且可从抽屉进入权限检查", async ({ page }) => {
+  test.setTimeout(60_000);
+  await installApiMocks(page);
+
+  for (const viewport of [{ width: 320, height: 720 }, { width: 390, height: 844 }]) {
+    await page.setViewportSize(viewport);
+    await page.goto("/");
+    await page.getByRole("button", { name: "打开导航" }).click();
+    const drawer = page.locator("aside");
+    const other = drawer.getByRole("button", { name: "其他功能", exact: true });
+    await expect(other).toHaveAttribute("aria-expanded", "false");
+    await expect(drawer.getByRole("link", { name: "治理与策略", exact: true })).toHaveCount(0);
+    await expectNoPageOverflow(page, `${viewport.width}px collapsed other navigation`);
+
+    await other.click();
+    await expect(other).toHaveAttribute("aria-expanded", "true");
+    await expect(drawer.getByRole("link", { name: "治理与策略", exact: true })).toBeVisible();
+    await expect(drawer.getByRole("link", { name: "权限检查", exact: true })).toBeVisible();
+    await expectElementInsideViewport(page, drawer, `${viewport.width}px expanded other navigation`);
+    await expectElementInsideViewport(page, drawer.getByRole("link", { name: "权限检查", exact: true }), `${viewport.width}px other navigation access link`);
+    await expectNoPageOverflow(page, `${viewport.width}px expanded other navigation`);
+    await page.screenshot({ path: `test-results/mobile-interactions/other-navigation-${viewport.width}.png`, fullPage: false });
+    await drawer.getByRole("link", { name: "权限检查", exact: true }).click();
+    await expect(page).toHaveURL(/\/access$/);
+    await expect(page.getByRole("heading", { name: "权限检查", exact: true })).toBeVisible();
+  }
 });
 
 test("移动端超长固定列不会遮挡其他列", async ({ page }) => {

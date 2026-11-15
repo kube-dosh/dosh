@@ -842,6 +842,7 @@ export interface ResourceDescriptor {
   namespaced: boolean;
   preferred?: boolean;
   verbs: string[];
+  subresources?: string[];
   shortNames?: string[];
   categories?: string[];
 }

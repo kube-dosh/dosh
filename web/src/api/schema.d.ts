@@ -4769,6 +4769,8 @@ export interface components {
             /** @description Whether this version is the API server preferred version for the group. */
             preferred?: boolean;
             verbs: string[];
+            /** @description Subresources advertised by API Discovery for this resource version. */
+            subresources?: string[];
             shortNames?: string[];
             categories?: string[];
         };
