@@ -14,7 +14,9 @@ import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 
-const column = createColumnHelper<ResourceDescriptor>();
+type VisibleResource = ResourceDescriptor & { versions: ResourceDescriptor[] };
+
+const column = createColumnHelper<VisibleResource>();
 const ALL_GROUPS = "__all__";
 
 function groupLabel(group: string): string {
@@ -54,13 +56,14 @@ export function ResourcesPage() {
   }), [items]);
   const filtered = useMemo(() => {
     const needle = q.trim().toLowerCase();
-    return items.filter((item) => {
+    const matching = items.filter((item) => {
       if (groupParam !== undefined && item.group !== group) return false;
       if (!needle) return true;
       return [item.kind, item.singularName, item.resource, item.group, item.version, ...(item.shortNames ?? []), ...(item.categories ?? [])]
         .filter(Boolean)
         .some((value) => String(value).toLowerCase().includes(needle));
     });
+    return collapseResourceVersions(matching);
   }, [group, groupParam, items, q]);
   const updateSearch = (patch: { q?: string; group?: string; namespace?: string }) => {
     void navigate({ to: "/resources", search: { ...search, ...patch }, replace: true });
@@ -84,7 +87,7 @@ export function ResourcesPage() {
           </SelectContent>
         </Select>
         <NamespaceSelect value={namespace} onChange={(value) => updateSearch({ namespace: value || undefined })} />
-        <span className="text-xs text-muted-foreground sm:ml-auto">共 {filtered.length} 个资源类型</span>
+        <span className="text-xs text-muted-foreground sm:ml-auto">共 {filtered.length} 个资源类型 · {items.length} 个 API 版本</span>
       </div>
       {query.data?.warnings?.length ? (
         <div className="mb-3 flex items-start gap-2 rounded-md border border-warning/35 bg-warning/10 px-3 py-2 text-xs text-warning">
@@ -105,7 +108,13 @@ export function ResourcesPage() {
           column.accessor("resource", { header: "资源名", cell: (info) => <span className="font-mono text-xs">{info.getValue()}</span> }),
           column.accessor("group", {
             header: "API Group / Version",
-            cell: (info) => <span className={cn("font-mono text-xs", !info.getValue() && "text-muted-foreground")}>{groupLabel(info.getValue())}/{info.row.original.version}</span>,
+            cell: (info) => (
+              <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+                <span className={cn("break-all font-mono text-xs", !info.getValue() && "text-muted-foreground")}>{groupLabel(info.getValue())}/{info.row.original.version}</span>
+                {info.row.original.preferred ? <Badge variant="secondary" className="shrink-0">Preferred</Badge> : null}
+                {info.row.original.versions.length > 1 ? <span className="text-[11px] text-muted-foreground">另 {info.row.original.versions.length - 1} 个 served version</span> : null}
+              </div>
+            ),
           }),
           column.accessor("namespaced", {
             header: "作用域",
@@ -129,4 +138,17 @@ export function ResourcesPage() {
       />
     </>
   );
+}
+
+export function collapseResourceVersions(items: ResourceDescriptor[]): VisibleResource[] {
+  const grouped = new Map<string, ResourceDescriptor[]>();
+  for (const item of items) {
+    const key = `${item.group}/${item.resource}`;
+    grouped.set(key, [...(grouped.get(key) ?? []), item]);
+  }
+  return [...grouped.values()].map((versions) => {
+    const sorted = [...versions].sort((left, right) => Number(right.preferred) - Number(left.preferred) || Number(right.version === "v1") - Number(left.version === "v1") || left.version.localeCompare(right.version));
+    const primary = sorted.find((item) => item.preferred) ?? sorted[0];
+    return { ...primary, versions: sorted };
+  }).sort((left, right) => left.kind.localeCompare(right.kind) || left.group.localeCompare(right.group));
 }

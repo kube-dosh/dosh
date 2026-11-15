@@ -204,8 +204,8 @@ Devtron 的参考价值主要在 Helm、发布历史、回滚和应用生命周�
 
 | ID | Gap | Dosh 当前状态 | 主流基线 | 业务影响 | 建议补齐 | 粗估 |
 |---|---|---|---|---|---|---|
-| GAP-01 | 通用资源浏览器与 API Discovery | ✅ 已实现 Discovery、通用列表/详情、Table API、搜索和治理入口 | Headlamp、Lens、Devtron、K8s Dashboard 均支持较通用的资源浏览 | 已解锁 Operator、CRD、HPA、PDB、NetworkPolicy、RBAC 等资源 | 后续补多版本 API 选择、Schema 和能力精细提示 | 已完成主体 |
-| GAP-02 | CRD 生命周期与动态 YAML | ◐ 通用 YAML 创建/编辑/删除、Dry Run、SSA、SAR 和审计已实现；缺 Schema 与动态表单 | Headlamp、Lens、Devtron 支持 CRD 和自定义资源编辑 | 已可通过 UI 管理 CRD，但复杂 CRD 的输入体验仍依赖文档 | 接入 OpenAPI Schema、动态表单和字段级提示 | 剩余 1–2 人周 |
+| GAP-01 | 通用资源浏览器与 API Discovery | ✅ 已实现全 served version Discovery、preferred 标记、通用列表/详情、Table API、搜索、版本切换和治理入口 | Headlamp、Lens、Devtron、K8s Dashboard 均支持较通用的资源浏览 | 已解锁 Operator、CRD、HPA、PDB、NetworkPolicy、RBAC 等资源 | 后续补保存视图、收藏和更深的资源关系导航 | 已完成主体 |
+| GAP-02 | CRD 生命周期与动态 YAML | ✅ 通用 YAML 创建/编辑/删除、Dry Run、SSA、SAR、审计、OpenAPI Schema 预检、动态表单和字段级提示已实现 | Headlamp、Lens、Devtron 支持 CRD 和自定义资源编辑 | 已可通过 UI 管理复杂 CRD，Schema 不可用时仍有 YAML 降级 | 后续补 CRD 模板库、字段级文档和从已有对象另存为模板 | 已完成主体 |
 | GAP-03 | Pod Exec / Terminal / Debug | 无 | Headlamp、Lens、K8s Dashboard | 排障仍需回到 `kubectl exec`，控制台闭环中断 | WebSocket/SPDY 终端、容器选择、Shell 检测、Ephemeral Container、超时和审计 | 3–4 人周 |
 | GAP-04 | Port-forward | 无 | Headlamp、Lens | 临时访问数据库、调试端口仍需本地 kubectl | 受 RBAC、审计、显式端口和会话超时控制的端口转发；默认考虑关闭 | 4–6 人周 |
 | GAP-05 | Helm Release 管理 | 仅用 Helm 部署 Dosh 自身 | Lens、KubeSphere、Rancher、Devtron | 无法查看 Release、values、manifest、历史、diff 和回滚 | 浏览 Release、values、manifest、revision history、升级/回滚；Secret 值遮蔽 | 5–7 人周 |
@@ -222,7 +222,7 @@ P0 合计约 26–40 人周。如果只做 1 名工程师，等于 6–9 个月�
 |---|---|---|---|---|---|---|
 | GAP-10 | 历史指标与告警 | 只有 Metrics API 瞬时 CPU/内存 | Lens metrics、Headlamp Prometheus 插件、KubeSphere/Rancher/Devtron 监控 | 无法看趋势、容量规划和告警 | Prometheus/VictoriaMetrics 适配器、节点/Pod/工作负载图表、告警状态；不可用时无障碍降级 | 4–6 人周 |
 | GAP-11 | 日志聚合、Previous、检索 | ◐ 单 Pod 实时流、Previous、容器/tail/时间戳/关键词筛选已实现 | Lens、Headlamp、平台产品更强 | CrashLoop 恢复后已可查看上一轮日志，跨 Pod 排障效率仍有限 | 补 Init Container、时间范围、跨 Pod 聚合和 Loki 等后端 | 2–4 人周 |
-| GAP-12 | 全局搜索、保存视图、Diff | 全局搜索仅节点/工作负载/Pod | Headlamp/Lens 通用搜索；平台产品有保存视图 | 资源多时查找效率低，变更前无法预览差异 | 全资源搜索、保存筛选、收藏、自定义列、YAML Diff、最近使用模板、资源历史 | 3–4 人周 |
+| GAP-12 | 全局搜索、保存视图、Diff | ◐ 全局搜索仅节点/工作负载/Pod；通用资源编辑已提供 YAML Diff，尚缺保存视图、收藏和自定义列 | Headlamp/Lens 通用搜索；平台产品有保存视图 | 资源多时查找效率低，变更预览已覆盖通用资源 | 全资源搜索、保存筛选、收藏、自定义列、最近使用模板、资源历史 | 2–3 人周 |
 | GAP-13 | 策略预检、镜像漏洞和健康评分 | 无 | Devtron、Rancher、KubeSphere，Headlamp 可通过 Kyverno/Trivy 插件 | 高风险配置和漏洞只能在集群外发现 | Kyverno/OPA Dry Run 预检、Trivy 镜像扫描、工作负载健康评分、风险提示 | 4–6 人周 |
 | GAP-14 | 审计运营化 | 最近记录 + stdout/Webhook | 企业平台有集中审计、保留、检索和告警 | 当前更适合技术审计，不足以直接满足企业 SIEM 运营 | 明确保留策略、SIEM 投递、检索、告警、访问审批和证据导出 | 3–5 人周 + 外部运营 |
 

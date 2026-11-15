@@ -11,9 +11,24 @@ type ResourceDescriptor struct {
 	Kind       string   `json:"kind"`
 	Singular   string   `json:"singularName,omitempty"`
 	Namespaced bool     `json:"namespaced"`
+	Preferred  bool     `json:"preferred,omitempty"`
 	Verbs      []string `json:"verbs"`
 	ShortNames []string `json:"shortNames,omitempty"`
 	Categories []string `json:"categories,omitempty"`
+}
+
+// ResourceSchema is the on-demand OpenAPI schema view for one discovered GVR.
+// Schema and Definitions remain raw JSON Schema maps so servers can return CRD
+// and built-in API schemas without coupling the domain layer to a generator.
+type ResourceSchema struct {
+	Group       string                    `json:"group"`
+	Version     string                    `json:"version"`
+	Resource    string                    `json:"resource"`
+	Kind        string                    `json:"kind"`
+	Source      string                    `json:"source"`
+	Schema      map[string]any            `json:"schema"`
+	Definitions map[string]map[string]any `json:"definitions,omitempty"`
+	Warnings    []string                  `json:"warnings,omitempty"`
 }
 
 // ResourceColumn describes one column returned by the Kubernetes Table API or
@@ -108,4 +123,5 @@ type GenericResourceMutation struct {
 	YAML            string `json:"yaml"`
 	ResourceVersion string `json:"resourceVersion,omitempty"`
 	DryRun          bool   `json:"dryRun"`
+	Confirmation    string `json:"confirmation,omitempty"`
 }

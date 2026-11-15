@@ -19,6 +19,9 @@ type fakeResourceRepository struct {
 	rulesErr    error
 	object      map[string]any
 	getErr      error
+	schema      domain.ResourceSchema
+	schemaErr   error
+	schemaCalls int
 
 	lastDescriptor domain.ResourceDescriptor
 	lastQuery      domain.ListQuery
@@ -38,6 +41,11 @@ type fakeResourceRepository struct {
 
 func (r *fakeResourceRepository) DiscoverResources(context.Context) ([]domain.ResourceDescriptor, []string, error) {
 	return r.descriptors, r.warnings, r.discoverErr
+}
+
+func (r *fakeResourceRepository) GetResourceSchema(context.Context, domain.ResourceDescriptor) (domain.ResourceSchema, error) {
+	r.schemaCalls++
+	return r.schema, r.schemaErr
 }
 
 func (r *fakeResourceRepository) ListResourceRules(context.Context, domain.Actor, string) (domain.ResourceRules, []string, error) {
@@ -123,7 +131,7 @@ func resourceServiceFixture() (*Service, *fakeResourceRepository, *recordingAuth
 			{Group: "", Version: "v1", Resource: "pods", Kind: "Pod", Namespaced: true, Verbs: []string{"get", "list", "create", "update", "patch", "delete"}},
 			{Group: "", Version: "v1", Resource: "secrets", Kind: "Secret", Namespaced: true, Verbs: []string{"get", "list", "create", "update", "patch", "delete"}},
 			{Group: "", Version: "v1", Resource: "configmaps", Kind: "ConfigMap", Namespaced: true, Verbs: []string{"get", "list", "create", "update", "patch", "delete"}},
-			{Group: "", Version: "v1", Resource: "nodes", Kind: "Node", Verbs: []string{"get", "list", "update", "delete"}},
+			{Group: "", Version: "v1", Resource: "nodes", Kind: "Node", Verbs: []string{"get", "list", "create", "update", "patch", "delete"}},
 			{Group: "example.io", Version: "v1", Resource: "widgets", Kind: "Widget", Namespaced: true, Verbs: []string{"get", "list", "create", "update", "patch", "delete"}},
 		},
 	}
@@ -582,5 +590,107 @@ func TestServiceDiscoveryFiltersClusterResourcesWithSubjectAccessReview(t *testi
 	}
 	if len(warnings) != 0 {
 		t.Fatalf("Discovery() warnings = %#v", warnings)
+	}
+}
+
+func TestServiceCapabilitiesExposeRiskAndRequireConfirmation(t *testing.T) {
+	service, _, _, _ := resourceServiceFixture()
+	capabilities, err := service.Capabilities(context.Background(), domain.Actor{Username: "alice"}, domain.ResourceReference{
+		Version: "v1", Resource: "nodes",
+	}, "")
+	if err != nil {
+		t.Fatalf("Capabilities() error = %v", err)
+	}
+	if capabilities.RiskLevel != riskCritical || !capabilities.RequireConfirmation || len(capabilities.RiskReasons) == 0 {
+		t.Fatalf("capabilities = %#v", capabilities)
+	}
+
+	normal, err := service.Capabilities(context.Background(), domain.Actor{Username: "alice"}, domain.ResourceReference{
+		Version: "v1", Resource: "configmaps",
+	}, "prod")
+	if err != nil {
+		t.Fatalf("normal Capabilities() error = %v", err)
+	}
+	if normal.RiskLevel != riskNormal || normal.RequireConfirmation {
+		t.Fatalf("normal capabilities = %#v", normal)
+	}
+}
+
+func TestServiceRequiresNameConfirmationForHighRiskWritesAndDeletes(t *testing.T) {
+	service, repository, _, _ := resourceServiceFixture()
+	repository.mutation = map[string]any{
+		"apiVersion": "v1", "kind": "Node", "metadata": map[string]any{"name": "worker-1", "resourceVersion": "2"},
+	}
+	manifest := `apiVersion: v1
+kind: Node
+metadata:
+  name: worker-1
+`
+	reference := domain.ResourceReference{Version: "v1", Resource: "nodes"}
+	if _, err := service.Create(context.Background(), domain.Actor{Username: "alice"}, reference, domain.GenericResourceMutation{YAML: manifest}); !errors.Is(err, domain.ErrInvalid) {
+		t.Fatalf("Create() without confirmation error = %v, want ErrInvalid", err)
+	}
+	if repository.lastMutations != 0 {
+		t.Fatalf("unconfirmed create reached repository: %d calls", repository.lastMutations)
+	}
+	if _, err := service.Create(context.Background(), domain.Actor{Username: "alice"}, reference, domain.GenericResourceMutation{YAML: manifest, Confirmation: "worker-1"}); err != nil {
+		t.Fatalf("Create() with confirmation error = %v", err)
+	}
+
+	repository.lastMutations = 0
+	if err := service.Delete(context.Background(), domain.Actor{Username: "alice"}, reference, "", "worker-1", "2", "Background", ""); !errors.Is(err, domain.ErrInvalid) {
+		t.Fatalf("Delete() without confirmation error = %v, want ErrInvalid", err)
+	}
+	if repository.lastMutations != 0 {
+		t.Fatalf("unconfirmed delete reached repository: %d calls", repository.lastMutations)
+	}
+	if err := service.Delete(context.Background(), domain.Actor{Username: "alice"}, reference, "", "worker-1", "2", "Background", "worker-1"); err != nil {
+		t.Fatalf("Delete() with confirmation error = %v", err)
+	}
+}
+
+func TestServiceSchemaValidationRejectsMissingFieldsAndWrongTypes(t *testing.T) {
+	service, repository, _, _ := resourceServiceFixture()
+	repository.schema = domain.ResourceSchema{
+		Group: "example.io", Version: "v1", Resource: "widgets", Kind: "Widget", Source: "openapi-v2",
+		Schema: map[string]any{
+			"type": "object", "required": []any{"spec"},
+			"properties": map[string]any{
+				"spec": map[string]any{
+					"type": "object", "required": []any{"size"},
+					"properties": map[string]any{"size": map[string]any{"type": "string"}},
+				},
+			},
+		},
+	}
+	reference := domain.ResourceReference{Group: "example.io", Version: "v1", Resource: "widgets"}
+	missing := `apiVersion: example.io/v1
+kind: Widget
+metadata:
+  name: sample
+  namespace: prod
+spec: {}
+`
+	if _, err := service.Create(context.Background(), domain.Actor{Username: "alice"}, reference, domain.GenericResourceMutation{YAML: missing, Namespace: "prod"}); !errors.Is(err, domain.ErrInvalid) || !strings.Contains(err.Error(), "spec.size") {
+		t.Fatalf("Create() missing required field error = %v", err)
+	}
+	wrongType := strings.Replace(missing, "spec: {}", "spec:\n  size: 42", 1)
+	if _, err := service.Create(context.Background(), domain.Actor{Username: "alice"}, reference, domain.GenericResourceMutation{YAML: wrongType, Namespace: "prod"}); !errors.Is(err, domain.ErrInvalid) || !strings.Contains(err.Error(), "类型应为 string") {
+		t.Fatalf("Create() wrong type error = %v", err)
+	}
+	if repository.lastMutations != 0 {
+		t.Fatalf("invalid manifests reached repository: %d calls", repository.lastMutations)
+	}
+}
+
+func TestServiceSchemaDegradesWhenRepositoryIsUnavailable(t *testing.T) {
+	service, repository, _, _ := resourceServiceFixture()
+	repository.schemaErr = domain.ErrUnavailable
+	schema, err := service.Schema(context.Background(), domain.ResourceReference{Group: "example.io", Version: "v1", Resource: "widgets"})
+	if err != nil {
+		t.Fatalf("Schema() error = %v", err)
+	}
+	if schema.Source != "unavailable" || len(schema.Warnings) == 0 {
+		t.Fatalf("schema = %#v", schema)
 	}
 }

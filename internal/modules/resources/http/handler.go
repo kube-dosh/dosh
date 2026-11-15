@@ -112,6 +112,24 @@ func (h *Handler) Capabilities(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	httpx.JSON(w, stdhttp.StatusOK, capabilities)
 }
 
+func (h *Handler) Schema(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	ref := domain.ResourceReference{Group: httpx.Query(r, "group"), Version: httpx.Query(r, "version"), Resource: httpx.Query(r, "resource")}
+	if ref.Group == "_core" || ref.Group == "core" {
+		ref.Group = ""
+	}
+	if ref.Version == "" || ref.Resource == "" {
+		httpx.Error(w, r, httpx.Validation("resource", "version and resource are required"))
+		return
+	}
+	schema, err := h.service.Schema(r.Context(), ref)
+	if err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	httpx.JSON(w, stdhttp.StatusOK, schema)
+}
+
 func (h *Handler) Create(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	ref, err := referenceFromRequest(r)
 	if err != nil {
@@ -161,7 +179,7 @@ func (h *Handler) Delete(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	actor, _ := domain.ActorFromContext(r.Context())
 	err = h.service.Delete(
 		r.Context(), actor, ref, httpx.Query(r, "namespace"), chi.URLParam(r, "name"),
-		httpx.Query(r, "resourceVersion"), httpx.Query(r, "propagation"),
+		httpx.Query(r, "resourceVersion"), httpx.Query(r, "propagation"), httpx.Query(r, "confirmation"),
 	)
 	if err != nil {
 		httpx.Error(w, r, err)
@@ -188,6 +206,7 @@ func (h *Handler) Mount(r chi.Router) {
 	r.Get("/resources/discovery", h.Discovery)
 	r.Get("/resources/search", h.Search)
 	r.Get("/resources/capabilities", h.Capabilities)
+	r.Get("/resources/schema", h.Schema)
 	r.Get("/resources/{group}/{version}/{resource}", h.List)
 	r.Get("/resources/{group}/{version}/{resource}/{name}", h.Get)
 	r.Post("/resources/{group}/{version}/{resource}", h.Create)

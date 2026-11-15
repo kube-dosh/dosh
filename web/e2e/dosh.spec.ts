@@ -349,6 +349,7 @@ async function installApiMocks(page: Page, options: { authenticated?: boolean; a
   let nodeTaints = [...nodeDetail.taints];
   let nodeResourceVersion = 1;
   let services: ServiceDetail[] = [{ ...serviceDetail }];
+  let widgetRevision = 1;
   const currentNodeDetail = () => ({
     ...nodeDetail,
     unschedulable: nodeSchedulingDisabled,
@@ -399,8 +400,80 @@ async function installApiMocks(page: Page, options: { authenticated?: boolean; a
         { group: "", version: "v1", resource: "resourcequotas", kind: "ResourceQuota", namespaced: true, verbs: ["get", "list"] },
         { group: "", version: "v1", resource: "limitranges", kind: "LimitRange", namespaced: true, verbs: ["get", "list"] },
         { group: "scheduling.k8s.io", version: "v1", resource: "priorityclasses", kind: "PriorityClass", namespaced: false, verbs: ["get", "list"] },
+        { group: "example.io", version: "v1", resource: "widgets", kind: "Widget", namespaced: true, preferred: true, verbs: ["get", "list", "create", "update", "patch", "delete"] },
+        { group: "example.io", version: "v1beta1", resource: "widgets", kind: "Widget", namespaced: true, verbs: ["get", "list"] },
+        { group: "example.io", version: "v1", resource: "clusterwidgets", kind: "ClusterWidget", namespaced: false, preferred: true, verbs: ["get", "list", "create", "update", "patch", "delete"] },
       ];
       return json(route, { items: resources });
+    }
+    if (path === "/api/v1/resources/capabilities") {
+      const resource = new URL(request.url()).searchParams.get("resource");
+      if (resource === "clusterwidgets") {
+        return json(route, {
+          create: true, update: true, delete: true, scale: false,
+          riskLevel: "critical", requireConfirmation: true,
+          riskReasons: ["这是测试中的集群级高风险资源", "写入会影响全部命名空间"],
+        });
+      }
+      return json(route, { create: true, update: true, delete: true, scale: false, riskLevel: "normal", requireConfirmation: false });
+    }
+    if (path === "/api/v1/resources/schema") {
+      const params = new URL(request.url()).searchParams;
+      const resource = params.get("resource") ?? "widgets";
+      const kind = resource === "clusterwidgets" ? "ClusterWidget" : "Widget";
+      return json(route, {
+        group: "example.io", version: params.get("version") ?? "v1", resource, kind, source: "openapi-v2",
+        schema: {
+          type: "object", required: ["metadata", "spec"],
+          properties: {
+            apiVersion: { type: "string" }, kind: { type: "string" },
+            metadata: { $ref: "#/definitions/io.k8s.apimachinery.pkg.apis.meta.v1.ObjectMeta" },
+            spec: { $ref: "#/definitions/example.io.v1.WidgetSpec" },
+          },
+        },
+        definitions: {
+          "io.k8s.apimachinery.pkg.apis.meta.v1.ObjectMeta": { type: "object", required: ["name"], properties: { name: { type: "string" }, namespace: { type: "string" } } },
+          "example.io.v1.WidgetSpec": { type: "object", required: ["size"], properties: { size: { type: "string", enum: ["small", "large"], title: "尺寸" }, replicas: { type: "integer", title: "副本数" } } },
+        },
+      });
+    }
+    if (path === "/api/v1/resources/example.io/v1/widgets" && method === "GET") {
+      return json(route, list([{
+        apiVersion: "example.io/v1", kind: "Widget", resource: "widgets", name: "sample-widget", namespace: "default",
+        resourceVersion: String(widgetRevision), createdAt: "2026-11-02T00:00:00Z", labels: { app: "demo" },
+      }]));
+    }
+    if (path === "/api/v1/resources/example.io/v1beta1/widgets" && method === "GET") {
+      return json(route, list([{
+        apiVersion: "example.io/v1beta1", kind: "Widget", resource: "widgets", name: "sample-widget", namespace: "default",
+        resourceVersion: String(widgetRevision), createdAt: "2026-11-02T00:00:00Z", labels: { app: "demo" },
+      }]));
+    }
+    if (path === "/api/v1/resources/example.io/v1/clusterwidgets" && method === "GET") {
+      return json(route, list([{
+        apiVersion: "example.io/v1", kind: "ClusterWidget", resource: "clusterwidgets", name: "sample-cluster-widget",
+        resourceVersion: String(widgetRevision), createdAt: "2026-11-02T00:00:00Z",
+      }]));
+    }
+    if (/^\/api\/v1\/resources\/example\.io\/v1(?:beta1)?\/widgets\/sample-widget$/.test(path) && method === "GET") {
+      const version = path.includes("v1beta1") ? "v1beta1" : "v1";
+      return json(route, {
+        apiVersion: `example.io/${version}`, kind: "Widget", name: "sample-widget", namespace: "default",
+        resourceVersion: String(widgetRevision), createdAt: "2026-11-02T00:00:00Z", labels: { app: "demo" }, annotations: {},
+        object: { apiVersion: `example.io/${version}`, kind: "Widget", metadata: { name: "sample-widget", namespace: "default" }, spec: { size: "small" } },
+        yaml: `apiVersion: example.io/${version}\nkind: Widget\nmetadata:\n  name: sample-widget\n  namespace: default\nspec:\n  size: small\n`,
+      });
+    }
+    if (path === "/api/v1/resources/example.io/v1/widgets" && method === "POST") {
+      widgetRevision++;
+      return json(route, { apiVersion: "example.io/v1", kind: "Widget", name: "created-widget", namespace: "default", object: {}, yaml: "" }, 201);
+    }
+    if (path === "/api/v1/resources/example.io/v1/widgets/sample-widget" && method === "PUT") {
+      widgetRevision++;
+      return json(route, { apiVersion: "example.io/v1", kind: "Widget", name: "sample-widget", namespace: "default", object: {}, yaml: "" });
+    }
+    if (path === "/api/v1/resources/example.io/v1/widgets/sample-widget" && method === "DELETE") {
+      return json(route, { status: "deleting" }, 202);
     }
     if (path === "/api/v1/cluster/config") return json(route, clusterConfiguration);
     if (path === "/api/v1/capabilities") return json(route, session.capabilities);
@@ -1473,6 +1546,46 @@ test("受保护 API 会话过期后跳转登录", async ({ page }) => {
   await expect(page.getByRole("heading", { name: "登录控制台" })).toBeVisible();
 });
 
+test("资源浏览器支持多版本、Schema 表单、Diff 与高风险确认", async ({ page }) => {
+  test.setTimeout(120_000);
+  await installApiMocks(page);
+  await page.goto("/resources");
+  await expect(page.getByRole("heading", { name: "资源浏览器" })).toBeVisible();
+  const widgetRow = page.getByRole("row").filter({ has: page.getByRole("link", { name: "Widget", exact: true }) });
+  await expect(widgetRow).toContainText("Preferred");
+  await widgetRow.getByRole("link", { name: "Widget", exact: true }).click();
+  await expect(page).toHaveURL(/\/resources\/example\.io\/v1\/widgets/);
+  await page.getByLabel("API 版本").click();
+  await page.getByRole("option", { name: /v1beta1/ }).click();
+  await expect(page).toHaveURL(/\/resources\/example\.io\/v1beta1\/widgets/);
+  await page.getByRole("link", { name: "sample-widget" }).click();
+  await expect(page.getByRole("heading", { name: "sample-widget", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "编辑资源" }).click();
+  const editDialog = page.getByRole("dialog");
+  await expect(editDialog).toContainText("Schema 表单 / YAML 双模式");
+  await editDialog.getByRole("tab", { name: "表单" }).click();
+  await expect(editDialog.getByRole("heading", { name: "基本信息" })).toBeVisible();
+  await editDialog.getByLabel("尺寸").selectOption("large");
+  await editDialog.getByRole("tab", { name: /变更预览/ }).click();
+  const diff = editDialog.getByLabel("YAML 变更预览");
+  await expect(diff.getByText("size: large", { exact: true })).toBeVisible();
+  await expect(diff.getByText("size: small", { exact: true })).toBeVisible();
+  await editDialog.getByRole("button", { name: "取消" }).click();
+
+  await page.goto("/resources/example.io/v1/clusterwidgets");
+  await expect(page.getByRole("heading", { name: "ClusterWidget", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "创建 YAML" }).click();
+  const riskyDialog = page.getByRole("dialog");
+  await expect(riskyDialog).toContainText("高风险资源");
+  await riskyDialog.getByRole("tab", { name: "表单" }).click();
+  await riskyDialog.getByLabel(/^名称/).fill("demo-cluster-widget");
+  await riskyDialog.getByLabel(/^尺寸/).selectOption("large");
+  const createButton = riskyDialog.getByRole("button", { name: "创建", exact: true });
+  await expect(createButton).toBeDisabled();
+  await riskyDialog.getByLabel("输入资源名称确认高风险写入").fill("demo-cluster-widget");
+  await expect(createButton).toBeEnabled();
+});
+
 test("移动端可通过导航抽屉访问节点", async ({ page }) => {
   await installApiMocks(page);
   await page.setViewportSize({ width: 390, height: 844 });
@@ -1572,6 +1685,9 @@ test("移动端逐页布局无页面级横向溢出", async ({ page }) => {
     { path: "/namespaces/default?tab=yaml", name: "namespace-yaml" },
     { path: "/events", name: "events" },
     { path: "/audit", name: "audit" },
+    { path: "/resources", name: "resources" },
+    { path: "/resources/example.io/v1/widgets", name: "resource-list" },
+    { path: "/resources/example.io/v1/widgets/sample-widget?namespace=default", name: "resource-detail" },
     { path: "/governance", name: "governance" },
     { path: "/governance?namespace=default", name: "governance-namespace" },
   ];
@@ -1726,6 +1842,9 @@ test("320px 大字体缩放时页面不产生横向溢出", async ({ page }) => 
     { path: "/pods/default/web-abcdef-12345?tab=logs", name: "pod-logs" },
     { path: "/configuration?tab=secrets", name: "secrets" },
     { path: "/events", name: "events" },
+    { path: "/resources", name: "resources" },
+    { path: "/resources/example.io/v1/widgets", name: "resource-list" },
+    { path: "/resources/example.io/v1/widgets/sample-widget?namespace=default", name: "resource-detail" },
     { path: "/governance", name: "governance" },
   ]) {
     await page.goto(route.path);
@@ -1757,6 +1876,9 @@ test.describe("Android Chrome 视口", () => {
       { path: "/configuration?tab=secrets", name: "secrets" },
       { path: "/events", name: "events" },
       { path: "/audit", name: "audit" },
+      { path: "/resources", name: "resources" },
+      { path: "/resources/example.io/v1/widgets", name: "resource-list" },
+      { path: "/resources/example.io/v1/widgets/sample-widget?namespace=default", name: "resource-detail" },
       { path: "/governance", name: "governance" },
     ]) {
       await page.goto(route.path);
@@ -1873,6 +1995,25 @@ test("移动端关键弹窗与确认框保持在视口内", async ({ page }) => 
   await expect(dialog).toBeVisible();
   await expectElementInsideViewport(page, dialog, "deployment create dialog");
   await page.screenshot({ path: "test-results/mobile-interactions/deployment-create-dialog.png", fullPage: true });
+  await page.keyboard.press("Escape");
+
+  await page.goto("/resources/example.io/v1/widgets?namespace=default");
+  await page.getByRole("button", { name: "创建 YAML" }).click();
+  dialog = page.getByRole("dialog");
+  await expect(dialog).toBeVisible();
+  await dialog.getByRole("tab", { name: "表单" }).click();
+  await expect(dialog.getByRole("heading", { name: "基本信息" })).toBeVisible();
+  await expectElementInsideViewport(page, dialog, "generic resource form dialog");
+  await expectNoPageOverflow(page, "generic resource form dialog");
+  const clippedFormContent = await dialog.evaluate((element) => {
+    const bounds = element.getBoundingClientRect();
+    return Array.from(element.querySelectorAll<HTMLElement>("*"))
+      .map((child) => ({ child, rect: child.getBoundingClientRect() }))
+      .filter(({ child, rect }) => rect.width > 0 && getComputedStyle(child).visibility !== "hidden" && (rect.left < bounds.left - 1 || rect.right > bounds.right + 1))
+      .map(({ child, rect }) => ({ tag: child.tagName, className: String(child.className).slice(0, 100), left: rect.left, right: rect.right, dialogLeft: bounds.left, dialogRight: bounds.right }));
+  });
+  expect(clippedFormContent).toEqual([]);
+  await page.screenshot({ path: "test-results/mobile-interactions/generic-resource-form-dialog.png", fullPage: true });
   await page.keyboard.press("Escape");
 
   await page.goto("/workloads/deployment/default/web");
@@ -2161,7 +2302,7 @@ test("核心运维页面在亮暗主题下无严重可访问性问题", async ({
   test.setTimeout(480_000);
   await installApiMocks(page);
   for (const theme of ["light", "dark"] as const) {
-    for (const path of ["/", "/nodes", "/workloads/deployment/default/web", "/workloads/deployment/default/web?tab=config", "/pods/default/web-abcdef-12345", "/audit"]) {
+    for (const path of ["/", "/nodes", "/workloads/deployment/default/web", "/workloads/deployment/default/web?tab=config", "/pods/default/web-abcdef-12345", "/audit", "/resources", "/resources/example.io/v1/widgets", "/resources/example.io/v1/widgets/sample-widget?namespace=default"]) {
       await page.goto(path);
       await page.evaluate((value) => localStorage.setItem("dosh-theme", value), theme);
       await page.reload();
@@ -2169,6 +2310,24 @@ test("核心运维页面在亮暗主题下无严重可访问性问题", async ({
       await expectThemeApplied(page, theme);
       await expectNoSeriousAccessibilityViolations(page, `${path}/${theme}`);
     }
+  }
+});
+
+test("通用资源动态表单在亮暗主题下无严重可访问性问题", async ({ page }) => {
+  test.setTimeout(120_000);
+  await installApiMocks(page);
+  for (const theme of ["light", "dark"] as const) {
+    await page.goto("/resources/example.io/v1/widgets?namespace=default");
+    await page.evaluate((value) => localStorage.setItem("dosh-theme", value), theme);
+    await page.reload();
+    await expect(page.getByRole("heading", { name: "Widget", exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "创建 YAML" }).click();
+    const dialog = page.getByRole("dialog");
+    await dialog.getByRole("tab", { name: "表单" }).click();
+    await expect(dialog.getByRole("heading", { name: "基本信息" })).toBeVisible();
+    await expectThemeApplied(page, theme);
+    await expectNoSeriousAccessibilityViolations(page, `generic-resource-form/${theme}`);
+    await page.keyboard.press("Escape");
   }
 });
 

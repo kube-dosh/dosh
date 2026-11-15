@@ -55,8 +55,8 @@ Dosh does not replace Kubernetes or bypass it. Authentication, authorization, an
 | Storage | Create and manage PVCs; inspect PVs and StorageClasses and navigate their relationships |
 | Namespaces | Create, inspect, view YAML, and perform protected cascade deletion; `default` and `kube-*` are always protected from deletion |
 | Events | Cluster-wide search, namespace filtering, warning detection, object deep links, and a live event stream |
-| Resource explorer | Kubernetes API Discovery catalog for built-in resources and CRD types; filter by API group, kind, and resource name; generic list, detail, events, YAML create/edit/delete, and namespace filtering, with all reads and writes enforced by Kubernetes RBAC; generic Secret writes remain in the dedicated editor |
-| YAML creation | Template editing, dry run, create, or server-side apply; multi-document sequential submission with a built-in resource allowlist; CRDs and other discovered resources use the resource explorer's YAML editor |
+| Resource explorer | Kubernetes API Discovery catalog for every served version of built-in resources and CRD types; filter by API group, kind, and resource name and switch versions; generic list, detail, events, schema-driven forms, YAML create/edit/delete, change diff, and namespace filtering, with all reads and writes enforced by Kubernetes RBAC; generic Secret writes remain in the dedicated editor |
+| YAML creation | Template editing, dry run, create, or server-side apply; multi-document sequential submission with a built-in resource allowlist; CRDs and other discovered resources use the resource explorer's schema/YAML dual editor, and high-risk writes require name confirmation |
 | Cluster configuration | Kubernetes version, platform, CNI, control-plane endpoint, DNS domain, Pod/Service CIDRs, and per-node Pod CIDRs |
 | Audit | Authentication and write-operation history; events are written to stdout with optional HTTPS webhook delivery and HMAC signing |
 | Server certificate | Certificate validity, SANs, key algorithm, fingerprint, and reload status; automatic hot reload after certificate rotation |
@@ -238,7 +238,7 @@ Set the mode with `auth.mode`. OIDC organization mapping, CA configuration, admi
 
 - **Kubernetes** — the chart requires Kubernetes `1.30+`.
 - **Metrics** — without Metrics Server, CPU and memory views fall back to Pod requests and node allocatable values; resource management remains available.
-- **YAML creation** — `/yaml/create` uses a controlled allowlist for common built-in resources and does not expose Namespaces or Nodes. CRDs and other discovered resources use the resource explorer's generic YAML editor; generic Secret writes are disabled in favor of the dedicated editor.
+- **YAML creation** — `/yaml/create` uses a controlled allowlist for common built-in resources and does not expose Namespaces or Nodes. CRDs and other discovered resources use the resource explorer's schema-driven form or YAML editor. When schema discovery is unavailable the UI falls back to YAML, and API Server dry-run remains authoritative. Namespaces, Nodes, CRDs, admission webhooks, cluster RBAC, PV/StorageClass and other high-risk writes require name confirmation. Generic Secret writes are disabled in favor of the dedicated editor.
 - **Storage** — PVCs support permission-protected create, edit, and delete operations; PV and StorageClass support is focused on inspection and relationship navigation.
 - **Secrets** — users with read permission can view Secret data. This is RBAC-controlled and audited; there is no additional masking layer in Dosh.
 - **Browsers** — a recent Chrome, Edge, Firefox, or Safari is recommended for the responsive interface.

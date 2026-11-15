@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useParams, useSearch } from "@tanstack/react-router";
 import { ArrowLeft, FileCode2, Pencil, Trash2 } from "lucide-react";
@@ -11,6 +11,7 @@ import { MetadataCard } from "@/components/resources/metadata-card";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ResourceEvents } from "@/features/events/resource-events";
 import { GenericYamlPanel } from "@/features/resources/generic-yaml-panel";
 import { GenericResourceEditorDialog } from "@/features/resources/generic-resource-editor-dialog";
@@ -40,6 +41,9 @@ export function ResourceDetailPage() {
   const namespace = search.namespace ?? "";
   const tab = isDetailTab(search.tab) ? search.tab : "overview";
   const discovery = useQuery({ queryKey: ["resource-discovery", "all"], queryFn: () => api.resourceDiscovery(), staleTime: 60_000 });
+  const versions = useMemo(() => (discovery.data?.items ?? [])
+    .filter((item) => item.group === apiGroup && item.resource === params.resource)
+    .sort((left, right) => Number(right.preferred) - Number(left.preferred) || right.version.localeCompare(left.version)), [apiGroup, discovery.data?.items, params.resource]);
   const descriptor = findDescriptor(discovery.data?.items ?? [], apiGroup, params.version, params.resource);
   const missingNamespace = Boolean(descriptor?.namespaced && !namespace);
   const capabilities = useQuery({
@@ -68,6 +72,13 @@ export function ResourceDetailPage() {
       </Link>
     </Button>
   );
+  const changeVersion = (version: string) => {
+    void navigate({
+      to: "/resources/$group/$version/$resource/$name",
+      params: { ...params, version },
+      search: { ...search },
+    });
+  };
 
   if (discovery.isError) return <ErrorState error={discovery.error} onRetry={() => void discovery.refetch()} />;
   if (!discovery.isLoading && !descriptor) {
@@ -99,7 +110,12 @@ export function ResourceDetailPage() {
           </>
         )}
         description={`${detail.apiVersion} · ${detail.kind}${detail.namespace ? ` · ${detail.namespace}` : ""}`}
-        actions={<>{canEdit ? <Button variant="outline" size="sm" onClick={() => setEditOpen(true)}><Pencil className="h-4 w-4" />编辑 YAML</Button> : null}{canDelete ? <Button variant="destructive" size="sm" onClick={() => setDeleteOpen(true)}><Trash2 className="h-4 w-4" />删除</Button> : null}{listLink}</>}
+        actions={<>{versions.length > 1 ? (
+          <Select value={params.version} onValueChange={changeVersion}>
+            <SelectTrigger className="w-full sm:w-40" aria-label="API 版本"><SelectValue /></SelectTrigger>
+            <SelectContent>{versions.map((item) => <SelectItem key={item.version} value={item.version}>{item.version}{item.preferred ? " · Preferred" : ""}</SelectItem>)}</SelectContent>
+          </Select>
+        ) : null}{canEdit ? <Button variant="outline" size="sm" onClick={() => setEditOpen(true)}><Pencil className="h-4 w-4" />编辑资源</Button> : null}{canDelete ? <Button variant="destructive" size="sm" onClick={() => setDeleteOpen(true)}><Trash2 className="h-4 w-4" />删除</Button> : null}{listLink}</>}
       />
       {detail.warnings?.length ? (
         <div className="mb-3 rounded-md border border-warning/35 bg-warning/10 px-3 py-2 text-xs text-warning">{detail.warnings.join("；")}</div>
@@ -164,6 +180,7 @@ export function ResourceDetailPage() {
           namespace={namespace}
           mode="update"
           detail={detail}
+          capabilities={capabilities.data}
           onSaved={async () => {
             await queryClient.invalidateQueries({ queryKey: ["generic-resource"] });
             await queryClient.invalidateQueries({ queryKey: ["generic-resources"] });
@@ -178,8 +195,12 @@ export function ResourceDetailPage() {
         resourceKind={detail.kind}
         name={detail.name}
         description="通用资源删除会立即提交到 Kubernetes API，并记录审计事件。"
+        riskLevel={capabilities.data?.riskLevel}
+        riskReasons={capabilities.data?.riskReasons}
         onConfirm={async () => {
-          await api.deleteGenericResource({ group: apiGroup, version: params.version, resource: params.resource }, detail.name, namespace, detail.resourceVersion, "Background");
+          await api.deleteGenericResource({
+            group: apiGroup, version: params.version, resource: params.resource,
+          }, detail.name, namespace, detail.resourceVersion, "Background", capabilities.data?.requireConfirmation ? detail.name : undefined);
           await queryClient.invalidateQueries({ queryKey: ["generic-resources"] });
           await navigate({ to: "/resources/$group/$version/$resource", params: { group: params.group, version: params.version, resource: params.resource }, search: { namespace: namespace || undefined } });
         }}

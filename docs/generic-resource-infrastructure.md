@@ -2,7 +2,7 @@
 
 | 项目 | 内容 |
 |---|---|
-| 状态 | 第三阶段已实现：Discovery、类型感知列表、按身份过滤、通用列表/详情、受控 YAML 写入、Deployment/StatefulSet 发布历史与回滚、Secret 脱敏与审计、资源浏览器与治理入口 |
+| 状态 | 第四阶段已实现：全 served version Discovery、OpenAPI Schema 预检与动态表单、高风险写入确认、变更 Diff、移动端与无障碍专项；保留通用列表/详情、受控 YAML 写入、发布历史与回滚、Secret 脱敏与审计 |
 | 目标 | 从固定资源控制台走向通用 Kubernetes 控制台，为 CRD、Operator 资源和后续动态表单提供统一底座 |
 | 边界 | 不开放任意 API 代理、客户端指定上游 URL、跨资源批量原子写入或绕过 SubjectAccessReview 的读写路径；通用 Secret 创建/更新仍由专用页面承担 |
 
@@ -10,7 +10,7 @@
 
 ### GR-001 资源发现
 
-当 Kubernetes API Discovery 可用时，系统应返回核心 API 和每个 API Group 的 preferred version 中支持 `list` 或 `get` 的资源类型，并包含 Group、Version、Resource、Kind、作用域、动词、短名称、类别和单数名称。
+当 Kubernetes API Discovery 可用时，系统应返回核心 API 和每个 API Group 的全部 served version 中支持 `list` 或 `get` 的资源类型，并包含 Group、Version、Resource、Kind、作用域、preferred 标记、动词、短名称、类别和单数名称。
 
 ### GR-002 部分发现失败降级
 
@@ -100,18 +100,38 @@
 
 当用户查看 Deployment 或 StatefulSet 时，系统应展示 ReplicaSet 或 ControllerRevision 形成的 revision、镜像、变更原因、当前标记和可用状态；当用户发起回滚且具备 `update` 权限时，系统应校验正整数 revision，通过定向 Merge Patch 恢复目标 Pod 模板和 change-cause，保留副本数、状态及其他并发字段，并记录 `rollback` 审计。
 
+### GR-024 多版本选择
+
+当同一 API Group/Resource 暴露多个 served version 时，资源浏览器应聚合为一个资源类型并标记 preferred version；列表页和详情页应允许切换 version，并让后续列表、详情、Schema、能力查询和写入继续使用所选 GVR。跨类型搜索应只使用 preferred version，避免重复对象。
+
+### GR-025 OpenAPI Schema 与动态表单
+
+当用户创建或编辑通用资源时，系统应通过受保护接口读取集群 OpenAPI v2 定义，只返回根 Schema 和递归引用定义，并按 TTL 缓存。Schema 可用时，前端应提供 YAML/动态表单双模式，对必填字段和基础类型给出提示；服务端对明确缺失或类型错误执行预检。Schema 不可用时必须降级到 YAML，不得阻断资源工作流，API Server Dry Run 始终是权威校验。
+
+### GR-026 高风险写入策略
+
+当资源类型属于 Namespace、Node、CRD、准入 Webhook、集群 RBAC、PV/StorageClass、PriorityClass 等高影响对象时，能力查询应返回 `riskLevel`、`riskReasons` 和 `requireConfirmation`。正式创建、更新和删除必须由服务端再次校验资源名称确认值；Dry Run 不需要确认。前端必须展示风险原因，且不得仅依赖按钮禁用实现防护。
+
+### GR-027 变更 Diff 预览
+
+当用户编辑已有通用资源时，系统应提供 YAML 变更预览，标记新增、删除和上下文行及行号；大文件应使用有界降级提示。Diff 必须可换行且只在自身容器内滚动，不能造成页面级横向溢出。
+
+### GR-028 通用资源移动端与无障碍
+
+当用户在 320px、390px、大字体或 Android 视口使用资源浏览器、列表、详情、编辑器、Schema 表单和删除确认框时，页面不得产生横向溢出；弹窗及后代控件不得超出弹窗或主内容区。表单字段必须有关联 label、可键盘操作、错误使用可读文本和 `aria-invalid`/`role=alert`，并进入 Chromium、Firefox 与 axe 验收矩阵。
+
 ## 2. 实现落点
 
 | 层 | 文件 | 职责 |
 |---|---|---|
 | domain | `internal/domain/resources.go` | ResourceDescriptor、ResourceReference、通用摘要和详情 DTO |
-| app | `internal/modules/resources/app/service.go` | GVR 校验、SAR、通用读写、能力查询、Secret 脱敏、managedFields 清理和审计 |
-| http | `internal/modules/resources/http/handler.go` | Discovery、列表、详情、能力、创建/更新/删除路由与稳定错误映射 |
-| kube | `internal/platform/kube/resources.go` | API Discovery、动态客户端读写、缓存、分页和搜索 |
+| app | `internal/modules/resources/app/service.go`、`risk.go`、`schema_validation.go` | GVR 校验、SAR、通用读写、能力/风险、Schema 预检、Secret 脱敏、managedFields 清理和审计 |
+| http | `internal/modules/resources/http/handler.go` | Discovery、Schema、列表、详情、能力、创建/更新/删除路由与稳定错误映射 |
+| kube | `internal/platform/kube/resources.go`、`resource_schema.go` | API Discovery、OpenAPI v2 读取与缓存、动态客户端读写、分页和搜索 |
 | workloads | `internal/modules/workloads/**`、`internal/platform/kube/workloads.go` | 发布历史读取、revision 解析、回滚和冲突映射 |
 | bootstrap | `internal/bootstrap/app.go`、`router.go` | 依赖装配和受保护路由挂载 |
-| frontend | `web/src/features/resources/`、`web/src/features/workloads/`、`web/src/features/governance/` | 类型目录、对象列表/详情、YAML 编辑器、发布历史、回滚和治理入口 |
-| contract | `api/openapi.yaml`、`web/src/api/schema.d.ts` | Discovery、通用读写、能力查询、发布历史与回滚 REST 契约 |
+| frontend | `web/src/features/resources/`、`web/src/features/workloads/`、`web/src/features/governance/` | 多版本类型目录、对象列表/详情、Schema 表单、YAML/Diff 编辑器、风险确认、发布历史、回滚和治理入口 |
+| contract | `api/openapi.yaml`、`web/src/api/schema.d.ts` | Discovery、Schema、通用读写、能力/风险查询、发布历史与回滚 REST 契约 |
 
 ## 3. 验证矩阵
 
@@ -125,15 +145,17 @@
   - Pod 日志 `pods/log` 授权、Previous 参数和审计。
   - 通用创建/更新 Dry Run、Secret 保护、update→patch 回退、能力查询和删除策略。
   - Deployment ReplicaSet 与 StatefulSet ControllerRevision 历史、回滚冲突和 change-cause 恢复。
+  - 多 served version Discovery、preferred 标记、OpenAPI 定义匹配/引用裁剪/缓存/降级。
+  - 高风险能力分级、名称确认和 HTTP 边界；Schema 必填/类型预检与 Schema 不可用降级。
 - `cd web && npm run api:check && npm run typecheck`
 - `cd web && npm test -- --run`
+- Playwright Chromium/Firefox：多版本切换、动态表单、Diff、风险确认、390px/320px/大字体/Android 和弹窗后代边界。
+- axe：资源浏览器、列表、详情在亮暗主题下无 serious/critical 问题。
 - `make arch`
 
 ## 4. 后续阶段
 
-1. 基于 OpenAPI Schema 的字段校验、动态表单和 CRD 模板。
-2. 为 Discovery 增加多个 served version 选择，而不只展示 preferred version。
-3. 增加 RBAC、CRD、Namespace、Webhook 等高风险资源的写入策略分层和二次确认。
-4. 将回滚改为仅 Patch Pod 模板，并增加回滚前 Diff。
-5. 将 CRD 资源接入事件对象跳转、保存视图和按资源类型收藏。
-6. 增加跨 Pod 日志聚合和可配置日志后端，不在浏览器端做无界全量扫描。
+1. 提供 CRD 模板库、字段搜索、Schema 字段级文档和从已有对象“另存为模板”。
+2. 将回滚改为仅 Patch Pod 模板，并增加回滚前 Diff。
+3. 将 CRD 资源接入事件对象跳转、保存视图和按资源类型收藏。
+4. 增加跨 Pod 日志聚合和可配置日志后端，不在浏览器端做无界全量扫描。

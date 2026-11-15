@@ -28,6 +28,9 @@ export interface ResourceCapabilities {
   update: boolean;
   delete: boolean;
   scale: boolean;
+  riskLevel?: "normal" | "high" | "critical";
+  riskReasons?: string[];
+  requireConfirmation?: boolean;
 }
 
 export interface ServerCertificate {
@@ -742,6 +745,7 @@ export interface ResourceDescriptor {
   kind: string;
   singularName?: string;
   namespaced: boolean;
+  preferred?: boolean;
   verbs: string[];
   shortNames?: string[];
   categories?: string[];
@@ -756,6 +760,17 @@ export interface ResourceColumn {
 
 export interface ResourceDiscovery {
   items: ResourceDescriptor[];
+  warnings?: string[];
+}
+
+export interface ResourceSchema {
+  group: string;
+  version: string;
+  resource: string;
+  kind: string;
+  source: "openapi-v2" | "unavailable";
+  schema: Record<string, unknown>;
+  definitions?: Record<string, Record<string, unknown>>;
   warnings?: string[];
 }
 
@@ -797,6 +812,7 @@ export interface GenericResourceMutationInput {
   yaml: string;
   resourceVersion?: string;
   dryRun?: boolean;
+  confirmation?: string;
 }
 
 export type WorkloadKind = "deployment" | "statefulset" | "daemonset" | "job" | "cronjob";

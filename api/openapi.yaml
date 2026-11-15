@@ -1593,11 +1593,12 @@ paths:
       tags: [resources]
       summary: Read the discoverable Kubernetes resource catalog
       description: >-
-        Returns resources found through Kubernetes API Discovery. The catalog is
-        cached by the server. When `namespace` is supplied, the catalog is also
-        filtered with SelfSubjectRulesReview for the authenticated user so types
-        without list permission are hidden. Resource-level reads still require
-        Kubernetes RBAC authorization.
+        Returns resources found through Kubernetes API Discovery, including every
+        served API version. Each descriptor marks whether its version is preferred
+        by the API server. The catalog is cached by the server. When `namespace` is
+        supplied, the catalog is also filtered with SelfSubjectRulesReview for the
+        authenticated user so types without list permission are hidden.
+        Resource-level reads still require Kubernetes RBAC authorization.
       parameters:
         - $ref: "#/components/parameters/Namespace"
       responses:
@@ -1661,6 +1662,41 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ResourceCapabilities" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
+  /api/v1/resources/schema:
+    get:
+      tags: [resources]
+      summary: Read the advisory OpenAPI schema for one discovered resource type
+      description: >-
+        Resolves the cluster OpenAPI v2 definition for one discovered GVR and
+        returns only the root schema and recursively referenced definitions.
+        Schemas are cached by the server. When OpenAPI discovery is unavailable
+        or the definition is missing, the response uses `source=unavailable` and
+        includes warnings so clients can fall back to YAML editing. Kubernetes
+        API Server dry-run remains the authoritative write validator.
+      parameters:
+        - name: group
+          in: query
+          required: true
+          schema: { type: string }
+          description: Use an empty value or `_core` for the core API group.
+        - name: version
+          in: query
+          required: true
+          schema: { type: string }
+        - name: resource
+          in: query
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Advisory resource schema
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ResourceSchema" }
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "404": { $ref: "#/components/responses/NotFound" }
@@ -1808,6 +1844,10 @@ paths:
             type: string
             enum: [Background, Foreground, Orphan]
             default: Background
+        - name: confirmation
+          in: query
+          schema: { type: string }
+          description: Required for critical/high-risk resource deletion; must equal the resource name.
       responses:
         "202":
           description: Deletion accepted
@@ -2049,6 +2089,13 @@ components:
         update: { type: boolean }
         delete: { type: boolean }
         scale: { type: boolean }
+        riskLevel: { type: string, enum: [normal, high, critical] }
+        riskReasons:
+          type: array
+          items: { type: string }
+        requireConfirmation:
+          type: boolean
+          description: When true, real writes and deletes must include the resource name as confirmation.
     ServerCertificate:
       type: object
       required: [mode, enabled, configured, status, dnsNames, ipAddresses, daysRemaining, autoReload, reloadIntervalSeconds]
@@ -3097,6 +3144,9 @@ components:
         kind: { type: string }
         singularName: { type: string }
         namespaced: { type: boolean }
+        preferred:
+          type: boolean
+          description: Whether this version is the API server preferred version for the group.
         verbs:
           type: array
           items: { type: string }
@@ -3121,6 +3171,26 @@ components:
         items:
           type: array
           items: { $ref: "#/components/schemas/ResourceDescriptor" }
+        warnings:
+          type: array
+          items: { type: string }
+    ResourceSchema:
+      type: object
+      required: [group, version, resource, kind, source, schema]
+      properties:
+        group: { type: string }
+        version: { type: string }
+        resource: { type: string }
+        kind: { type: string }
+        source: { type: string, enum: [openapi-v2, unavailable] }
+        schema:
+          type: object
+          additionalProperties: true
+        definitions:
+          type: object
+          additionalProperties:
+            type: object
+            additionalProperties: true
         warnings:
           type: array
           items: { type: string }
@@ -3207,3 +3277,6 @@ components:
           type: boolean
           default: false
           description: When true, validates without writing. Real writes still perform an internal dry run first.
+        confirmation:
+          type: string
+          description: Required for critical/high-risk real writes; must equal metadata.name.

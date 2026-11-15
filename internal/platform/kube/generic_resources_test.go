@@ -56,6 +56,12 @@ func newGenericResourceClient(objects ...runtime.Object) *Client {
 			},
 		},
 		{
+			GroupVersion: "example.io/v1beta1",
+			APIResources: []metav1.APIResource{
+				{Name: "widgets", SingularName: "widget", Kind: "Widget", Namespaced: true, Verbs: []string{"get", "list"}},
+			},
+		},
+		{
 			GroupVersion: "batch.example.io/v1alpha1",
 			APIResources: []metav1.APIResource{
 				{Name: "gadgets", SingularName: "gadget", Kind: "Gadget", Namespaced: true, Verbs: []string{"get"}},
@@ -65,7 +71,7 @@ func newGenericResourceClient(objects ...runtime.Object) *Client {
 	return NewForClients(k8sfake.NewSimpleClientset(), dynamicClient, discovery, testConfig())
 }
 
-func TestDiscoverResourcesUsesPreferredVersionsAndFiltersUnreadableVerbs(t *testing.T) {
+func TestDiscoverResourcesIncludesAllServedVersionsAndMarksPreferred(t *testing.T) {
 	client := newGenericResourceClient()
 
 	items, warnings, err := client.DiscoverResources(context.Background())
@@ -75,25 +81,29 @@ func TestDiscoverResourcesUsesPreferredVersionsAndFiltersUnreadableVerbs(t *test
 	if len(warnings) != 0 {
 		t.Fatalf("DiscoverResources() warnings = %#v", warnings)
 	}
-	if len(items) != 4 {
+	if len(items) != 5 {
 		t.Fatalf("DiscoverResources() items = %#v", items)
 	}
 	byResource := make(map[string]domain.ResourceDescriptor, len(items))
 	for _, item := range items {
-		byResource[item.Group+"/"+item.Resource] = item
+		byResource[item.Group+"/"+item.Version+"/"+item.Resource] = item
 	}
-	pods, ok := byResource["/pods"]
+	pods, ok := byResource["/v1/pods"]
 	if !ok || pods.Kind != "Pod" || pods.Singular != "pod" || pods.Version != "v1" || !pods.Namespaced {
 		t.Fatalf("pods descriptor = %#v", pods)
 	}
-	widgets, ok := byResource["example.io/widgets"]
-	if !ok || widgets.Kind != "Widget" || widgets.Version != "v1" || len(widgets.ShortNames) != 1 || widgets.ShortNames[0] != "wdg" || len(widgets.Categories) != 1 {
+	widgets, ok := byResource["example.io/v1/widgets"]
+	if !ok || widgets.Kind != "Widget" || widgets.Version != "v1" || !widgets.Preferred || len(widgets.ShortNames) != 1 || widgets.ShortNames[0] != "wdg" || len(widgets.Categories) != 1 {
 		t.Fatalf("widgets descriptor = %#v", widgets)
 	}
-	if _, ok := byResource["/bindings"]; ok {
+	legacyWidgets, ok := byResource["example.io/v1beta1/widgets"]
+	if !ok || legacyWidgets.Preferred || legacyWidgets.Kind != "Widget" {
+		t.Fatalf("v1beta1 widgets descriptor = %#v", legacyWidgets)
+	}
+	if _, ok := byResource["/v1/bindings"]; ok {
 		t.Fatal("create-only binding resource was included")
 	}
-	if _, ok := byResource["/pods/log"]; ok {
+	if _, ok := byResource["/v1/pods/log"]; ok {
 		t.Fatal("subresource was included")
 	}
 }

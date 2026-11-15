@@ -9,12 +9,14 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
-export function DeleteResourceDialog({ open, onOpenChange, resourceKind, name, description, onConfirm }: {
+export function DeleteResourceDialog({ open, onOpenChange, resourceKind, name, description, riskLevel, riskReasons = [], onConfirm }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   resourceKind: string;
   name: string;
   description?: string;
+  riskLevel?: "normal" | "high" | "critical";
+  riskReasons?: string[];
   onConfirm: () => Promise<unknown>;
 }) {
   const [confirmName, setConfirmName] = useState("");
@@ -32,8 +34,14 @@ export function DeleteResourceDialog({ open, onOpenChange, resourceKind, name, d
       <AlertDialogContent>
         <AlertDialogHeader>
           <AlertDialogTitle className="flex items-center gap-2"><Trash2 className="h-5 w-5 text-destructive-strong" />删除 {resourceKind} {name}？</AlertDialogTitle>
-          <AlertDialogDescription>{description || "此操作不可撤销。请确认该资源不再被其他工作负载或用户依赖。"}</AlertDialogDescription>
+          <AlertDialogDescription className="break-words">{description || "此操作不可撤销。请确认该资源不再被其他工作负载或用户依赖。"}</AlertDialogDescription>
         </AlertDialogHeader>
+        {riskLevel === "high" || riskLevel === "critical" ? (
+          <div className={`min-w-0 rounded-md border px-3 py-2 text-xs ${riskLevel === "critical" ? "border-destructive/45 bg-destructive/10 text-destructive-strong" : "border-warning/45 bg-warning/10 text-warning"}`}>
+            <p className="font-semibold">高风险删除 · {riskLevel === "critical" ? "严重" : "高"}</p>
+            {riskReasons.length ? <ul className="mt-1 list-inside list-disc space-y-0.5 break-words">{riskReasons.map((reason) => <li key={reason}>{reason}</li>)}</ul> : null}
+          </div>
+        ) : null}
         <div className="space-y-2">
           <Label htmlFor={`delete-${resourceKind}-confirm`}>输入名称确认</Label>
           <Input id={`delete-${resourceKind}-confirm`} value={confirmName} onChange={(event) => setConfirmName(event.target.value)} placeholder={name} autoComplete="off" spellCheck={false} />

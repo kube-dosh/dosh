@@ -21,6 +21,7 @@ type handlerRepository struct {
 	rules       domain.ResourceRules
 	object      map[string]any
 	err         error
+	schema      domain.ResourceSchema
 
 	lastQuery     domain.ListQuery
 	lastNamespace string
@@ -33,6 +34,10 @@ type handlerRepository struct {
 
 func (r *handlerRepository) DiscoverResources(context.Context) ([]domain.ResourceDescriptor, []string, error) {
 	return r.descriptors, r.warnings, r.err
+}
+
+func (r *handlerRepository) GetResourceSchema(context.Context, domain.ResourceDescriptor) (domain.ResourceSchema, error) {
+	return r.schema, r.err
 }
 
 func (r *handlerRepository) ListResourceRules(context.Context, domain.Actor, string) (domain.ResourceRules, []string, error) {
@@ -229,6 +234,30 @@ func TestResourceCapabilitiesRouteUsesCurrentActor(t *testing.T) {
 	}
 }
 
+func TestResourceSchemaRouteReturnsAdvisorySchema(t *testing.T) {
+	repository := &handlerRepository{
+		descriptors: []domain.ResourceDescriptor{{Group: "example.io", Version: "v1", Resource: "widgets", Kind: "Widget", Namespaced: true, Verbs: []string{"get", "list"}}},
+		schema: domain.ResourceSchema{
+			Group: "example.io", Version: "v1", Resource: "widgets", Kind: "Widget", Source: "openapi-v2",
+			Schema: map[string]any{"type": "object"},
+		},
+	}
+	response := resourceRequest(resourceTestRouter(repository, handlerAuthorizer{}, domain.Actor{Username: "alice"}), "/resources/schema?group=example.io&version=v1&resource=widgets")
+	if response.Code != stdhttp.StatusOK {
+		t.Fatalf("status = %d body = %s", response.Code, response.Body.String())
+	}
+	var schema domain.ResourceSchema
+	if err := json.Unmarshal(response.Body.Bytes(), &schema); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if schema.Source != "openapi-v2" || schema.Kind != "Widget" {
+		t.Fatalf("schema = %#v", schema)
+	}
+	if response.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("Cache-Control = %q", response.Header().Get("Cache-Control"))
+	}
+}
+
 func TestGenericResourceMutationRoutes(t *testing.T) {
 	repository := &handlerRepository{
 		descriptors: []domain.ResourceDescriptor{{Group: "example.io", Version: "v1", Resource: "widgets", Kind: "Widget", Namespaced: true, Verbs: []string{"get", "list", "create", "update", "patch", "delete"}}},
@@ -250,6 +279,21 @@ func TestGenericResourceMutationRoutes(t *testing.T) {
 	remove := resourceMutationRequest(router, stdhttp.MethodDelete, "/resources/example.io/v1/widgets/sample?namespace=prod&propagation=Foreground&resourceVersion=3", "")
 	if remove.Code != stdhttp.StatusAccepted || repository.deleteCalls != 1 || repository.lastName != "sample" {
 		t.Fatalf("delete status=%d calls=%d name=%q body=%s", remove.Code, repository.deleteCalls, repository.lastName, remove.Body.String())
+	}
+}
+
+func TestHighRiskDeleteRequiresConfirmationAtHTTPBoundary(t *testing.T) {
+	repository := &handlerRepository{
+		descriptors: []domain.ResourceDescriptor{{Version: "v1", Resource: "nodes", Kind: "Node", Verbs: []string{"get", "list", "delete"}}},
+	}
+	router := resourceTestRouter(repository, handlerAuthorizer{}, domain.Actor{Username: "alice"})
+	unconfirmed := resourceMutationRequest(router, stdhttp.MethodDelete, "/resources/_core/v1/nodes/worker-1?propagation=Background", "")
+	if unconfirmed.Code != stdhttp.StatusBadRequest || repository.deleteCalls != 0 {
+		t.Fatalf("unconfirmed delete status=%d calls=%d body=%s", unconfirmed.Code, repository.deleteCalls, unconfirmed.Body.String())
+	}
+	confirmed := resourceMutationRequest(router, stdhttp.MethodDelete, "/resources/_core/v1/nodes/worker-1?propagation=Background&confirmation=worker-1", "")
+	if confirmed.Code != stdhttp.StatusAccepted || repository.deleteCalls != 1 {
+		t.Fatalf("confirmed delete status=%d calls=%d body=%s", confirmed.Code, repository.deleteCalls, confirmed.Body.String())
 	}
 }
 

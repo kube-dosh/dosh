@@ -240,9 +240,11 @@ cd web && npm run e2e:chromium -- --grep "YAML|集群配置"
 
 - ✅ 区分 create 与 update 的 RBAC：后端根据资源是否存在分别校验 create/update/patch，避免“有 create 无 patch”的用户被错误拦截。
 - 增加 namespace 覆盖或锁定机制，明确模板命名空间与最终对象命名空间的一致性校验。
-- ✅ 已增加资源 API Discovery 与 CRD 受控写入；`/yaml/create` 的模板仍以常用内置资源为主，后续增加 Schema 基础校验和类型提示。
-- 增加折叠、搜索结果导航、Schema 基础校验和编辑器全屏模式。
-- 增加应用前 Diff 预览，突出新增、修改与删除字段。
+- ✅ 已增加全 served version API Discovery、CRD 受控写入、OpenAPI Schema 预检和动态表单；Schema 不可用时回退 YAML。
+- ✅ 通用资源编辑器增加 YAML/表单双模式、Schema 字段提示、变更预览和高风险资源名称确认。
+- ✅ 资源浏览器、列表、详情、编辑器和删除确认已纳入 320px/390px、大字体、Android、Firefox 与 axe 验收。
+- 增加折叠、搜索结果导航、Schema 字段搜索和编辑器全屏模式。
+- 增加最近使用模板、资源历史和从已有资源“另存为 YAML”。
 - 增加最近使用模板、资源历史和从已有资源“另存为 YAML”。
 - 扩展集群配置字段：kube-proxy 模式、NodePort 范围、Pod/Service 双栈、CNI 配置来源和集群创建时间。
 

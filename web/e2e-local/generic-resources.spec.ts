@@ -96,6 +96,8 @@ spec:
   await page.getByRole("button", { name: "创建 YAML" }).click();
   const createDialog = page.getByRole("dialog");
   await expect(createDialog).toContainText("cilium.io/v2");
+  await expect(createDialog.getByRole("tab", { name: "表单" })).toBeVisible();
+  await expect(createDialog.getByRole("tab", { name: "YAML" })).toBeVisible();
   const createEditor = createDialog.locator(".cm-content");
   await replaceEditorText(page, createEditor, baseYAML);
   await expect(createEditor).toContainText(`name: ${name}`);
@@ -115,8 +117,9 @@ spec:
   await row.getByRole("link", { name }).click();
   await expect(page.getByRole("heading", { name, exact: true })).toBeVisible();
 
-  await page.getByRole("button", { name: "编辑 YAML" }).click();
+  await page.getByRole("button", { name: "编辑资源" }).click();
   const editDialog = page.getByRole("dialog");
+  await expect(editDialog.getByRole("tab", { name: /变更预览/ })).toBeVisible();
   const editEditor = editDialog.locator(".cm-content");
   await replaceEditorText(page, editEditor, updatedYAML);
   await expect(editEditor).toContainText("app: dosh-e2e-changed");

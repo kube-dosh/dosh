@@ -56,10 +56,13 @@ type Capabilities struct {
 // resource tables. It keeps authorization decisions independent from any one
 // page or Kubernetes client implementation.
 type ResourceCapabilities struct {
-	Create bool `json:"create"`
-	Update bool `json:"update"`
-	Delete bool `json:"delete"`
-	Scale  bool `json:"scale"`
+	Create              bool     `json:"create"`
+	Update              bool     `json:"update"`
+	Delete              bool     `json:"delete"`
+	Scale               bool     `json:"scale"`
+	RiskLevel           string   `json:"riskLevel,omitempty"`
+	RiskReasons         []string `json:"riskReasons,omitempty"`
+	RequireConfirmation bool     `json:"requireConfirmation,omitempty"`
 }
 
 // ServerCertificate is the non-sensitive runtime view of the TLS certificate

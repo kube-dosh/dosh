@@ -3026,7 +3026,7 @@ export interface paths {
         };
         /**
          * Read the discoverable Kubernetes resource catalog
-         * @description Returns resources found through Kubernetes API Discovery. The catalog is cached by the server. When `namespace` is supplied, the catalog is also filtered with SelfSubjectRulesReview for the authenticated user so types without list permission are hidden. Resource-level reads still require Kubernetes RBAC authorization.
+         * @description Returns resources found through Kubernetes API Discovery, including every served API version. Each descriptor marks whether its version is preferred by the API server. The catalog is cached by the server. When `namespace` is supplied, the catalog is also filtered with SelfSubjectRulesReview for the authenticated user so types without list permission are hidden. Resource-level reads still require Kubernetes RBAC authorization.
          */
         get: {
             parameters: {
@@ -3139,6 +3139,54 @@ export interface paths {
                     };
                     content: {
                         "application/json": components["schemas"]["ResourceCapabilities"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                401: components["responses"]["Unauthorized"];
+                404: components["responses"]["NotFound"];
+                503: components["responses"]["DependencyUnavailable"];
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/resources/schema": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read the advisory OpenAPI schema for one discovered resource type
+         * @description Resolves the cluster OpenAPI v2 definition for one discovered GVR and returns only the root schema and recursively referenced definitions. Schemas are cached by the server. When OpenAPI discovery is unavailable or the definition is missing, the response uses `source=unavailable` and includes warnings so clients can fall back to YAML editing. Kubernetes API Server dry-run remains the authoritative write validator.
+         */
+        get: {
+            parameters: {
+                query: {
+                    /** @description Use an empty value or `_core` for the core API group. */
+                    group: string;
+                    version: string;
+                    resource: string;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Advisory resource schema */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ResourceSchema"];
                     };
                 };
                 400: components["responses"]["BadRequest"];
@@ -3355,6 +3403,8 @@ export interface paths {
                     namespace?: components["parameters"]["Namespace"];
                     resourceVersion?: string;
                     propagation?: "Background" | "Foreground" | "Orphan";
+                    /** @description Required for critical/high-risk resource deletion; must equal the resource name. */
+                    confirmation?: string;
                 };
                 header?: never;
                 path: {
@@ -3463,6 +3513,11 @@ export interface components {
             update: boolean;
             delete: boolean;
             scale: boolean;
+            /** @enum {string} */
+            riskLevel?: "normal" | "high" | "critical";
+            riskReasons?: string[];
+            /** @description When true, real writes and deletes must include the resource name as confirmation. */
+            requireConfirmation?: boolean;
         };
         ServerCertificate: {
             /** @enum {string} */
@@ -4270,6 +4325,8 @@ export interface components {
             kind: string;
             singularName?: string;
             namespaced: boolean;
+            /** @description Whether this version is the API server preferred version for the group. */
+            preferred?: boolean;
             verbs: string[];
             shortNames?: string[];
             categories?: string[];
@@ -4282,6 +4339,23 @@ export interface components {
         };
         ResourceDiscovery: {
             items: components["schemas"]["ResourceDescriptor"][];
+            warnings?: string[];
+        };
+        ResourceSchema: {
+            group: string;
+            version: string;
+            resource: string;
+            kind: string;
+            /** @enum {string} */
+            source: "openapi-v2" | "unavailable";
+            schema: {
+                [key: string]: unknown;
+            };
+            definitions?: {
+                [key: string]: {
+                    [key: string]: unknown;
+                };
+            };
             warnings?: string[];
         };
         GenericResourceSummary: {
@@ -4347,6 +4421,8 @@ export interface components {
              * @default false
              */
             dryRun: boolean;
+            /** @description Required for critical/high-risk real writes; must equal metadata.name. */
+            confirmation?: string;
         };
     };
     responses: {

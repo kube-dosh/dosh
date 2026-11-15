@@ -42,6 +42,7 @@ import type {
   ResourceCapabilities,
   ResourceDiscovery,
   ResourceReference,
+  ResourceSchema,
   SecretReveal,
   SecretSummary,
   SecretWriteInput,
@@ -500,6 +501,10 @@ export const api = {
     request<ResourceCapabilities>(`/api/v1/resources/capabilities?${new URLSearchParams({
       group: reference.group, version: reference.version, resource: reference.resource, ...(namespace ? { namespace } : {}),
     }).toString()}`),
+  resourceSchema: (reference: ResourceReference) =>
+    request<ResourceSchema>(`/api/v1/resources/schema?${new URLSearchParams({
+      group: reference.group, version: reference.version, resource: reference.resource,
+    }).toString()}`),
   createGenericResource: async (reference: ResourceReference, input: GenericResourceMutationInput) => {
     const value = await request<GenericResourceDetail>(resourceBasePath(reference), { method: "POST", body: JSON.stringify(input) });
     return { ...value, object: value.object ?? {}, yaml: value.yaml ?? "", warnings: list(value.warnings) };
@@ -508,11 +513,12 @@ export const api = {
     const value = await request<GenericResourceDetail>(`${resourceBasePath(reference)}/${encodeURIComponent(name)}`, { method: "PUT", body: JSON.stringify(input) });
     return { ...value, object: value.object ?? {}, yaml: value.yaml ?? "", warnings: list(value.warnings) };
   },
-  deleteGenericResource: (reference: ResourceReference, name: string, namespace?: string, resourceVersion?: string, propagation = "Background") => {
+  deleteGenericResource: (reference: ResourceReference, name: string, namespace?: string, resourceVersion?: string, propagation = "Background", confirmation?: string) => {
     const params = new URLSearchParams();
     if (namespace) params.set("namespace", namespace);
     if (resourceVersion) params.set("resourceVersion", resourceVersion);
     params.set("propagation", propagation);
+    if (confirmation) params.set("confirmation", confirmation);
     return request<{ status: string }>(`${resourceBasePath(reference)}/${encodeURIComponent(name)}?${params.toString()}`, { method: "DELETE" });
   },
   applyYAML: (yaml: string, resourceVersion?: string, dryRun = false) =>

@@ -22,6 +22,7 @@ import (
 // discovered GVR before issuing a request.
 type Repository interface {
 	DiscoverResources(ctx context.Context) ([]domain.ResourceDescriptor, []string, error)
+	GetResourceSchema(ctx context.Context, descriptor domain.ResourceDescriptor) (domain.ResourceSchema, error)
 	ListResourceRules(ctx context.Context, actor domain.Actor, namespace string) (domain.ResourceRules, []string, error)
 	ListGenericResources(ctx context.Context, descriptor domain.ResourceDescriptor, query domain.ListQuery, page domain.PageRequest) (domain.GenericResourcePage, error)
 	GetGenericResource(ctx context.Context, descriptor domain.ResourceDescriptor, namespace, name string) (map[string]any, error)
@@ -91,6 +92,32 @@ func (s *Service) Discovery(ctx context.Context, actor domain.Actor, namespace s
 		warnings = append(warnings, "当前身份在该命名空间没有可列出对象，请选择其他命名空间或检查 RBAC 授权")
 	}
 	return filtered, warnings, nil
+}
+
+// Schema returns the advisory OpenAPI schema for one discovered resource type.
+// Schema discovery failures degrade to an unavailable result because API Server
+// dry-run remains the authoritative validator for writes.
+func (s *Service) Schema(ctx context.Context, ref domain.ResourceReference) (domain.ResourceSchema, error) {
+	descriptor, err := s.descriptor(ctx, ref)
+	if err != nil {
+		return domain.ResourceSchema{}, err
+	}
+	schema, err := s.repository.GetResourceSchema(ctx, descriptor)
+	if err != nil {
+		return domain.ResourceSchema{
+			Group: descriptor.Group, Version: descriptor.Version, Resource: descriptor.Resource,
+			Kind: descriptor.Kind, Source: "unavailable", Schema: map[string]any{},
+			Warnings: []string{"无法读取当前集群 OpenAPI Schema，已回退到 YAML 编辑；API Server Dry Run 仍是最终校验依据"},
+		}, nil
+	}
+	if schema.Group == "" && descriptor.Group == "" {
+		schema.Group = ""
+	}
+	schema.Group, schema.Version, schema.Resource, schema.Kind = descriptor.Group, descriptor.Version, descriptor.Resource, descriptor.Kind
+	if schema.Schema == nil {
+		schema.Schema = map[string]any{}
+	}
+	return schema, nil
 }
 
 func (s *Service) List(ctx context.Context, actor domain.Actor, ref domain.ResourceReference, query domain.ListQuery, page domain.PageRequest) (domain.GenericResourcePage, error) {
@@ -181,6 +208,13 @@ func (s *Service) Create(ctx context.Context, actor domain.Actor, ref domain.Res
 	if err != nil {
 		return domain.GenericResourceDetail{}, err
 	}
+	if err := s.validateSchema(ctx, descriptor, object); err != nil {
+		return domain.GenericResourceDetail{}, err
+	}
+	if err := requireWriteConfirmation(descriptor, name, request.Confirmation, request.DryRun); err != nil {
+		s.auditGenericMutation(ctx, actor, mutationAction("create", request.DryRun), descriptor, namespace, name, err)
+		return domain.GenericResourceDetail{}, err
+	}
 	access := domain.Access{Verb: "create", APIGroup: descriptor.Group, Resource: descriptor.Resource, Namespace: namespace, Name: name}
 	if err := s.authorizer.Require(ctx, actor, access); err != nil {
 		s.auditGenericMutation(ctx, actor, mutationAction("create", request.DryRun), descriptor, namespace, name, err)
@@ -217,6 +251,13 @@ func (s *Service) Update(ctx context.Context, actor domain.Actor, ref domain.Res
 	}
 	if name == "" || objectName != name {
 		return domain.GenericResourceDetail{}, fmt.Errorf("%w: metadata.name must match the resource path", domain.ErrInvalid)
+	}
+	if err := s.validateSchema(ctx, descriptor, object); err != nil {
+		return domain.GenericResourceDetail{}, err
+	}
+	if err := requireWriteConfirmation(descriptor, name, request.Confirmation, request.DryRun); err != nil {
+		s.auditGenericMutation(ctx, actor, mutationAction("update", request.DryRun), descriptor, namespace, name, err)
+		return domain.GenericResourceDetail{}, err
 	}
 	access := domain.Access{Verb: "update", APIGroup: descriptor.Group, Resource: descriptor.Resource, Namespace: namespace, Name: name}
 	useApply := false
@@ -275,6 +316,7 @@ func (s *Service) Capabilities(ctx context.Context, actor domain.Actor, ref doma
 		Update: allowed("update") || allowed("patch"),
 		Delete: allowed("delete"),
 	}
+	capabilities.RiskLevel, capabilities.RiskReasons, capabilities.RequireConfirmation = resourceRisk(descriptor)
 	if isSecret(descriptor) {
 		capabilities.Create = false
 		capabilities.Update = false
@@ -282,7 +324,7 @@ func (s *Service) Capabilities(ctx context.Context, actor domain.Actor, ref doma
 	return capabilities, nil
 }
 
-func (s *Service) Delete(ctx context.Context, actor domain.Actor, ref domain.ResourceReference, namespace, name, resourceVersion, propagation string) error {
+func (s *Service) Delete(ctx context.Context, actor domain.Actor, ref domain.ResourceReference, namespace, name, resourceVersion, propagation, confirmation string) error {
 	descriptor, err := s.descriptor(ctx, ref)
 	if err != nil {
 		return err
@@ -297,6 +339,10 @@ func (s *Service) Delete(ctx context.Context, actor domain.Actor, ref domain.Res
 		namespace = ""
 	} else if namespace == "" {
 		return fmt.Errorf("%w: namespace is required for %s", domain.ErrInvalid, descriptor.Resource)
+	}
+	if err := requireWriteConfirmation(descriptor, name, confirmation, false); err != nil {
+		s.auditGenericMutation(ctx, actor, "delete-generic-resource", descriptor, namespace, name, err)
+		return err
 	}
 	policy := domain.DeletePropagationBackground
 	switch propagation {
@@ -316,6 +362,17 @@ func (s *Service) Delete(ctx context.Context, actor domain.Actor, ref domain.Res
 	err = s.repository.DeleteGenericResource(ctx, descriptor, namespace, name, resourceVersion, policy)
 	s.auditGenericMutation(ctx, actor, "delete-generic-resource", descriptor, namespace, name, err)
 	return err
+}
+
+func (s *Service) validateSchema(ctx context.Context, descriptor domain.ResourceDescriptor, object map[string]any) error {
+	schema, err := s.repository.GetResourceSchema(ctx, descriptor)
+	if err != nil || schema.Source != "openapi-v2" || len(schema.Schema) == 0 {
+		return nil
+	}
+	if problems := validateResourceObject(schema, object); len(problems) > 0 {
+		return fmt.Errorf("%w: Schema 校验失败：%s", domain.ErrInvalid, strings.Join(problems, "；"))
+	}
+	return nil
 }
 
 func prepareGenericManifest(descriptor domain.ResourceDescriptor, request domain.GenericResourceMutation) (map[string]any, string, string, error) {
@@ -461,6 +518,7 @@ func (s *Service) Search(ctx context.Context, actor domain.Actor, query, namespa
 	if err != nil {
 		return domain.GenericResourceSearch{}, err
 	}
+	items = preferredResourceTypes(items)
 	candidates := make([]domain.ResourceDescriptor, 0, len(items))
 	clusterAuthFailed := false
 	if namespace == "" {
@@ -556,6 +614,27 @@ func (s *Service) Search(ctx context.Context, actor domain.Actor, query, namespa
 		}
 	}
 	return result, nil
+}
+
+// preferredResourceTypes collapses served-version duplicates for cross-type
+// search. Search results should not repeat the same logical object because the
+// API group exposes both v1 and v1beta1 versions of a resource.
+func preferredResourceTypes(items []domain.ResourceDescriptor) []domain.ResourceDescriptor {
+	index := make(map[string]int)
+	out := make([]domain.ResourceDescriptor, 0, len(items))
+	for _, item := range items {
+		key := item.Group + "\x00" + item.Resource
+		position, exists := index[key]
+		if !exists {
+			index[key] = len(out)
+			out = append(out, item)
+			continue
+		}
+		if item.Preferred && !out[position].Preferred {
+			out[position] = item
+		}
+	}
+	return out
 }
 
 func descriptorListable(descriptor domain.ResourceDescriptor, rules domain.ResourceRules, namespace string) bool {

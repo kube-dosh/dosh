@@ -13,6 +13,8 @@ import { SearchInput } from "@/components/layout/search-input";
 import { ResourceActionsMenu, type ResourceAction } from "@/components/resources/resource-actions-menu";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Badge } from "@/components/ui/badge";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { GenericYamlPanel } from "@/features/resources/generic-yaml-panel";
 import { GenericResourceEditorDialog } from "@/features/resources/generic-resource-editor-dialog";
 import { cursorPaginationProps, retryListQuery, useCursorPagination } from "@/hooks/use-cursor-pagination";
@@ -58,6 +60,9 @@ export function ResourceListPage() {
   const namespace = search.namespace ?? "";
   const q = search.q ?? "";
   const discovery = useQuery({ queryKey: ["resource-discovery", "all"], queryFn: () => api.resourceDiscovery(), staleTime: 60_000 });
+  const versions = useMemo(() => (discovery.data?.items ?? [])
+    .filter((item) => item.group === apiGroup && item.resource === resource)
+    .sort((left, right) => Number(right.preferred) - Number(left.preferred) || right.version.localeCompare(left.version)), [apiGroup, discovery.data?.items, resource]);
   const descriptor = discovery.data?.items.find((item) => item.group === apiGroup && item.version === version && item.resource === resource);
   const capabilities = useQuery({
     queryKey: ["generic-resource-capabilities", apiGroup, version, resource, namespace],
@@ -82,6 +87,13 @@ export function ResourceListPage() {
       params: { group: params.group, version, resource },
       search: { ...search, ...patch },
       replace: true,
+    });
+  };
+  const changeVersion = (nextVersion: string) => {
+    void navigate({
+      to: "/resources/$group/$version/$resource",
+      params: { group: params.group, version: nextVersion, resource },
+      search: { ...search },
     });
   };
   const detailSearch = (item: GenericResourceSummary) => ({ namespace: item.namespace || namespace || undefined });
@@ -133,11 +145,23 @@ export function ResourceListPage() {
       <PageHeader
         title={descriptor?.kind || resource}
         breadcrumb={<><Link to="/resources" className="hover:text-foreground hover:underline">资源浏览器</Link>{` / ${apiGroup || "core"}/${version}/${resource}`}</>}
-        description={descriptor ? `${descriptor.namespaced ? "Namespaced" : "Cluster-scoped"} · ${descriptor.group || "core"}/${descriptor.version} · 当前读取受 Kubernetes RBAC 约束。` : "正在读取资源类型。"}
+        description={descriptor ? `${descriptor.namespaced ? "Namespaced" : "Cluster-scoped"} · ${descriptor.group || "core"}/${descriptor.version}${descriptor.preferred ? " · Preferred" : ""} · 当前读取受 Kubernetes RBAC 约束。` : "正在读取资源类型。"}
           actions={canCreate ? <Button size="sm" disabled={createDisabled} title={createDisabled ? "请先选择命名空间" : undefined} onClick={() => setCreateOpen(true)}><Plus className="h-4 w-4" />创建 YAML</Button> : undefined}
       />
       <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center">
         <SearchInput value={q} onChange={(value) => updateSearch({ q: value || undefined })} placeholder="搜索名称或命名空间" />
+        {versions.length > 1 ? (
+          <Select value={version} onValueChange={changeVersion}>
+            <SelectTrigger className="w-full sm:w-44" aria-label="API 版本"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              {versions.map((item) => (
+                <SelectItem key={item.version} value={item.version}>
+                  {item.version}{item.preferred ? " · Preferred" : ""}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        ) : descriptor?.preferred ? <Badge variant="secondary" className="w-fit">Preferred version</Badge> : null}
         {descriptor?.namespaced ? <NamespaceSelect value={namespace} onChange={(value) => updateSearch({ namespace: value || undefined })} /> : null}
         {query.data?.meta.truncated ? (
           <span className="flex items-center gap-1 text-xs text-warning"><TriangleAlert className="h-3.5 w-3.5" />结果已截断</span>
@@ -181,6 +205,7 @@ export function ResourceListPage() {
           reference={{ group: apiGroup, version, resource }}
           namespace={namespace}
           mode="create"
+          capabilities={capabilities.data}
           onSaved={async () => {
             await queryClient.invalidateQueries({ queryKey: ["generic-resources"] });
             await queryClient.invalidateQueries({ queryKey: ["resource-discovery"] });

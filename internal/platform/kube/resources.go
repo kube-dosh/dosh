@@ -29,9 +29,11 @@ type cachedResourceRules struct {
 	fetchedAt time.Time
 }
 
-// DiscoverResources reads the preferred version of every Kubernetes API group
-// and returns resources that can be listed or fetched. The result is cached so
-// normal page navigation does not repeatedly walk the API surface.
+// DiscoverResources reads every served version of each Kubernetes API group and
+// returns resources that can be listed or fetched. Preferred versions are
+// marked so clients can present a stable default while still allowing users to
+// select older or newer served versions. The result is cached so normal page
+// navigation does not repeatedly walk the API surface.
 func (c *Client) DiscoverResources(ctx context.Context) ([]domain.ResourceDescriptor, []string, error) {
 	c.resourceDiscoveryMu.Lock()
 	defer c.resourceDiscoveryMu.Unlock()
@@ -70,7 +72,7 @@ func (c *Client) fetchResourceDiscovery(ctx context.Context) ([]domain.ResourceD
 		lastErr = err
 		warnings = append(warnings, "无法读取核心 API 资源")
 	} else {
-		items = append(items, descriptorsFor(core, "")...)
+		items = append(items, descriptorsFor(core, "", true)...)
 	}
 
 	groups, err := c.serverGroups(ctx)
@@ -82,17 +84,26 @@ func (c *Client) fetchResourceDiscovery(ctx context.Context) ([]domain.ResourceD
 			// Kubernetes does not expose the core group under /apis, but some
 			// discovery implementations (including client-go fakes) include it
 			// with an empty group name. The core group is already read above.
-			if group.Name == "" || group.PreferredVersion.Version == "" {
+			if group.Name == "" {
 				continue
 			}
-			groupVersion := group.Name + "/" + group.PreferredVersion.Version
-			resources, fetchErr := c.serverResourcesForGroupVersion(ctx, groupVersion)
-			if fetchErr != nil {
-				lastErr = fetchErr
-				warnings = append(warnings, fmt.Sprintf("无法读取 API 组 %s", group.Name))
-				continue
+			versions := group.Versions
+			if len(versions) == 0 && group.PreferredVersion.Version != "" {
+				versions = []metav1.GroupVersionForDiscovery{group.PreferredVersion}
 			}
-			items = append(items, descriptorsFor(resources, group.Name)...)
+			for _, version := range versions {
+				if version.Version == "" {
+					continue
+				}
+				groupVersion := group.Name + "/" + version.Version
+				resources, fetchErr := c.serverResourcesForGroupVersion(ctx, groupVersion)
+				if fetchErr != nil {
+					lastErr = fetchErr
+					warnings = append(warnings, fmt.Sprintf("无法读取 API 组 %s 的版本 %s", group.Name, version.Version))
+					continue
+				}
+				items = append(items, descriptorsFor(resources, group.Name, version.Version == group.PreferredVersion.Version)...)
+			}
 		}
 	}
 
@@ -107,15 +118,21 @@ func (c *Client) fetchResourceDiscovery(ctx context.Context) ([]domain.ResourceD
 		if items[i].Group != items[j].Group {
 			return items[i].Group < items[j].Group
 		}
+		if items[i].Resource != items[j].Resource {
+			return items[i].Resource < items[j].Resource
+		}
 		if items[i].Kind != items[j].Kind {
 			return items[i].Kind < items[j].Kind
 		}
-		return items[i].Resource < items[j].Resource
+		if items[i].Preferred != items[j].Preferred {
+			return items[i].Preferred
+		}
+		return items[i].Version < items[j].Version
 	})
 	return items, warnings, nil
 }
 
-func descriptorsFor(list *metav1.APIResourceList, group string) []domain.ResourceDescriptor {
+func descriptorsFor(list *metav1.APIResourceList, group string, preferred bool) []domain.ResourceDescriptor {
 	if list == nil {
 		return nil
 	}
@@ -138,6 +155,7 @@ func descriptorsFor(list *metav1.APIResourceList, group string) []domain.Resourc
 			Kind:       resource.Kind,
 			Singular:   resource.SingularName,
 			Namespaced: resource.Namespaced,
+			Preferred:  preferred,
 			Verbs:      append([]string(nil), resource.Verbs...),
 			ShortNames: append([]string(nil), resource.ShortNames...),
 			Categories: append([]string(nil), resource.Categories...),

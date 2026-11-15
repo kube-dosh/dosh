@@ -43,6 +43,9 @@ type Client struct {
 	resourceDiscoveryFetched  time.Time
 	resourceRulesMu           sync.Mutex
 	resourceRules             map[string]cachedResourceRules
+	resourceSchemaMu          sync.Mutex
+	resourceSchema            *resourceSchemaDocument
+	resourceSchemaFetched     time.Time
 }
 
 func New(ctx context.Context, cfg config.Config) (*Client, error) {
