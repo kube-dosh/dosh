@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net"
 	stdhttp "net/http"
+	"strings"
 	"time"
 
 	"dosh/internal/domain"
@@ -152,6 +153,25 @@ func (h *Handler) Logout(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 func (h *Handler) Capabilities(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	actor, _ := domain.ActorFromContext(r.Context())
 	httpx.JSON(w, stdhttp.StatusOK, h.sessions.Capabilities(r.Context(), actor, httpx.Query(r, "namespace")))
+}
+
+func (h *Handler) AccessReview(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	access := domain.Access{
+		Verb: httpx.Query(r, "verb"), APIGroup: httpx.Query(r, "apiGroup"), Resource: httpx.Query(r, "resource"),
+		Subresource: httpx.Query(r, "subresource"), Namespace: httpx.Query(r, "namespace"), Name: httpx.Query(r, "name"),
+	}
+	if strings.TrimSpace(access.Verb) == "" || strings.TrimSpace(access.Resource) == "" {
+		httpx.Error(w, r, httpx.Validation("verb", "verb and resource are required"))
+		return
+	}
+	for field, value := range map[string]string{"verb": access.Verb, "apiGroup": access.APIGroup, "resource": access.Resource, "subresource": access.Subresource, "namespace": access.Namespace, "name": access.Name} {
+		if len(value) > 253 || strings.ContainsAny(value, "\r\n\x00") {
+			httpx.Error(w, r, httpx.Validation(field, "access review field is invalid"))
+			return
+		}
+	}
+	actor, _ := domain.ActorFromContext(r.Context())
+	httpx.JSON(w, stdhttp.StatusOK, h.sessions.Review(r.Context(), actor, access))
 }
 
 func (h *Handler) OIDCLogin(w stdhttp.ResponseWriter, r *stdhttp.Request) {
@@ -314,6 +334,7 @@ func MountProtected(r chi.Router, handler *Handler) {
 	r.Get("/session", handler.Get)
 	r.Delete("/session", handler.Logout)
 	r.Get("/capabilities", handler.Capabilities)
+	r.Get("/capabilities/review", handler.AccessReview)
 	if handler.oidc != nil {
 		r.Get("/auth/oidc/logout", handler.OIDCLogout)
 	}

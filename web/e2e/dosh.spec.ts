@@ -1,10 +1,15 @@
 import { devices, expect, test, type Page, type Route } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
 import type {
+  AccessReview,
+  HelmReleaseDetail,
+  HelmReleaseSummary,
   ListResponse,
   ClusterConfiguration,
   IngressDetail,
   NodeDetail,
+  NodeDrainPlan,
+  NodeDrainResult,
   NodeSummary,
   Overview,
   PodDetail,
@@ -17,6 +22,7 @@ import type {
   SessionResponse,
   StorageClassDetail,
   WorkloadDetail,
+  WorkloadRevision,
   WorkloadSummary,
 } from "../src/api/types";
 
@@ -46,6 +52,9 @@ const session: SessionResponse = {
     revealSecrets: true,
     editYAML: true,
     nodeCordon: true,
+    nodeDrain: true,
+    podExec: true,
+    helmReleases: true,
     reloadCertificate: true,
     resourceActions: {
       pods: { create: false, update: true, delete: true, scale: false },
@@ -178,6 +187,19 @@ const podDetail: PodDetail = {
   conditions: [],
   containers: [
     {
+      name: "migrate",
+      image: "busybox:1.36",
+      init: true,
+      ready: false,
+      restartCount: 0,
+      state: "Terminated",
+      reason: "Completed",
+      cpuRequestMilli: 10,
+      cpuLimitMilli: 50,
+      memoryRequestBytes: 16777216,
+      memoryLimitBytes: 33554432,
+    },
+    {
       name: "web",
       image: "nginx:alpine",
       ready: true,
@@ -190,6 +212,70 @@ const podDetail: PodDetail = {
     },
   ],
 };
+
+const helmReleaseSummary: HelmReleaseSummary = {
+  name: "web",
+  namespace: "default",
+  chart: "web",
+  chartVersion: "1.2.3",
+  appVersion: "2.0.0",
+  revision: 2,
+  status: "deployed",
+  description: "upgrade complete",
+  updatedAt: "2026-11-06T08:00:00Z",
+};
+
+const helmReleaseDetail: HelmReleaseDetail = {
+  ...helmReleaseSummary,
+  firstDeployed: "2026-11-01T08:00:00Z",
+  lastDeployed: "2026-11-06T08:00:00Z",
+  notes: "Visit https://web.example.test after rollout.",
+  values: "replicaCount: 2\nimage:\n  repository: nginx\n  tag: alpine\npassword: <redacted>\n",
+  manifest: "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: web\nspec:\n  replicas: 2\n---\napiVersion: v1\nkind: Secret\nmetadata:\n  name: web-secret\ndata:\n  token: <redacted>\n",
+  history: [
+    helmReleaseSummary,
+    { ...helmReleaseSummary, revision: 1, status: "superseded", description: "install complete", appVersion: "1.0.0", updatedAt: "2026-11-01T08:00:00Z" },
+  ],
+  warnings: [],
+};
+
+const nodeDrainPlan: NodeDrainPlan = {
+  node: "worker-0001",
+  unschedulable: false,
+  evictCount: 1,
+  skippedCount: 1,
+  pods: [
+    { name: "web-abcdef-12345", namespace: "default", status: "Running", ownerKind: "ReplicaSet", ownerName: "web-abcdef", action: "evict", pdbNames: ["web-pdb"] },
+    { name: "node-agent", namespace: "kube-system", status: "Running", ownerKind: "DaemonSet", ownerName: "node-agent", action: "block", reason: "存在 DaemonSet Pod，需要显式忽略 DaemonSet" },
+  ],
+};
+
+const nodeDrainResult: NodeDrainResult = {
+  node: "worker-0001",
+  cordoned: true,
+  evictedCount: 1,
+  blockedCount: 1,
+  failedCount: 0,
+  skippedCount: 0,
+  warnings: ["Pod 已被 PodDisruptionBudget 阻止，后续 Pod 未驱逐"],
+  pods: [
+    { ...nodeDrainPlan.pods[0], action: "evict" },
+    { ...nodeDrainPlan.pods[1], action: "blocked", evictionError: "Cannot evict pod as it would violate the pod's disruption budget." },
+  ],
+};
+
+const workloadRevisions: WorkloadRevision[] = [
+  {
+    kind: "Deployment", name: "web", revision: 2, current: true, changeCause: "kubectl set image", status: "active", replicas: 2, readyReplicas: 2,
+    images: ["nginx:alpine"], createdAt: "2026-11-06T08:00:00Z",
+    template: "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: web\nspec:\n  template:\n    spec:\n      containers:\n        - name: web\n          image: nginx:alpine\n",
+  },
+  {
+    kind: "Deployment", name: "web", revision: 1, current: false, changeCause: "initial rollout", status: "superseded", replicas: 0, readyReplicas: 0,
+    images: ["nginx:1.25"], createdAt: "2026-11-01T08:00:00Z",
+    template: "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: web\nspec:\n  template:\n    spec:\n      containers:\n        - name: web\n          image: nginx:1.25\n",
+  },
+];
 
 const serviceDetail: ServiceDetail = {
   name: "web",
@@ -477,8 +563,28 @@ async function installApiMocks(page: Page, options: { authenticated?: boolean; a
     }
     if (path === "/api/v1/cluster/config") return json(route, clusterConfiguration);
     if (path === "/api/v1/capabilities") return json(route, session.capabilities);
+    if (path === "/api/v1/capabilities/review" && method === "GET") {
+      const params = new URL(request.url()).searchParams;
+      const resource = params.get("resource") ?? "pods";
+      const allowed = resource !== "secrets";
+      const review: AccessReview = {
+        verb: params.get("verb") ?? "get",
+        apiGroup: params.get("apiGroup") ?? "",
+        resource,
+        subresource: params.get("subresource") ?? "",
+        namespace: params.get("namespace") ?? "",
+        name: params.get("name") ?? "",
+        allowed,
+        reason: allowed ? "allowed" : "rbac_denied",
+        guidance: allowed ? "当前身份拥有该操作权限。" : "Kubernetes RBAC 未授权当前身份执行该操作，请检查 RoleBinding。",
+        kubectlCommand: `kubectl auth can-i ${params.get("verb") ?? "get"} ${resource}${params.get("namespace") ? ` --namespace ${params.get("namespace")}` : ""}`,
+      };
+      return json(route, review);
+    }
     if (path === "/api/v1/nodes") return json(route, list([{ ...nodeSummary, unschedulable: nodeSchedulingDisabled }]));
     if (path === "/api/v1/nodes/worker-0001") return json(route, currentNodeDetail());
+    if (path === "/api/v1/nodes/worker-0001/drain-plan" && method === "GET") return json(route, nodeDrainPlan);
+    if (path === "/api/v1/nodes/worker-0001/drain" && method === "POST") return json(route, nodeDrainResult);
     if (path === "/api/v1/nodes/worker-0001/labels" && method === "PUT") {
       const body = request.postDataJSON() as { labels: Record<string, string>; resourceVersion: string };
       options.nodeMetadataRequests?.push({ method, path, csrf: request.headers()["x-csrf-token"] ?? null, body });
@@ -573,6 +679,8 @@ async function installApiMocks(page: Page, options: { authenticated?: boolean; a
     if (path === "/api/v1/workloads/deployment/default/web/containers/web/config" && method === "PUT") {
       return json(route, { status: "updated" });
     }
+    if (path === "/api/v1/workloads/deployment/default/web/revisions" && method === "GET") return json(route, { items: workloadRevisions });
+    if (path === "/api/v1/workloads/deployment/default/web/rollback" && method === "POST") return json(route, { status: "updated" });
     if (path === "/api/v1/workloads/cronjob/default/backup" && method === "GET") return json(route, cronJobDetail);
     if (path === "/api/v1/workloads/cronjob/default/backup/suspend" && method === "POST") {
       return json(route, { status: "updated" });
@@ -707,6 +815,8 @@ async function installApiMocks(page: Page, options: { authenticated?: boolean; a
       keys: [{ key: "token", size: 10 }, { key: "blob", size: 3 }], createdAt: "2026-11-02T00:00:00Z",
       data: { token: "dG9rZW49YWJjCg==", blob: "AP8K" },
     });
+    if (path === "/api/v1/helm/releases" && method === "GET") return json(route, { items: [helmReleaseSummary], warnings: [] });
+    if (path === "/api/v1/helm/releases/default/web" && method === "GET") return json(route, helmReleaseDetail);
     if (path === "/api/v1/certificate") return json(route, serverCertificate);
     if (path === "/api/v1/certificate/reload" && method === "POST") return json(route, serverCertificate);
     return json(route, { code: "not_found", message: `unmocked API route: ${method} ${path}` }, 404);
@@ -1020,6 +1130,142 @@ test("节点详情确认后停止并恢复调度", async ({ page }) => {
     expect(request.method).toBe("POST");
     expect(request.csrf).toBe(csrfToken);
   }
+});
+
+test("节点排空先展示 PDB 计划并在确认后展示阻塞结果", async ({ page }) => {
+  await installApiMocks(page);
+  await page.goto("/nodes/worker-0001");
+  await page.getByRole("button", { name: "排空节点" }).click();
+  const dialog = page.getByRole("dialog", { name: "排空节点 worker-0001" });
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByText("将驱逐 1")).toBeVisible();
+  await expect(dialog.getByText("关联 PDB：web-pdb")).toBeVisible();
+  await expect(dialog.getByText("存在 DaemonSet Pod，需要显式忽略 DaemonSet")).toBeVisible();
+  await expectElementInsideViewport(page, dialog, "node drain dialog");
+  await expectNoPageOverflow(page, "node drain dialog");
+
+  await dialog.getByLabel("输入节点名称确认风险操作").fill("worker-0001");
+  const drainRequest = page.waitForRequest((request) => request.url().endsWith("/api/v1/nodes/worker-0001/drain") && request.method() === "POST");
+  await dialog.getByRole("button", { name: "确认排空" }).click();
+  const request = await drainRequest;
+  expect(request.headers()["x-csrf-token"]).toBe(csrfToken);
+  expect(request.postDataJSON()).toMatchObject({ ignoreDaemonSets: false, force: false, timeoutSeconds: 90, confirmation: "worker-0001" });
+  await expect(dialog.getByText("排空未完全完成")).toBeVisible();
+  await expect(dialog.getByText(/Pod 已被 PodDisruptionBudget 阻止/)).toBeVisible();
+  await expectElementInsideViewport(page, dialog, "node drain result dialog");
+});
+
+test("Helm Release 列表、详情和历史版本可读且敏感值已遮蔽", async ({ page }) => {
+  await installApiMocks(page);
+  await page.goto("/helm/releases?namespace=default");
+  await expect(page.getByRole("heading", { name: "Helm Releases" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "web", exact: true })).toBeVisible();
+  await page.getByRole("link", { name: "web", exact: true }).click();
+  await expect(page).toHaveURL(/\/helm\/releases\/default\/web/);
+  await expect(page.getByRole("heading", { name: "web", exact: true })).toBeVisible();
+  await expect(page.getByText("revision #2")).toBeVisible();
+  await expect(page.getByText("部署说明")).toBeVisible();
+  await page.getByRole("tab", { name: /Values/ }).click();
+  await expect(page.getByText("password: <redacted>")).toBeVisible();
+  await page.getByRole("tab", { name: /Manifest/ }).click();
+  await expect(page.getByText("token: <redacted>")).toBeVisible();
+  await page.getByRole("tab", { name: /历史/ }).click();
+  await expect(page.getByRole("row").filter({ hasText: "#1" })).toBeVisible();
+  await expectNoPageOverflow(page, "helm release detail");
+});
+
+test("权限检查区分允许与 RBAC 拒绝并给出复现命令", async ({ page }) => {
+  await installApiMocks(page);
+  await page.goto("/access");
+  await page.getByRole("button", { name: "查看 Pod", exact: true }).click();
+  await page.getByRole("button", { name: "检查权限", exact: true }).click();
+  await expect(page.getByText("允许执行")).toBeVisible();
+  await expect(page.getByText(/kubectl auth can-i list pods/)).toBeVisible();
+
+  await page.getByRole("textbox", { name: "Resource", exact: true }).fill("secrets");
+  await page.getByRole("button", { name: "检查权限", exact: true }).click();
+  await expect(page.getByText("不允许执行")).toBeVisible();
+  await expect(page.getByText("RBAC denied")).toBeVisible();
+  await expect(page.getByText("Kubernetes RBAC 未授权当前身份执行该操作，请检查 RoleBinding。")).toBeVisible();
+  await expectNoPageOverflow(page, "access review");
+});
+
+test("通用资源收藏、视图、列偏好和本地模板可持久化", async ({ page }) => {
+  await installApiMocks(page);
+  await page.goto("/resources/example.io/v1/widgets?namespace=default");
+  await page.getByRole("button", { name: "收藏类型" }).click();
+  await expect(page.getByRole("button", { name: "已收藏" })).toBeVisible();
+  await page.getByRole("button", { name: "视图" }).click();
+  await page.getByRole("menuitem", { name: "保存当前视图" }).click();
+  await expect(page.getByText("已保存视图“default · 默认视图”")).toBeVisible();
+  await page.getByRole("button", { name: "视图" }).click();
+  await expect(page.getByRole("menuitem", { name: "default · 默认视图", exact: true })).toBeVisible();
+  await page.keyboard.press("Escape");
+  await page.getByRole("button", { name: "列", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Labels" }).click();
+  await expect(page.getByRole("columnheader", { name: "Labels" })).toHaveCount(0);
+  await page.keyboard.press("Escape");
+
+  await page.getByRole("button", { name: "创建 YAML" }).click();
+  const dialog = page.getByRole("dialog", { name: "创建 Widget" });
+  await expect(dialog).toBeVisible();
+  await dialog.getByRole("tab", { name: "表单" }).click();
+  await dialog.getByLabel("搜索 Schema 字段").fill("尺寸");
+  await expect(dialog.getByText("匹配 1 个顶层字段；嵌套字段会按名称和说明过滤。")).toBeVisible();
+  await dialog.getByLabel("搜索 Schema 字段").fill("");
+  await dialog.getByRole("button", { name: "本地模板" }).click();
+  await page.getByRole("menuitem", { name: "从当前 YAML 另存模板" }).click();
+  await expect(page.getByText(/已保存本地模板/)).toBeVisible();
+  await dialog.getByRole("button", { name: "全屏编辑" }).click();
+  await expect(dialog.getByRole("button", { name: "退出全屏" })).toBeVisible();
+  await expectElementInsideViewport(page, dialog, "fullscreen generic editor");
+  await expectNoPageOverflow(page, "fullscreen generic editor");
+  await dialog.getByRole("button", { name: "本地模板" }).click();
+  await expect(page.getByRole("menuitem", { name: /example · Widget/ })).toBeVisible();
+});
+
+test("Pod 日志支持时间范围和 Init Container，终端可通过同源 WebSocket 交互", async ({ page }) => {
+  await installApiMocks(page);
+  await page.routeWebSocket("**/api/v1/pods/**/terminal?**", (ws) => {
+    ws.onMessage((message) => {
+      const frame = JSON.parse(String(message)) as { type: string; data?: string };
+      if (frame.type === "input") {
+        ws.send(JSON.stringify({ type: "output", data: btoa("hello from terminal\n") }));
+      }
+    });
+    setTimeout(() => ws.send(JSON.stringify({ type: "ready" })), 20);
+  });
+
+  await page.goto("/pods/default/web-abcdef-12345?tab=logs");
+  const timeRange = page.getByLabel("日志时间范围");
+  await expect(timeRange).toBeVisible();
+  const sinceRequest = page.waitForRequest((request) => request.url().includes("/logs") && request.url().includes("sinceSeconds=900"));
+  await timeRange.click();
+  await page.getByRole("option", { name: "最近 15 分钟" }).click();
+  await sinceRequest;
+  await expect(page.getByText(/时间范围 15 分钟/)).toBeVisible();
+
+  await page.getByRole("tab", { name: /终端/ }).click();
+  await page.getByRole("button", { name: "连接终端" }).click();
+  await expect(page.getByRole("status").filter({ hasText: "已连接" })).toBeVisible();
+  await page.getByLabel("终端命令").fill("echo hello");
+  await page.getByRole("button", { name: "发送" }).click();
+  await expect(page.getByRole("log", { name: "终端输出" })).toContainText("hello from terminal");
+  await expectNoPageOverflow(page, "pod terminal");
+});
+
+test("发布历史回滚确认展示 Pod 模板 Diff", async ({ page }) => {
+  await installApiMocks(page);
+  await page.goto("/workloads/deployment/default/web?tab=history");
+  await expect(page.getByText("Pod 模板变更 Preview")).toHaveCount(0);
+  const historyRow = page.getByRole("row").filter({ hasText: "#1" });
+  await historyRow.getByRole("button", { name: "回滚" }).click();
+  const dialog = page.getByRole("alertdialog", { name: "回滚到 revision 1？" });
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByText("Pod 模板变更 Preview")).toBeVisible();
+  await expect(dialog.getByLabel("回滚变更预览")).toContainText("nginx:1.25");
+  await expectElementInsideViewport(page, dialog, "rollback preview dialog");
+  await expectNoPageOverflow(page, "rollback preview dialog");
 });
 
 test("节点标签和污点支持新增、编辑与删除", async ({ page }) => {
@@ -1656,10 +1902,12 @@ test("移动端逐页布局无页面级横向溢出", async ({ page }) => {
     { path: "/workloads/deployment/default/web?tab=services", name: "workload-services" },
     { path: "/workloads/deployment/default/web?tab=config", name: "workload-config" },
     { path: "/workloads/deployment/default/web?tab=logs", name: "workload-logs" },
+    { path: "/workloads/deployment/default/web?tab=history", name: "workload-history" },
     { path: "/workloads/deployment/default/web?tab=yaml", name: "workload-yaml" },
     { path: "/pods", name: "pods" },
     { path: "/pods/default/web-abcdef-12345", name: "pod-detail" },
     { path: "/pods/default/web-abcdef-12345?tab=logs", name: "pod-logs" },
+    { path: "/pods/default/web-abcdef-12345?tab=terminal", name: "pod-terminal" },
     { path: "/pods/default/web-abcdef-12345?tab=yaml", name: "pod-yaml" },
     { path: "/network", name: "network" },
     { path: "/network?tab=ingresses", name: "network-ingresses" },
@@ -1690,6 +1938,12 @@ test("移动端逐页布局无页面级横向溢出", async ({ page }) => {
     { path: "/resources/example.io/v1/widgets/sample-widget?namespace=default", name: "resource-detail" },
     { path: "/governance", name: "governance" },
     { path: "/governance?namespace=default", name: "governance-namespace" },
+    { path: "/access", name: "access-review" },
+    { path: "/helm/releases?namespace=default", name: "helm-releases" },
+    { path: "/helm/releases/default/web?namespace=default", name: "helm-release-detail" },
+    { path: "/helm/releases/default/web?namespace=default&tab=values", name: "helm-release-values" },
+    { path: "/helm/releases/default/web?namespace=default&tab=manifest", name: "helm-release-manifest" },
+    { path: "/helm/releases/default/web?namespace=default&tab=history", name: "helm-release-history" },
   ];
 
   for (const route of routes) {
@@ -1763,12 +2017,18 @@ test("320px 窄屏关键页面无横向溢出", async ({ page }) => {
     { path: "/workloads/deployment/default/web", name: "workload-detail" },
     { path: "/workloads/deployment/default/web?tab=services", name: "workload-services" },
     { path: "/workloads/deployment/default/web?tab=config", name: "workload-config" },
+    { path: "/workloads/deployment/default/web?tab=history", name: "workload-history" },
     { path: "/pods/default/web-abcdef-12345?tab=logs", name: "pod-logs" },
+    { path: "/pods/default/web-abcdef-12345?tab=terminal", name: "pod-terminal" },
     { path: "/configuration?tab=certificate", name: "certificate" },
     { path: "/events", name: "events" },
     { path: "/audit", name: "audit" },
     { path: "/governance", name: "governance" },
     { path: "/governance?namespace=default", name: "governance-namespace" },
+    { path: "/access", name: "access-review" },
+    { path: "/helm/releases?namespace=default", name: "helm-releases" },
+    { path: "/helm/releases/default/web?namespace=default", name: "helm-release-detail" },
+    { path: "/helm/releases/default/web?namespace=default&tab=history", name: "helm-release-history" },
   ]) {
     await page.goto(route.path);
     await page.locator("main h1").waitFor({ state: "visible" });
@@ -2047,6 +2307,33 @@ test("移动端关键弹窗与确认框保持在视口内", async ({ page }) => 
   await page.getByRole("button", { name: "取消" }).click();
 });
 
+test("移动端节点排空与回滚预览不产生横向溢出", async ({ page }) => {
+  test.setTimeout(120_000);
+  await installApiMocks(page);
+
+  for (const viewport of [{ width: 320, height: 720 }, { width: 390, height: 844 }]) {
+    await page.setViewportSize(viewport);
+    await page.goto("/nodes/worker-0001");
+    await page.getByRole("button", { name: "排空节点" }).click();
+    let dialog = page.getByRole("dialog", { name: "排空节点 worker-0001" });
+    await expect(dialog).toBeVisible();
+    await expectElementInsideViewport(page, dialog, `${viewport.width}px node drain dialog`);
+    await expectNoPageOverflow(page, `${viewport.width}px node drain dialog`);
+    await page.screenshot({ path: `test-results/mobile-interactions/node-drain-${viewport.width}.png`, fullPage: true });
+    await page.keyboard.press("Escape");
+
+    await page.goto("/workloads/deployment/default/web?tab=history");
+    await page.getByRole("row").filter({ hasText: "#1" }).getByRole("button", { name: "回滚" }).click();
+    dialog = page.getByRole("alertdialog", { name: "回滚到 revision 1？" });
+    await expect(dialog).toBeVisible();
+    await expect(dialog.getByLabel("回滚变更预览")).toBeVisible();
+    await expectElementInsideViewport(page, dialog, `${viewport.width}px rollback dialog`);
+    await expectNoPageOverflow(page, `${viewport.width}px rollback dialog`);
+    await page.screenshot({ path: `test-results/mobile-interactions/rollback-${viewport.width}.png`, fullPage: true });
+    await page.keyboard.press("Escape");
+  }
+});
+
 test("命名空间筛选写入 URL 并在刷新后恢复", async ({ page }) => {
   await installApiMocks(page);
   await page.goto("/namespaces?q=production");
@@ -2302,7 +2589,7 @@ test("核心运维页面在亮暗主题下无严重可访问性问题", async ({
   test.setTimeout(480_000);
   await installApiMocks(page);
   for (const theme of ["light", "dark"] as const) {
-    for (const path of ["/", "/nodes", "/workloads/deployment/default/web", "/workloads/deployment/default/web?tab=config", "/pods/default/web-abcdef-12345", "/audit", "/resources", "/resources/example.io/v1/widgets", "/resources/example.io/v1/widgets/sample-widget?namespace=default"]) {
+    for (const path of ["/", "/nodes", "/workloads/deployment/default/web", "/workloads/deployment/default/web?tab=config", "/pods/default/web-abcdef-12345", "/audit", "/access", "/helm/releases?namespace=default", "/helm/releases/default/web?namespace=default", "/resources", "/resources/example.io/v1/widgets", "/resources/example.io/v1/widgets/sample-widget?namespace=default"]) {
       await page.goto(path);
       await page.evaluate((value) => localStorage.setItem("dosh-theme", value), theme);
       await page.reload();

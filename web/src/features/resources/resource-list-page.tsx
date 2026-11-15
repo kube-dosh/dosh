@@ -2,7 +2,8 @@ import { useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useParams, useSearch } from "@tanstack/react-router";
 import { createColumnHelper } from "@tanstack/react-table";
-import { Eye, FileCode2, Layers3, Plus, TriangleAlert } from "lucide-react";
+import { BookmarkPlus, Check, Eye, FileCode2, Layers3, Plus, SlidersHorizontal, Star, Trash2, TriangleAlert } from "lucide-react";
+import { toast } from "sonner";
 import { api } from "@/api/client";
 import type { GenericResourceSummary } from "@/api/types";
 import { DataTable } from "@/components/data/data-table";
@@ -15,10 +16,12 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { GenericYamlPanel } from "@/features/resources/generic-yaml-panel";
 import { GenericResourceEditorDialog } from "@/features/resources/generic-resource-editor-dialog";
 import { cursorPaginationProps, retryListQuery, useCursorPagination } from "@/hooks/use-cursor-pagination";
 import { formatAge } from "@/lib/utils";
+import { deleteResourceView, favoriteResourceTypes, hiddenResourceColumns, resourceTypeKey, saveResourceView, savedResourceViews, setHiddenResourceColumns, toggleFavoriteResourceType, useResourcePreferencesRevision } from "@/lib/resource-preferences";
 
 const column = createColumnHelper<GenericResourceSummary>();
 
@@ -59,6 +62,11 @@ export function ResourceListPage() {
   const apiGroup = params.group === "_core" ? "" : params.group;
   const namespace = search.namespace ?? "";
   const q = search.q ?? "";
+  const preferencesRevision = useResourcePreferencesRevision();
+  const preferenceKey = resourceTypeKey(apiGroup, resource);
+  const favorite = useMemo(() => favoriteResourceTypes().includes(preferenceKey), [preferenceKey, preferencesRevision]);
+  const savedViews = useMemo(() => savedResourceViews(preferenceKey), [preferenceKey, preferencesRevision]);
+  const hiddenColumns = useMemo(() => new Set(hiddenResourceColumns(preferenceKey)), [preferenceKey, preferencesRevision]);
   const discovery = useQuery({ queryKey: ["resource-discovery", "all"], queryFn: () => api.resourceDiscovery(), staleTime: 60_000 });
   const versions = useMemo(() => (discovery.data?.items ?? [])
     .filter((item) => item.group === apiGroup && item.resource === resource)
@@ -128,6 +136,19 @@ export function ResourceListPage() {
       column.accessor("createdAt", { header: "年龄", cell: (info) => <span className="text-muted-foreground">{formatAge(info.getValue())}</span> }),
     ];
   }, [query.data?.meta.columns]);
+  const tableColumnID = (item: (typeof tableColumns)[number]) => String(item.id ?? (item as { accessorKey?: string }).accessorKey ?? "");
+  const columnChoices = useMemo(() => tableColumns.map((item) => ({ id: tableColumnID(item), label: String(item.header ?? tableColumnID(item) ?? "列") })).filter((item) => item.id), [tableColumns]);
+  const visibleTableColumns = useMemo(() => tableColumns.filter((item) => !hiddenColumns.has(tableColumnID(item))), [hiddenColumns, tableColumns]);
+  const toggleColumn = (id: string) => {
+    const next = new Set(hiddenColumns);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    setHiddenResourceColumns(preferenceKey, [...next]);
+  };
+  const saveCurrentView = () => {
+    const name = q ? `搜索：${q}` : namespace ? `${namespace} · 默认视图` : "全部对象";
+    saveResourceView(preferenceKey, { name, q: q || undefined, namespace: namespace || undefined, hiddenColumns: [...hiddenColumns] });
+    toast.success(`已保存视图“${name}”`);
+  };
 
   if (discovery.isError) return <ErrorState error={discovery.error} onRetry={() => void discovery.refetch()} />;
   if (!discovery.isLoading && !descriptor) {
@@ -146,7 +167,7 @@ export function ResourceListPage() {
         title={descriptor?.kind || resource}
         breadcrumb={<><Link to="/resources" className="hover:text-foreground hover:underline">资源浏览器</Link>{` / ${apiGroup || "core"}/${version}/${resource}`}</>}
         description={descriptor ? `${descriptor.namespaced ? "Namespaced" : "Cluster-scoped"} · ${descriptor.group || "core"}/${descriptor.version}${descriptor.preferred ? " · Preferred" : ""} · 当前读取受 Kubernetes RBAC 约束。` : "正在读取资源类型。"}
-          actions={canCreate ? <Button size="sm" disabled={createDisabled} title={createDisabled ? "请先选择命名空间" : undefined} onClick={() => setCreateOpen(true)}><Plus className="h-4 w-4" />创建 YAML</Button> : undefined}
+          actions={<div className="flex flex-wrap items-center gap-2"><Button variant="outline" size="sm" aria-pressed={favorite} onClick={() => { const active = toggleFavoriteResourceType(preferenceKey); toast.success(active ? "已收藏资源类型" : "已取消收藏"); }}><Star className={favorite ? "h-4 w-4 fill-current text-warning" : "h-4 w-4"} />{favorite ? "已收藏" : "收藏类型"}</Button>{canCreate ? <Button size="sm" disabled={createDisabled} title={createDisabled ? "请先选择命名空间" : undefined} onClick={() => setCreateOpen(true)}><Plus className="h-4 w-4" />创建 YAML</Button> : null}</div>}
       />
       <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center">
         <SearchInput value={q} onChange={(value) => updateSearch({ q: value || undefined })} placeholder="搜索名称或命名空间" />
@@ -163,6 +184,30 @@ export function ResourceListPage() {
           </Select>
         ) : descriptor?.preferred ? <Badge variant="secondary" className="w-fit">Preferred version</Badge> : null}
         {descriptor?.namespaced ? <NamespaceSelect value={namespace} onChange={(value) => updateSearch({ namespace: value || undefined })} /> : null}
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild><Button variant="outline" size="sm"><BookmarkPlus className="h-4 w-4" />视图</Button></DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-60">
+            <DropdownMenuItem onSelect={saveCurrentView}><BookmarkPlus className="h-4 w-4" />保存当前视图</DropdownMenuItem>
+            {savedViews.length ? <DropdownMenuSeparator /> : null}
+            {savedViews.length ? <DropdownMenuLabel>已保存视图</DropdownMenuLabel> : null}
+            {savedViews.map((view) => (
+              <div key={view.id} className="flex items-center gap-1">
+                <DropdownMenuItem className="min-w-0 flex-1" onSelect={() => { setHiddenResourceColumns(preferenceKey, view.hiddenColumns); void navigate({ to: "/resources/$group/$version/$resource", params: { group: params.group, version, resource }, search: { ...search, q: view.q, namespace: view.namespace }, replace: true }); }}><span className="truncate">{view.name}</span></DropdownMenuItem>
+                <DropdownMenuItem aria-label={`删除视图 ${view.name}`} className="h-8 w-8 shrink-0 justify-center p-0 text-muted-foreground" onSelect={() => { deleteResourceView(preferenceKey, view.id); toast.success("已删除保存视图"); }}><Trash2 className="h-3.5 w-3.5" /></DropdownMenuItem>
+              </div>
+            ))}
+          </DropdownMenuContent>
+        </DropdownMenu>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild><Button variant="outline" size="sm"><SlidersHorizontal className="h-4 w-4" />列</Button></DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-56">
+            <DropdownMenuLabel>显示列</DropdownMenuLabel>
+            {columnChoices.map((item) => {
+              const visible = !hiddenColumns.has(item.id);
+              return <DropdownMenuItem key={item.id} onSelect={(event) => { event.preventDefault(); toggleColumn(item.id); }}>{visible ? <Check className="h-4 w-4" /> : <span className="h-4 w-4" />}<span className="truncate">{item.label}</span></DropdownMenuItem>;
+            })}
+          </DropdownMenuContent>
+        </DropdownMenu>
         {query.data?.meta.truncated ? (
           <span className="flex items-center gap-1 text-xs text-warning"><TriangleAlert className="h-3.5 w-3.5" />结果已截断</span>
         ) : null}
@@ -182,7 +227,7 @@ export function ResourceListPage() {
               </Link>
             ),
           }),
-          ...tableColumns,
+          ...visibleTableColumns,
           column.display({ id: "actions", header: "操作", size: 56, cell: (info) => <ResourceActionsMenu resource={`${info.row.original.kind} ${info.row.original.name}`} actions={actions(info.row.original)} /> }),
         ]}
         data={query.data?.items ?? []}

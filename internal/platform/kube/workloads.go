@@ -20,6 +20,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/yaml"
 )
 
 func (c *Client) ListWorkloads(ctx context.Context, query domain.ListQuery) ([]domain.WorkloadSummary, error) {
@@ -635,7 +636,7 @@ func (c *Client) ListWorkloadRevisions(ctx context.Context, kind, namespace, nam
 				ChangeCause: replicaSet.Annotations["kubernetes.io/change-cause"],
 				Status:      replicaStatus(desired, replicaSet.Status.ReadyReplicas, replicaSet.Status.AvailableReplicas, false),
 				Replicas:    desired, ReadyReplicas: replicaSet.Status.ReadyReplicas,
-				Images: podTemplateImages(replicaSet.Spec.Template.Spec.Containers), CreatedAt: replicaSet.CreationTimestamp.Time,
+				Images: podTemplateImages(replicaSet.Spec.Template.Spec.Containers), Template: podTemplateYAML(replicaSet.Spec.Template), CreatedAt: replicaSet.CreationTimestamp.Time,
 			})
 		}
 		sort.Slice(revisions, func(i, j int) bool { return revisions[i].Revision > revisions[j].Revision })
@@ -662,7 +663,7 @@ func (c *Client) ListWorkloadRevisions(ctx context.Context, kind, namespace, nam
 				Kind: "StatefulSet", Name: controllerRevision.Name, Revision: controllerRevision.Revision,
 				Current:     statefulSet.Status.CurrentRevision == controllerRevision.Name,
 				ChangeCause: controllerRevision.Annotations["kubernetes.io/change-cause"],
-				Status:      "History", Images: podTemplateImages(snapshot.Spec.Template.Spec.Containers),
+				Status:      "History", Images: podTemplateImages(snapshot.Spec.Template.Spec.Containers), Template: podTemplateYAML(snapshot.Spec.Template),
 				CreatedAt: controllerRevision.CreationTimestamp.Time,
 			})
 		}
@@ -671,6 +672,14 @@ func (c *Client) ListWorkloadRevisions(ctx context.Context, kind, namespace, nam
 	default:
 		return nil, fmt.Errorf("%w: revisions are not supported for %s", domain.ErrUnsupported, kind)
 	}
+}
+
+func podTemplateYAML(template corev1.PodTemplateSpec) string {
+	encoded, err := yaml.Marshal(template)
+	if err != nil {
+		return ""
+	}
+	return string(encoded)
 }
 
 func (c *Client) RollbackWorkload(ctx context.Context, kind, namespace, name string, revision int64) error {

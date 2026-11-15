@@ -26,6 +26,7 @@ import {
 import { useCapabilities } from "@/features/auth/use-session";
 import { ResourceEvents } from "@/features/events/resource-events";
 import { NodeLabelsPanel } from "@/features/nodes/node-labels-panel";
+import { NodeDrainDialog } from "@/features/nodes/node-drain-dialog";
 import { NodeTaintsPanel } from "@/features/nodes/node-taints-panel";
 import { PodLogs } from "@/features/workloads/pod-logs";
 import { formatAge, formatCPU, formatDate, formatMemory } from "@/lib/utils";
@@ -46,6 +47,7 @@ export function NodeDetailPage() {
   const queryClient = useQueryClient();
   const [yamlOpen, setYamlOpen] = useState(false);
   const [schedulingOpen, setSchedulingOpen] = useState(false);
+  const [drainOpen, setDrainOpen] = useState(false);
   const tab = isNodeTab(search.tab) ? search.tab : "overview";
   const changeTab = (value: string) => {
     if (!isNodeTab(value)) return;
@@ -59,6 +61,7 @@ export function NodeDetailPage() {
   const query = useQuery({ queryKey: ["node", name], queryFn: () => api.node(name) });
   const capabilities = useCapabilities().data;
   const canManageNode = Boolean(capabilities?.nodeCordon);
+  const canDrainNode = Boolean(capabilities?.nodeDrain);
   const scheduling = useMutation({
     mutationFn: (action: "cordon" | "uncordon") => action === "cordon" ? api.cordonNode(name) : api.uncordonNode(name),
     onSuccess: async (_node, action) => {
@@ -76,7 +79,7 @@ export function NodeDetailPage() {
   const node = query.data!;
   return (
     <>
-      <PageHeader breadcrumb={<><Link to="/nodes" className="text-primary underline underline-offset-2">节点管理</Link> / {node.name}</>} title={<span className="flex items-center gap-3"><Server className="h-5 w-5 text-muted-foreground" />{node.name}</span>} description={<span className="flex items-center gap-2"><StatusBadge status={node.unschedulable ? "SchedulingDisabled" : node.status} />{node.roles.map((role) => <Badge key={role} variant="secondary">{role}</Badge>)}</span>} actions={<div className="flex items-center gap-2">{canManageNode ? <Button variant="outline" onClick={() => setSchedulingOpen(true)}>{node.unschedulable ? <CirclePlay className="h-4 w-4" /> : <Ban className="h-4 w-4" />}{node.unschedulable ? "恢复调度" : "停止调度"}</Button> : null}<Button variant="outline" onClick={() => setYamlOpen(true)}><FileCode2 className="h-4 w-4" />YAML</Button></div>} />
+      <PageHeader breadcrumb={<><Link to="/nodes" className="text-primary underline underline-offset-2">节点管理</Link> / {node.name}</>} title={<span className="flex items-center gap-3"><Server className="h-5 w-5 text-muted-foreground" />{node.name}</span>} description={<span className="flex items-center gap-2"><StatusBadge status={node.unschedulable ? "SchedulingDisabled" : node.status} />{node.roles.map((role) => <Badge key={role} variant="secondary">{role}</Badge>)}</span>} actions={<div className="flex flex-wrap items-center gap-2">{canManageNode ? <Button variant="outline" onClick={() => setSchedulingOpen(true)}>{node.unschedulable ? <CirclePlay className="h-4 w-4" /> : <Ban className="h-4 w-4" />}{node.unschedulable ? "恢复调度" : "停止调度"}</Button> : null}{canDrainNode ? <Button variant="outline" onClick={() => setDrainOpen(true)}><ShieldAlert className="h-4 w-4" />排空节点</Button> : null}<Button variant="outline" onClick={() => setYamlOpen(true)}><FileCode2 className="h-4 w-4" />YAML</Button></div>} />
       <Tabs value={tab} onValueChange={changeTab}>
         <TabsList><TabsTrigger value="overview">概览</TabsTrigger><TabsTrigger value="labels"><Tag className="h-3.5 w-3.5" />标签 ({Object.keys(node.labels).length})</TabsTrigger><TabsTrigger value="taints"><ShieldAlert className="h-3.5 w-3.5" />污点 ({node.taints.length})</TabsTrigger><TabsTrigger value="pods">实例 ({node.pods.length})</TabsTrigger><TabsTrigger value="events">事件</TabsTrigger><TabsTrigger value="logs"><ScrollText className="h-3.5 w-3.5" />日志</TabsTrigger><TabsTrigger value="yaml"><FileCode2 className="h-3.5 w-3.5" />YAML</TabsTrigger></TabsList>
         <TabsContent value="overview">
@@ -115,6 +118,7 @@ export function NodeDetailPage() {
         </AlertDialogContent>
       </AlertDialog>
       <YamlDialog open={yamlOpen} onOpenChange={setYamlOpen} type="node" name={node.name} />
+      <NodeDrainDialog node={node} open={drainOpen} onOpenChange={setDrainOpen} />
     </>
   );
 }

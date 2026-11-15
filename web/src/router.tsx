@@ -25,6 +25,9 @@ import { ResourcesPage } from "@/features/resources/resources-page";
 import { ResourceListPage } from "@/features/resources/resource-list-page";
 import { ResourceDetailPage } from "@/features/resources/resource-detail-page";
 import { GovernancePage } from "@/features/governance/governance-page";
+import { HelmReleasesPage } from "@/features/helm/helm-releases-page";
+import { HelmReleaseDetailPage } from "@/features/helm/helm-release-detail-page";
+import { AccessReviewPage } from "@/features/access/access-review-page";
 import { Button } from "@/components/ui/button";
 import { Link } from "@tanstack/react-router";
 import { parseListSearch } from "@/lib/list-search";
@@ -69,6 +72,9 @@ const resourcesRoute = createRoute({ getParentRoute: () => appRoute, path: "/res
 const resourceListRoute = createRoute({ getParentRoute: () => appRoute, path: "/resources/$group/$version/$resource", component: ResourceListPage, validateSearch: parseListSearch });
 const resourceDetailRoute = createRoute({ getParentRoute: () => appRoute, path: "/resources/$group/$version/$resource/$name", component: ResourceDetailPage, validateSearch: parseListSearch });
 const governanceRoute = createRoute({ getParentRoute: () => appRoute, path: "/governance", component: GovernancePage, validateSearch: parseListSearch });
+const accessReviewRoute = createRoute({ getParentRoute: () => appRoute, path: "/access", component: AccessReviewPage, validateSearch: parseListSearch });
+const helmReleasesRoute = createRoute({ getParentRoute: () => appRoute, path: "/helm/releases", component: HelmReleasesPage, validateSearch: parseListSearch });
+const helmReleaseDetailRoute = createRoute({ getParentRoute: () => appRoute, path: "/helm/releases/$namespace/$name", component: HelmReleaseDetailPage, validateSearch: parseListSearch });
 const nodesRoute = createRoute({ getParentRoute: () => appRoute, path: "/nodes", component: NodesPage, validateSearch: parseListSearch });
 const nodeDetailRoute = createRoute({ getParentRoute: () => appRoute, path: "/nodes/$name", component: NodeDetailPage, validateSearch: parseListSearch });
 const workloadsRoute = createRoute({ getParentRoute: () => appRoute, path: "/workloads", component: WorkloadsPage, validateSearch: parseListSearch });
@@ -98,6 +104,9 @@ export const routeTree = rootRoute.addChildren([
     resourceListRoute,
     resourceDetailRoute,
     governanceRoute,
+    accessReviewRoute,
+    helmReleasesRoute,
+    helmReleaseDetailRoute,
     nodesRoute,
     nodeDetailRoute,
     workloadsRoute,

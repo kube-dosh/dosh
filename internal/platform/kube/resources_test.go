@@ -69,6 +69,20 @@ func TestListPodsSearchAndGetPodConversion(t *testing.T) {
 	}
 }
 
+func TestGetPodIncludesInitContainersBeforeRegularContainers(t *testing.T) {
+	pod := testPod()
+	pod.Spec.InitContainers = []corev1.Container{{Name: "migrate", Image: "registry.test/migrate:1"}}
+	pod.Status.InitContainerStatuses = []corev1.ContainerStatus{{Name: "migrate", State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{Reason: "Completed"}}}}
+	client, _ := newFakeKubeClient(pod)
+	detail, err := client.GetPod(context.Background(), "prod", "api-0")
+	if err != nil {
+		t.Fatalf("GetPod() error = %v", err)
+	}
+	if len(detail.Containers) != 2 || !detail.Containers[0].Init || detail.Containers[0].Name != "migrate" || detail.Containers[0].State != "Terminated" || detail.Containers[1].Init {
+		t.Fatalf("containers = %#v", detail.Containers)
+	}
+}
+
 func TestGetNamespaceIncludesQuotasAndLimitRanges(t *testing.T) {
 	client, _ := newFakeKubeClient(
 		&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "prod", Labels: map[string]string{"team": "platform"}, Annotations: map[string]string{"owner": "ops"}}},

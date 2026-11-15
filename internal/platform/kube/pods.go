@@ -99,7 +99,7 @@ func (c *Client) GetPod(ctx context.Context, namespace, name string) (domain.Pod
 		PodSummary:     summary,
 		QOSClass:       string(pod.Status.QOSClass),
 		ServiceAccount: pod.Spec.ServiceAccountName,
-		Containers:     make([]domain.Container, 0, len(pod.Spec.Containers)),
+		Containers:     make([]domain.Container, 0, len(pod.Spec.Containers)+len(pod.Spec.InitContainers)),
 		Conditions:     make([]domain.Condition, 0, len(pod.Status.Conditions)),
 	}
 	for _, condition := range pod.Status.Conditions {
@@ -107,8 +107,19 @@ func (c *Client) GetPod(ctx context.Context, namespace, name string) (domain.Pod
 			Type: string(condition.Type), Status: string(condition.Status), LastTransitionTime: condition.LastTransitionTime.Time,
 		})
 	}
-	for i, container := range pod.Spec.Containers {
-		item := domain.Container{Name: container.Name, Image: container.Image}
+	detail.Containers = append(detail.Containers, podContainerDetails(pod.Spec.InitContainers, pod.Status.InitContainerStatuses, true)...)
+	detail.Containers = append(detail.Containers, podContainerDetails(pod.Spec.Containers, pod.Status.ContainerStatuses, false)...)
+	return detail, nil
+}
+
+func podContainerDetails(containers []corev1.Container, statuses []corev1.ContainerStatus, init bool) []domain.Container {
+	statusByName := make(map[string]corev1.ContainerStatus, len(statuses))
+	for _, status := range statuses {
+		statusByName[status.Name] = status
+	}
+	result := make([]domain.Container, 0, len(containers))
+	for _, container := range containers {
+		item := domain.Container{Name: container.Name, Image: container.Image, Init: init}
 		if q, ok := container.Resources.Requests[corev1.ResourceCPU]; ok {
 			item.CPURequestMilli = q.MilliValue()
 		}
@@ -121,8 +132,7 @@ func (c *Client) GetPod(ctx context.Context, namespace, name string) (domain.Pod
 		if q, ok := container.Resources.Limits[corev1.ResourceMemory]; ok {
 			item.MemoryLimitBytes = q.Value()
 		}
-		if i < len(pod.Status.ContainerStatuses) {
-			status := pod.Status.ContainerStatuses[i]
+		if status, ok := statusByName[container.Name]; ok {
 			item.Ready = status.Ready
 			item.RestartCount = status.RestartCount
 			switch {
@@ -138,9 +148,9 @@ func (c *Client) GetPod(ctx context.Context, namespace, name string) (domain.Pod
 				item.State = "Unknown"
 			}
 		}
-		detail.Containers = append(detail.Containers, item)
+		result = append(result, item)
 	}
-	return detail, nil
+	return result
 }
 
 func (c *Client) DeletePod(ctx context.Context, namespace, name string) error {
@@ -149,7 +159,7 @@ func (c *Client) DeletePod(ctx context.Context, namespace, name string) error {
 	return mapKubeError(c.clientset.CoreV1().Pods(namespace).Delete(ctx, name, metav1.DeleteOptions{}))
 }
 
-func (c *Client) StreamPodLogs(ctx context.Context, namespace, name, container string, follow, previous bool, tailLines int64, timestamps bool, limitBytes int64) (io.ReadCloser, error) {
+func (c *Client) StreamPodLogs(ctx context.Context, namespace, name, container string, follow, previous bool, tailLines int64, timestamps bool, sinceSeconds int64, limitBytes int64) (io.ReadCloser, error) {
 	options := &corev1.PodLogOptions{
 		Container:  container,
 		Follow:     follow,
@@ -159,6 +169,9 @@ func (c *Client) StreamPodLogs(ctx context.Context, namespace, name, container s
 	}
 	if limitBytes > 0 {
 		options.LimitBytes = &limitBytes
+	}
+	if sinceSeconds > 0 {
+		options.SinceSeconds = &sinceSeconds
 	}
 	stream, err := c.clientset.CoreV1().Pods(namespace).GetLogs(name, options).Stream(ctx)
 	if err != nil {

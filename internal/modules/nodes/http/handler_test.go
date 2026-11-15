@@ -70,6 +70,12 @@ func (r *httpNodesRepository) SetNodeScheduling(_ context.Context, name string, 
 	r.lastUnschedulable = unschedulable
 	return r.scheduling, r.schedulingErr
 }
+func (r *httpNodesRepository) PlanNodeDrain(context.Context, string, domain.NodeDrainOptions) (domain.NodeDrainPlan, error) {
+	return domain.NodeDrainPlan{}, nil
+}
+func (r *httpNodesRepository) DrainNode(context.Context, string, domain.NodeDrainOptions) (domain.NodeDrainResult, error) {
+	return domain.NodeDrainResult{}, nil
+}
 
 func (r *httpNodesRepository) SetNodeLabels(_ context.Context, name string, update domain.NodeLabelUpdate) (domain.NodeDetail, error) {
 	r.setLabelCalls++

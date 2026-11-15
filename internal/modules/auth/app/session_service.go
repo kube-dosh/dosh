@@ -2,6 +2,9 @@ package app
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"strings"
 	"time"
 
 	"dosh/internal/domain"
@@ -50,9 +53,57 @@ func (s *SessionService) Capabilities(ctx context.Context, actor domain.Actor, n
 		RevealSecrets:     s.allowed(ctx, actor, domain.Access{Verb: "get", Resource: "secrets", Namespace: namespace}),
 		EditYAML:          s.allowed(ctx, actor, domain.Access{Verb: "patch", Resource: "configmaps", Namespace: namespace}),
 		NodeCordon:        s.allowed(ctx, actor, domain.Access{Verb: "update", Resource: "nodes"}),
+		NodeDrain:         s.allowed(ctx, actor, domain.Access{Verb: "update", Resource: "nodes"}),
+		PodExec:           s.allowed(ctx, actor, domain.Access{Verb: "create", Resource: "pods", Subresource: "exec", Namespace: namespace}),
+		HelmReleases:      s.allowed(ctx, actor, domain.Access{Verb: "list", Resource: "secrets", Namespace: namespace}),
 		ReloadCertificate: s.allowed(ctx, actor, domain.Access{Verb: "update", APIGroup: "dosh.io", Resource: "server-certificates"}),
 		ResourceActions:   s.resourceActions(ctx, actor, namespace),
 	}
+}
+
+// Review returns a human-readable authorization decision for the current
+// actor. The SubjectAccessReview remains the source of truth; this method only
+// adds guidance about Dosh read-only mode versus Kubernetes RBAC denial.
+func (s *SessionService) Review(ctx context.Context, actor domain.Actor, access domain.Access) domain.AccessReview {
+	review := domain.AccessReview{
+		Verb: access.Verb, APIGroup: access.APIGroup, Resource: access.Resource,
+		Subresource: access.Subresource, Namespace: access.Namespace, Name: access.Name,
+	}
+	err := s.authorizer.Require(ctx, actor, access)
+	review.Allowed = err == nil
+	resource := access.Resource
+	if access.APIGroup != "" {
+		resource += "." + access.APIGroup
+	}
+	if access.Subresource != "" {
+		resource += "/" + access.Subresource
+	}
+	command := fmt.Sprintf("kubectl auth can-i %s %s", access.Verb, resource)
+	if access.Namespace != "" {
+		command += " --namespace " + access.Namespace
+	}
+	if access.Name != "" {
+		command += " --resource-name " + access.Name
+	}
+	review.KubectlCommand = command
+	switch {
+	case err == nil:
+		review.Reason = "allowed"
+		review.Guidance = "当前身份拥有该操作权限。若页面仍返回 403，请检查请求的命名空间、资源名称或 Subresource 是否与检查条件一致。"
+	case errors.Is(err, domain.ErrReadOnly):
+		review.Reason = "read_only"
+		review.Guidance = "Dosh 当前运行在只读模式，写操作被本地策略阻止。请联系管理员确认服务启动配置，而不是只调整 Kubernetes RBAC。"
+	case errors.Is(err, domain.ErrForbidden):
+		review.Reason = "rbac_denied"
+		review.Guidance = "Kubernetes RBAC 未授权当前身份执行该操作。请管理员为对应 Role/ClusterRole 增加该 apiGroup、resource、subresource 和 verb，并确认 RoleBinding 覆盖目标命名空间。"
+	default:
+		review.Reason = "authorization_unavailable"
+		review.Guidance = "授权检查暂时不可用，无法确认是否允许。请检查 Dosh 到 Kubernetes API Server 的连通性和 SubjectAccessReview 权限。"
+	}
+	if strings.TrimSpace(actor.Username) == "" {
+		review.Guidance = "当前请求没有有效登录身份，请重新登录后检查权限。"
+	}
+	return review
 }
 
 func (s *SessionService) resourceActions(ctx context.Context, actor domain.Actor, namespace string) map[string]domain.ResourceCapabilities {

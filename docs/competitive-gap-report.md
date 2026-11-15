@@ -2,8 +2,8 @@
 
 | 项目 | 内容 |
 |---|---|
-| 评估日期 | 2026-11-12 |
-| 代码基线 | `main`，最新提交 `fc8fc6f` |
+| 评估日期 | 2026-11-15 |
+| 代码基线 | `main` 提交 `020d252`，并包含当前工作区的 2026-11-15 功能实现 |
 | 评估依据 | 当前仓库代码、OpenAPI、README、路线图，以及 Kubernetes Dashboard、Headlamp、Lens、KubeSphere、Rancher、Devtron 官方文档 |
 | 说明 | 本文是能力方向对比，不代表逐个版本逐项核验；竞品功能会受版本、插件和商业版许可影响 |
 
@@ -19,9 +19,9 @@ Dosh 当前不是“通用 Kubernetes Dashboard”，而是一个定位清晰的
 
 但与 Headlamp、Lens 以及 KubeSphere、Rancher、Devtron 相比，Dosh 的主要差距可以归纳为五类：
 
-1. 通用资源模型已经落地，但仍缺多版本 API 选择、Schema 基础校验和高风险资源的写入策略分层。
-2. 没有交互式排障能力：缺少 Pod Exec/Terminal、Ephemeral Container、Port-forward。
-3. Deployment/StatefulSet 已具备 revision 历史和回滚；仍缺 Helm Release 管理。
+1. 通用资源模型、多版本 API 选择、Schema 基础校验和高风险写入护栏已经落地，剩余主要是超大集群搜索与服务端索引。
+2. Pod 终端和节点排空已经落地；仍缺 Ephemeral Container 和 Port-forward。
+3. Deployment/StatefulSet 已具备 revision 历史、回滚 Diff 和回滚；Helm 已具备只读 Release 可见性，仍缺升级/回滚。
 4. 可观测性较浅：只有 Metrics Server 瞬时值，没有 Prometheus 历史指标、告警、日志聚合。
 5. 平台扩展能力缺失：没有多集群、插件机制、GitOps、多租户和集群生命周期管理。
 
@@ -35,13 +35,14 @@ Dosh 当前不是“通用 Kubernetes Dashboard”，而是一个定位清晰的
 |---|---|
 | 部署 | 单二进制、Helm Chart、distroless 非 root 镜像、无外部数据库、无集群内 Agent |
 | 认证 | Token、OIDC、本地管理员；HttpOnly 会话；CSRF |
-| 权限 | Kubernetes RBAC、impersonation、SubjectAccessReview |
+| 权限 | Kubernetes RBAC、impersonation、SubjectAccessReview；当前身份 can-i 权限解释与拒绝原因 |
 | 集群总览 | 版本、CNI、节点/Pod 健康度、工作负载数量、CPU/内存、Metrics 缺失时回退到 requests |
-| 节点 | 状态、角色、容量、标签、污点、Pod、事件、日志、Cordon/Uncordon |
+| 节点 | 状态、角色、容量、标签、污点、Pod、事件、日志、Cordon/Uncordon、PDB 感知排空计划与执行 |
 | 工作负载 | Deployment、StatefulSet、DaemonSet、Job、CronJob 的列表、详情、实例、YAML |
 | 工作负载操作 | Deployment 创建、扩缩容、滚动重启、更新镜像、容器配置、CronJob 暂停/恢复、删除、Deployment/StatefulSet revision 历史和回滚 |
-| Pod | 状态、容器、资源、节点、事件、日志、YAML |
-| 日志 | 单 Pod、单容器、实时流、tailLines、timestamps |
+| Pod | 状态、普通与 Init Container、资源、所有者、节点、事件、日志、YAML、受审计的交互式终端 |
+| 日志 | 单 Pod、单容器、Previous 实例、Init Container、实时流、tailLines、timestamps、时间范围和关键词筛选 |
+| Helm | 只读 Release 列表、当前 values、rendered manifest、notes、warnings 和 revision history；敏感字段服务端遮蔽 |
 | 网络 | Service、Ingress、IngressClass 的查看、创建、编辑、删除 |
 | 配置 | ConfigMap、Secret 的查看、创建、编辑、删除、数据查看、YAML |
 | 存储 | PVC 创建、编辑、删除；PV、StorageClass 主要只读和关联导航 |
@@ -50,7 +51,7 @@ Dosh 当前不是“通用 Kubernetes Dashboard”，而是一个定位清晰的
 | YAML | 模板、Dry Run、Server-Side Apply、多文档顺序提交、内置资源白名单；资源浏览器支持已发现资源的通用 YAML 创建、更新和删除 |
 | 审计 | 最近审计记录、stdout、可选 HTTPS Webhook、HMAC |
 | 证书 | HTTPS 证书元数据、热加载、手动重载 |
-| 移动端 | 列表、搜索、弹窗、详情页响应式适配 |
+| 移动端 | 列表、搜索、弹窗、详情页响应式适配；新页面纳入 320px/390px、大字体、Android、亮暗主题和 axe 验收 |
 
 相关边界在 `README.zh-CN.md` 已有明确说明：`/yaml/create` 暂不开放 Namespace 和 Node；CRD 等已发现资源通过资源浏览器写入；通用 Secret 写入关闭；PV、StorageClass 仍以查看和关联导航为主；Secret 专用页面不做额外二次遮蔽层。
 
@@ -168,16 +169,16 @@ Devtron 的参考价值主要在 Helm、发布历史、回滚和应用生命周�
 |---|---|---|---|---|---|
 | 单集群资源浏览 | ✅ 固定视图 + 通用资源目录 | ✅ | ✅ | ✅ | 已具备通用模型 |
 | CRD / API Discovery | ✅ CRD 类型与对象 | ✅ CRD 资源与对象 | ✅ | ✅ | 已落地，多版本待补 |
-| YAML 编辑 / Schema | ◐ 通用 YAML 编辑，无 Schema 校验 | ◐ 基础编辑 | ✅ 编辑器和文档 | ✅ | 缺 Schema 和动态表单 |
+| YAML 编辑 / Schema | ✅ 通用 YAML/表单编辑、Schema 预检、字段提示和变更预览 | ◐ 基础编辑 | ✅ 编辑器和文档 | ✅ | 已支持 Schema 降级 |
 | 资源创建/编辑/删除 | ◐ 已发现资源通用写入，缺少高风险策略分层 | ✅ | ✅ | ✅ | Secret 仅专用页面；高危资源护栏不足 |
-| Pod 日志 | ✅ 单 Pod、Previous、关键词筛选 | ✅ | ✅ | ✅ | 缺跨 Pod 聚合 |
-| Exec / Terminal | — | ✅ | ✅ | ✅ | P0 缺口 |
-| Ephemeral Debug | — | — | ✅ | ◐ | 建议随 Exec 一起设计 |
+| Pod 日志 | ◐ 单 Pod、Previous、Init Container、时间范围和关键词筛选 | ✅ | ✅ | ✅ | 缺跨 Pod 聚合 |
+| Exec / Terminal | ◐ 受 RBAC 与审计保护的容器终端 | ✅ | ✅ | ✅ | 缺 Ephemeral Container |
+| Ephemeral Debug | — | — | ✅ | ◐ | 下一阶段 |
 | Port-forward | — | — | ✅ | ✅ | P0/P1 缺口 |
-| 工作负载 revision / rollback | ✅ Deployment/StatefulSet 历史与回滚 | ◐ 可看部分历史对象 | ◐ | ◐ | 已具备一键回滚 |
-| Helm Release 管理 | — | — | ◐ 桌面插件 | ✅ | P0/P1 缺口 |
+| 工作负载 revision / rollback | ✅ Deployment/StatefulSet 历史、Pod 模板 Diff 与回滚 | ◐ 可看部分历史对象 | ◐ | ◐ | 已具备回滚前预览和一键回滚 |
+| Helm Release 管理 | ◐ 只读 Release、values、manifest 和历史 | — | ◐ 桌面插件 | ✅ | 缺升级、回滚和 diff |
 | Metrics 历史 / 告警 | ◐ 仅瞬时 Metrics API | ◐ Metrics Server | ◐ Metrics + Prometheus 插件 | ◐ Metrics | 缺历史趋势和告警 |
-| RBAC / Policy 资源视图 | ✅ 治理入口复用通用资源视图 | ◐ | ✅ | ✅ | 已覆盖高频治理资源 |
+| RBAC / Policy 资源视图 | ✅ 治理入口、can-i 解释和通用资源视图 | ◐ | ✅ | ✅ | 已覆盖高频治理资源 |
 | 多集群 | — | — | ✅ | ✅ | P2，架构级变化 |
 | 插件 / 扩展 | — | — | ✅ | ✅ | P2，取决于生态战略 |
 | 桌面端 / 离线 | — | — | ✅ | ✅ | 不建议优先做 |
@@ -191,7 +192,7 @@ Devtron 的参考价值主要在 Helm、发布历史、回滚和应用生命周�
 | 集群 Provisioning | ✅ | ✅ | ◐ | — | 不建议进入 |
 | GitOps / CI/CD | ✅ | ✅ Fleet | ✅ Argo/Flux | — | P2 |
 | 监控 / 日志 / 告警 | ✅ | ✅ | ✅ | ◐ | P1 补可观测性 |
-| Helm / 应用生命周期 | ✅ | ✅ | ✅ | — | P0/P1 补 Release 管理 |
+| Helm / 应用生命周期 | ✅ | ✅ | ✅ | ◐ | 已有只读 Release 可见性，写生命周期待排期 |
 | 多租户 / 工作空间 | ✅ | ✅ | ✅ | — | P2 |
 | 策略 / 合规 / 安全扫描 | ✅ | ✅ | ✅ | ◐ | P1 做预检和集成 |
 | 成本 / 备份 / Service Mesh | ◐ | ✅ | ✅ | — | 合作/集成，不建议自研 |
@@ -206,23 +207,23 @@ Devtron 的参考价值主要在 Helm、发布历史、回滚和应用生命周�
 |---|---|---|---|---|---|---|
 | GAP-01 | 通用资源浏览器与 API Discovery | ✅ 已实现全 served version Discovery、preferred 标记、通用列表/详情、Table API、搜索、版本切换和治理入口 | Headlamp、Lens、Devtron、K8s Dashboard 均支持较通用的资源浏览 | 已解锁 Operator、CRD、HPA、PDB、NetworkPolicy、RBAC 等资源 | 后续补保存视图、收藏和更深的资源关系导航 | 已完成主体 |
 | GAP-02 | CRD 生命周期与动态 YAML | ✅ 通用 YAML 创建/编辑/删除、Dry Run、SSA、SAR、审计、OpenAPI Schema 预检、动态表单和字段级提示已实现 | Headlamp、Lens、Devtron 支持 CRD 和自定义资源编辑 | 已可通过 UI 管理复杂 CRD，Schema 不可用时仍有 YAML 降级 | 后续补 CRD 模板库、字段级文档和从已有对象另存为模板 | 已完成主体 |
-| GAP-03 | Pod Exec / Terminal / Debug | 无 | Headlamp、Lens、K8s Dashboard | 排障仍需回到 `kubectl exec`，控制台闭环中断 | WebSocket/SPDY 终端、容器选择、Shell 检测、Ephemeral Container、超时和审计 | 3–4 人周 |
+| GAP-03 | Pod Exec / Terminal / Debug | ◐ 已实现受 RBAC、同源 Cookie 会话、Shell 白名单、PTY 尺寸约束和审计保护的终端 | Headlamp、Lens、K8s Dashboard | 常规容器排障已可在控制台完成，仍需补齐无 Shell 容器的调试路径 | 后续增加 Ephemeral Container、会话超时策略和更细的终端审计 | 剩余 1–2 人周 |
 | GAP-04 | Port-forward | 无 | Headlamp、Lens | 临时访问数据库、调试端口仍需本地 kubectl | 受 RBAC、审计、显式端口和会话超时控制的端口转发；默认考虑关闭 | 4–6 人周 |
-| GAP-05 | Helm Release 管理 | 仅用 Helm 部署 Dosh 自身 | Lens、KubeSphere、Rancher、Devtron | 无法查看 Release、values、manifest、历史、diff 和回滚 | 浏览 Release、values、manifest、revision history、升级/回滚；Secret 值遮蔽 | 5–7 人周 |
-| GAP-06 | 工作负载 revision 与回滚 | ✅ Deployment/StatefulSet revision 历史、当前标记、镜像和回滚已实现 | 平台型产品普遍有发布历史 | 已提供可追踪的发布恢复路径 | 后续补回滚前 Diff、仅 Patch 模板和更细的 rollout 状态 | 已完成主体 |
+| GAP-05 | Helm Release 管理 | ◐ 已实现 Helm v3 Secret 解码、只读列表/详情、values、manifest、notes、warnings 和 revision history，并做敏感字段服务端遮蔽 | Lens、KubeSphere、Rancher、Devtron | 已能定位 Release 状态和差异来源，但不能在 Dosh 内完成升级/回滚 | 后续补 Release diff、升级和回滚；必须显式授权、二次确认与审计 | 剩余 3–5 人周 |
+| GAP-06 | 工作负载 revision 与回滚 | ✅ Deployment/StatefulSet revision 历史、Pod 模板快照、回滚前 Diff 和定向回滚已实现 | 平台型产品普遍有发布历史 | 已提供可追踪、可预览的发布恢复路径 | 后续补更细的 rollout 状态和仅 Patch 指定字段的恢复策略 | 已完成主体 |
 | GAP-07 | 结构化工作负载与存储表单 | 目前主要只有 Deployment 创建表单 | Headlamp 通用编辑；平台产品有向导 | StatefulSet、DaemonSet、Job、CronJob 仍依赖 YAML；PV、SC 写入能力不足 | 增加结构化创建/编辑表单，复杂字段可回退 YAML；补齐 PV/SC 的受控操作 | 2–3 人周 |
-| GAP-08 | 节点排空与故障拓扑 | 仅 Cordon/Uncordon、标签、污点 | Lens/Headlamp 有更完整资源关系和排障入口 | 节点维护需要手动 evict 和检查 PodDisruptionBudget | 增加 drain/evict、PDB 提示、Pod 拓扑、节点事件和关联工作负载视图 | 2–3 人周 |
-| GAP-09 | RBAC、网络策略、弹性资源视图 | ✅ 治理入口覆盖 ServiceAccount、Role、Binding、NetworkPolicy、HPA、PDB、Quota、LimitRange、PriorityClass | Headlamp、Lens、平台产品 | 已可查看高频治理对象和关键关系 | 后续补 can-i 权限解释、VPA 和更深的关联导航 | 已完成主体 |
+| GAP-08 | 节点排空与故障拓扑 | ◐ 已实现 PDB 感知的排空计划与 Eviction 执行，识别 DaemonSet、mirror、已结束和裸 Pod，并在 PDB/Forbidden 后中止 | Lens/Headlamp 有更完整资源关系和排障入口 | 常规节点维护不再依赖手工 evict；仍缺少跨节点故障拓扑 | 后续补节点/工作负载拓扑、关联工作负载视图和更细的分批排空策略 | 剩余 1–2 人周 |
+| GAP-09 | RBAC、网络策略、弹性资源视图 | ✅ 治理入口覆盖 ServiceAccount、Role、Binding、NetworkPolicy、HPA、PDB、Quota、LimitRange、PriorityClass；已支持当前身份 can-i 解释 | Headlamp、Lens、平台产品 | 已可查看高频治理对象、关键关系并解释访问拒绝 | 后续补 VPA 和更深的关联导航 | 已完成主体 |
 
-P0 合计约 26–40 人周。如果只做 1 名工程师，等于 6–9 个月；如果目标是快速形成竞争力，建议至少 2 名工程师并行，并把 P0 拆成 2–3 个里程碑。
+按当前实现重新估算，P0 剩余主要是 Ephemeral Container、Port-forward、Helm 写生命周期、结构化表单补齐以及拓扑增强，约 12–20 人周。该区间仍只用于量级判断，实际排期需要结合安全评审和真实集群验证。
 
 ### 5.2 P1：竞争力与可观测性
 
 | ID | Gap | Dosh 当前状态 | 主流基线 | 业务影响 | 建议补齐 | 粗估 |
 |---|---|---|---|---|---|---|
 | GAP-10 | 历史指标与告警 | 只有 Metrics API 瞬时 CPU/内存 | Lens metrics、Headlamp Prometheus 插件、KubeSphere/Rancher/Devtron 监控 | 无法看趋势、容量规划和告警 | Prometheus/VictoriaMetrics 适配器、节点/Pod/工作负载图表、告警状态；不可用时无障碍降级 | 4–6 人周 |
-| GAP-11 | 日志聚合、Previous、检索 | ◐ 单 Pod 实时流、Previous、容器/tail/时间戳/关键词筛选已实现 | Lens、Headlamp、平台产品更强 | CrashLoop 恢复后已可查看上一轮日志，跨 Pod 排障效率仍有限 | 补 Init Container、时间范围、跨 Pod 聚合和 Loki 等后端 | 2–4 人周 |
-| GAP-12 | 全局搜索、保存视图、Diff | ◐ 全局搜索仅节点/工作负载/Pod；通用资源编辑已提供 YAML Diff，尚缺保存视图、收藏和自定义列 | Headlamp/Lens 通用搜索；平台产品有保存视图 | 资源多时查找效率低，变更预览已覆盖通用资源 | 全资源搜索、保存筛选、收藏、自定义列、最近使用模板、资源历史 | 2–3 人周 |
+| GAP-11 | 日志聚合、Previous、检索 | ◐ 单 Pod 实时流、Previous、Init Container、容器/tail/时间戳/时间范围/关键词筛选已实现 | Lens、Headlamp、平台产品更强 | CrashLoop 和 Init Container 排障已可在单 Pod 内完成，跨 Pod 排障效率仍有限 | 补跨 Pod 聚合、Loki 等后端和可配置保留策略 | 剩余 1–3 人周 |
+| GAP-12 | 全局搜索、保存视图、Diff | ◐ 已有已授权通用资源搜索、保存视图、收藏、隐藏列、最近资源、本地模板和 YAML Diff；全局搜索仍限制类型数量并要求命名空间上下文 | Headlamp/Lens 通用搜索；平台产品有保存视图 | 日常资源定位和编辑效率已明显提升，但超大集群的全资源索引仍不足 | 服务端搜索索引、跨命名空间聚合、用户偏好同步和资源历史 | 剩余 1–2 人周 |
 | GAP-13 | 策略预检、镜像漏洞和健康评分 | 无 | Devtron、Rancher、KubeSphere，Headlamp 可通过 Kyverno/Trivy 插件 | 高风险配置和漏洞只能在集群外发现 | Kyverno/OPA Dry Run 预检、Trivy 镜像扫描、工作负载健康评分、风险提示 | 4–6 人周 |
 | GAP-14 | 审计运营化 | 最近记录 + stdout/Webhook | 企业平台有集中审计、保留、检索和告警 | 当前更适合技术审计，不足以直接满足企业 SIEM 运营 | 明确保留策略、SIEM 投递、检索、告警、访问审批和证据导出 | 3–5 人周 + 外部运营 |
 
@@ -250,36 +251,36 @@ Dosh 的核心竞争力应该是轻量、安全、可审计、移动端可用、
 
 ## 6. 建议的实施顺序
 
-### 6.1 阶段 A：资源模型基础，2–4 周
+### 6.1 阶段 A：资源模型基础，已完成主体
 
-- GAP-01：API Discovery 和通用资源模型。
-- GAP-09：先覆盖 RBAC、NetworkPolicy、HPA、PDB、Quota 等高频资源。
-- GAP-11 的小范围：先补 `previous` 日志和日志筛选。
+- ✅ GAP-01：API Discovery 和通用资源模型。
+- ✅ GAP-09：RBAC、NetworkPolicy、HPA、PDB、Quota 等高频资源和 can-i 解释。
+- ✅ GAP-11 的小范围：`previous` 日志、Init Container、时间范围和关键词筛选。
 
 退出条件：用户能够根据授权浏览任意已发现资源，并能通过统一资源详情页查看 YAML 和事件。
 
-### 6.2 阶段 B：排障闭环，4–8 周
+### 6.2 阶段 B：排障闭环，已完成主体
 
-- GAP-03：Pod Exec / Terminal / Debug。
+- ✅ GAP-03：Pod Exec / Terminal（Ephemeral Container 待补）。
 - GAP-04：Port-forward，建议先管理员和受限命名空间可用。
-- GAP-08：节点 drain/evict 和 PDB 提示。
-- GAP-06：Deployment/StatefulSet revision 和回滚。
+- ✅ GAP-08：节点 drain/evict 和 PDB 提示（故障拓扑待补）。
+- ✅ GAP-06：Deployment/StatefulSet revision 和回滚。
 
 退出条件：常见“Pod 起不来、节点维护、发布失败”三类问题可以在 Dosh 内完成主要诊断和恢复。
 
-### 6.3 阶段 C：发布与编辑能力，4–8 周
+### 6.3 阶段 C：发布与编辑能力，部分完成
 
-- GAP-05：Helm Release 浏览、历史、diff、回滚。
+- ◐ GAP-05：Helm Release 浏览、values、manifest 和 revision history 已完成；diff、升级和回滚待补。
 - GAP-07：StatefulSet、DaemonSet、Job、CronJob 结构化表单。
-- GAP-02：CRD 动态 YAML 和 Schema 校验。
+- ✅ GAP-02：CRD 动态 YAML 和 Schema 校验（字段级文档待补）。
 
 退出条件：不需要频繁跳出 Dosh 去执行 Helm 或 kubectl apply。
 
-### 6.4 阶段 D：可观测性和治理，6–10 周
+### 6.4 阶段 D：可观测性和治理，部分完成
 
 - GAP-10：Prometheus/VictoriaMetrics 历史指标。
-- GAP-11：日志聚合。
-- GAP-12：全资源搜索、保存视图和 Diff。
+- GAP-11：跨 Pod 日志聚合和服务端后端。
+- ◐ GAP-12：已授权通用资源搜索、保存视图、收藏、隐藏列、本地模板和 Diff 已完成；服务端全量索引待补。
 - GAP-13：策略预检和漏洞扫描。
 
 ### 6.5 阶段 E：商业决策门禁
@@ -386,7 +387,7 @@ Dosh 当前已经具备一套不错的安全边界和单集群日常运维闭环
 
 ## 10. 实施进展
 
-截至 2026-11-14，阶段 A 的通用资源只读与受控写入已落地：
+截至 2026-11-15，阶段 A 的通用资源只读与受控写入、阶段 B 的主要排障路径，以及 Helm 只读可见性已落地：
 
 - 新增 API Discovery 类型目录、统一 GVR 校验和通用列表/详情。
 - 通用读取执行 `list`/`get` SubjectAccessReview，并支持命名空间、搜索、cursor 分页和截断提示。
@@ -398,8 +399,13 @@ Dosh 当前已经具备一套不错的安全边界和单集群日常运维闭环
 - 携带 namespace 的 Discovery 使用 `SelfSubjectRulesReview` 缓存过滤当前身份可 list 的资源类型；失败时按失败关闭策略隐藏对应作用域。
 - 全局搜索接入通用资源，但限制为当前身份可 list 的已授权类型、最多 16 个类型，并要求 Namespaced 资源显式选择命名空间。
 - 新增“治理与策略”入口，覆盖 RBAC、NetworkPolicy、HPA、PDB、配额和 PriorityClass，并解释关键资源关系。
-- Pod 日志新增 Previous 实例、关键词筛选，并补齐 `get pods/log` SubjectAccessReview 与 `stream-pod-logs` 审计。
-- 工作负载详情新增发布历史页签，Deployment 使用 ReplicaSet、StatefulSet 使用 ControllerRevision 展示 revision、镜像、变更原因和当前标记。
+- Pod 日志新增 Previous 实例、Init Container、时间范围、关键词筛选，并补齐 `get pods/log` SubjectAccessReview 与 `stream-pod-logs` 审计。
+- 工作负载详情新增发布历史页签，Deployment 使用 ReplicaSet、StatefulSet 使用 ControllerRevision 展示 revision、镜像、变更原因和当前标记；回滚前展示 Pod 模板 Diff。
 - Deployment/StatefulSet 支持通过定向 Merge Patch 回滚，只恢复 Pod 模板与变更原因，保留副本数和其他并发字段，并记录回滚审计；避免状态控制器持续更新导致整体对象 `resourceVersion` 冲突。
+- 节点新增 PDB 感知的排空计划和 Eviction 执行；PDB、Forbidden 或不可驱逐 Pod 会中止后续驱逐，并保留部分结果。
+- Pod 详情新增受 `pods/exec`、CSRF 会话、Shell 白名单、PTY 尺寸约束和审计保护的终端，通过同源 WebSocket 桥接 Kubernetes SPDY Exec。
+- 新增只读 Helm Release 页面，解码 Helm v3 Secret，展示当前 revision、values、manifest、notes、warnings 和历史，并在服务端遮蔽敏感键、Secret payload 与敏感环境变量。
+- 新增权限检查页面，以当前身份执行 SubjectAccessReview，展示允许/拒绝原因、只读模式提示和可复现的 `kubectl auth can-i` 命令。
+- 资源浏览器新增收藏、仅看收藏、保存视图、隐藏列、最近资源、本地模板、草稿恢复、全屏编辑和 Schema 字段搜索；偏好仅保存在浏览器本地。
 
-仍属于后续阶段：CRD Schema/动态表单、多 served version 选择、高风险资源写入策略分层、仅 Patch Pod 模板的回滚、跨 Pod 日志聚合、CRD 事件跳转与保存视图。
+仍属于后续阶段：Ephemeral Container、Port-forward、Helm diff/升级/回滚、跨 Pod 日志聚合、服务端全资源搜索索引、CRD 模板库和字段级文档、故障拓扑增强。

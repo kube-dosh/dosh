@@ -4,7 +4,7 @@ import CodeMirror from "@uiw/react-codemirror";
 import { yaml as yamlLanguage } from "@codemirror/lang-yaml";
 import { EditorView } from "@codemirror/view";
 import { parse, stringify } from "yaml";
-import { CheckCircle2, FileCode2, FormInput, GitCompareArrows, Loader2, Save, TriangleAlert } from "lucide-react";
+import { BookmarkPlus, CheckCircle2, Clock3, FileCode2, FormInput, GitCompareArrows, Loader2, Maximize2, Minimize2, Save, Trash2, TriangleAlert } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/api/client";
 import type { GenericResourceDetail, ResourceCapabilities, ResourceDescriptor, ResourceReference } from "@/api/types";
@@ -13,11 +13,13 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { SchemaResourceForm, schemaIssueSummary } from "@/features/resources/schema-resource-form";
 import { isRecord, validateResourceObject, type ResourceObject } from "@/features/resources/resource-schema";
 import { diffStats, diffYAML } from "@/features/resources/yaml-diff";
 import { useTheme } from "@/lib/theme";
 import { cn } from "@/lib/utils";
+import { clearGenericDraft, deleteGenericTemplate, genericDraft, genericTemplateKey, listGenericTemplates, saveGenericDraft, saveGenericTemplate, type GenericResourceTemplate } from "@/lib/generic-templates";
 
 type EditorMode = "create" | "update";
 type EditorViewMode = "form" | "yaml" | "diff";
@@ -47,6 +49,10 @@ export function GenericResourceEditorDialog({ open, onOpenChange, descriptor, re
   const [value, setValue] = useState("");
   const [view, setView] = useState<EditorViewMode>("yaml");
   const [confirmation, setConfirmation] = useState("");
+  const [expanded, setExpanded] = useState(false);
+  const [templates, setTemplates] = useState<GenericResourceTemplate[]>([]);
+  const [draft, setDraft] = useState<{ yaml: string; savedAt: number }>();
+  const templateStorageKey = useMemo(() => genericTemplateKey(reference.group, reference.version, reference.resource), [reference.group, reference.resource, reference.version]);
   const resourceSchema = useQuery({
     queryKey: ["generic-resource-schema", reference.group, reference.version, reference.resource],
     queryFn: () => api.resourceSchema(reference),
@@ -59,7 +65,15 @@ export function GenericResourceEditorDialog({ open, onOpenChange, descriptor, re
     setValue(mode === "update" && detail ? detail.yaml : genericManifestTemplate(descriptor, namespace));
     setView("yaml");
     setConfirmation("");
+    setTemplates(listGenericTemplates(templateStorageKey));
+    setDraft(genericDraft(templateStorageKey));
   }, [descriptor, detail, mode, namespace, open]);
+
+  useEffect(() => {
+    if (!open || !value.trim()) return;
+    const timer = window.setTimeout(() => saveGenericDraft(templateStorageKey, value), 700);
+    return () => window.clearTimeout(timer);
+  }, [open, templateStorageKey, value]);
 
   const parsed = useMemo(() => parseManifest(value), [value]);
   const metadata = parsed.object && isRecord(parsed.object.metadata) ? parsed.object.metadata : {};
@@ -111,10 +125,22 @@ export function GenericResourceEditorDialog({ open, onOpenChange, descriptor, re
   const diff = useMemo(() => diffYAML(detail?.yaml ?? "", value), [detail?.yaml, value]);
   const stats = useMemo(() => diffStats(diff), [diff]);
   const schemaWarnings = resourceSchema.data?.warnings ?? [];
+  const refreshTemplates = () => {
+    setTemplates(listGenericTemplates(templateStorageKey));
+    setDraft(genericDraft(templateStorageKey));
+  };
+  const saveCurrentTemplate = () => {
+    if (!value.trim()) return;
+    const name = manifestName ? `${manifestName} · ${descriptor.kind}` : `${descriptor.kind} 模板`;
+    saveGenericTemplate(templateStorageKey, name, value);
+    saveGenericDraft(templateStorageKey, value);
+    refreshTemplates();
+    toast.success(`已保存本地模板“${name}”`);
+  };
 
   return (
     <Dialog open={open} onOpenChange={(next) => { if (!save.isPending) onOpenChange(next); }}>
-      <DialogContent className="max-w-5xl">
+      <DialogContent className={cn("max-w-5xl", expanded && "h-[calc(100dvh-1rem)] max-w-[calc(100vw-1rem)] overflow-y-auto")}>
         <DialogHeader className="min-w-0 pr-8">
           <DialogTitle className="flex min-w-0 items-center gap-2"><FileCode2 className="h-5 w-5 shrink-0 text-primary" /><span className="min-w-0 break-words">{mode === "create" ? `创建 ${descriptor.kind}` : `编辑 ${descriptor.kind}`}</span></DialogTitle>
           <DialogDescription className="break-words">{expectedAPIVersion(descriptor)} · {descriptor.namespaced ? namespace || "请选择命名空间" : "集群级资源"} · Schema 表单 / YAML 双模式</DialogDescription>
@@ -136,6 +162,24 @@ export function GenericResourceEditorDialog({ open, onOpenChange, descriptor, re
         {parsed.error ? <SchemaWarning text={`YAML 语法错误：${parsed.error}`} /> : null}
         {issues.length ? <SchemaWarning text={`Schema 校验：${schemaIssueSummary(issues)}`} /> : null}
 
+        <div className="flex min-w-0 flex-wrap items-center justify-end gap-2">
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild><Button variant="outline" size="sm"><BookmarkPlus className="h-4 w-4" />本地模板</Button></DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-64">
+              {draft && draft.yaml !== value ? <DropdownMenuItem onSelect={() => setValue(draft.yaml)}><Clock3 className="h-4 w-4" />恢复最近草稿</DropdownMenuItem> : <DropdownMenuItem disabled><Clock3 className="h-4 w-4" />暂无最近草稿</DropdownMenuItem>}
+              {draft ? <DropdownMenuItem onSelect={() => { clearGenericDraft(templateStorageKey); refreshTemplates(); toast.success("已清除最近草稿"); }}><Trash2 className="h-4 w-4" />清除最近草稿</DropdownMenuItem> : null}
+              {templates.length ? <DropdownMenuSeparator /> : null}
+              {templates.length ? <DropdownMenuLabel>已保存模板</DropdownMenuLabel> : null}
+              {templates.map((item) => (
+                <DropdownMenuItem key={item.id} onSelect={() => setValue(item.yaml)}><FileCode2 className="h-4 w-4" /><span className="min-w-0 flex-1 truncate" title={item.name}>{item.name}</span><button type="button" aria-label={`删除模板 ${item.name}`} onClick={(event) => { event.preventDefault(); event.stopPropagation(); deleteGenericTemplate(templateStorageKey, item.id); refreshTemplates(); }} className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"><Trash2 className="h-3.5 w-3.5" /></button></DropdownMenuItem>
+              ))}
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onSelect={saveCurrentTemplate}><BookmarkPlus className="h-4 w-4" />从当前 YAML 另存模板</DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+          <Button variant="outline" size="sm" onClick={() => setExpanded((current) => !current)}>{expanded ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}{expanded ? "退出全屏" : "全屏编辑"}</Button>
+        </div>
+
         <Tabs value={view} onValueChange={(next) => setView(next as EditorViewMode)} className="min-w-0">
           <TabsList aria-label="资源编辑模式">
             <TabsTrigger value="form"><FormInput className="mr-1 h-3.5 w-3.5" />表单</TabsTrigger>
@@ -156,7 +200,7 @@ export function GenericResourceEditorDialog({ open, onOpenChange, descriptor, re
           </TabsContent>
           <TabsContent value="yaml" className="min-w-0">
             <div className="min-w-0 overflow-hidden rounded-md border">
-              <CodeMirror value={value} onChange={setValue} extensions={[yamlLanguage(), EditorView.lineWrapping]} editable={!save.isPending} height="56vh" theme={theme} basicSetup={{ lineNumbers: true, foldGutter: true, highlightActiveLine: true }} aria-label="YAML 编辑器" />
+              <CodeMirror value={value} onChange={setValue} extensions={[yamlLanguage(), EditorView.lineWrapping]} editable={!save.isPending} height={expanded ? "calc(100dvh - 24rem)" : "56vh"} theme={theme} basicSetup={{ lineNumbers: true, foldGutter: true, highlightActiveLine: true }} aria-label="YAML 编辑器" />
             </div>
           </TabsContent>
           {mode === "update" ? (

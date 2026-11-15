@@ -1,11 +1,11 @@
-import { useDeferredValue, useMemo, useRef, useState, type ChangeEvent } from "react";
+import { useDeferredValue, useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import CodeMirror from "@uiw/react-codemirror";
 import { yaml as yamlLanguage } from "@codemirror/lang-yaml";
 import { EditorView } from "@codemirror/view";
 import {
-  CheckCircle2, Copy, Download, FileCode2, FolderInput, Info, ListChecks, Loader2,
+  BookmarkPlus, CheckCircle2, Clock3, Copy, Download, FileCode2, FolderInput, Info, ListChecks, Loader2,
   RotateCcw, ShieldCheck, TriangleAlert, Upload, WandSparkles, XCircle,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -22,6 +22,9 @@ import { useCapabilities } from "@/features/auth/use-session";
 import { formatYAMLDocuments, inspectYAMLDocuments, setNamespaceOnYAMLDocuments, type ParsedYAMLDocument } from "@/lib/yaml-documents";
 import { copyText } from "@/lib/clipboard";
 import { useTheme } from "@/lib/theme";
+import { clearGenericDraft, deleteGenericTemplate, genericDraft, listGenericTemplates, saveGenericDraft, saveGenericTemplate, type GenericResourceTemplate } from "@/lib/generic-templates";
+
+const yamlTemplateStorageKey = "yaml/create";
 
 type TemplateID = "deployment" | "batch" | "service" | "configmap" | "secret" | "pvc" | "ingress";
 
@@ -254,6 +257,8 @@ export function YAMLCreatePage() {
   const [execution, setExecution] = useState<ExecutionResult | null>(null);
   const [progress, setProgress] = useState<ExecutionProgress | null>(null);
   const [resultDialog, setResultDialog] = useState<YAMLResource | null>(null);
+  const [localTemplates, setLocalTemplates] = useState<GenericResourceTemplate[]>(() => listGenericTemplates(yamlTemplateStorageKey));
+  const [draft, setDraft] = useState(() => genericDraft(yamlTemplateStorageKey));
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const apply = useMutation({
@@ -292,6 +297,25 @@ export function YAMLCreatePage() {
     onError: (error) => toast.error(error instanceof Error ? error.message : "YAML 应用失败"),
     onSettled: () => setProgress(null),
   });
+
+  useEffect(() => {
+    if (!value.trim()) return;
+    const timer = window.setTimeout(() => saveGenericDraft(yamlTemplateStorageKey, value), 700);
+    return () => window.clearTimeout(timer);
+  }, [value]);
+
+  const refreshLocalTemplates = () => {
+    setLocalTemplates(listGenericTemplates(yamlTemplateStorageKey));
+    setDraft(genericDraft(yamlTemplateStorageKey));
+  };
+  const saveCurrentTemplate = () => {
+    const first = inspection.documents[0];
+    const name = first ? `${first.kind} · ${first.name}` : "自定义 YAML 模板";
+    saveGenericTemplate(yamlTemplateStorageKey, name, value);
+    saveGenericDraft(yamlTemplateStorageKey, value);
+    refreshLocalTemplates();
+    toast.success(`已保存本地模板“${name}”`);
+  };
 
   const replaceValue = (next: string) => {
     setValue(next);
@@ -406,6 +430,18 @@ export function YAMLCreatePage() {
                     {template.label}
                   </Button>
                 ))}
+              </div>
+              <div className="flex min-w-0 flex-wrap items-center gap-2 border-t pt-3">
+                <span className="text-xs font-medium text-muted-foreground">本地模板</span>
+                {draft && draft.yaml !== value ? <Button type="button" size="sm" variant="outline" onClick={() => { replaceValue(draft.yaml); toast.success("已恢复最近草稿"); }}><Clock3 className="h-3.5 w-3.5" />最近草稿</Button> : null}
+                {localTemplates.map((item) => (
+                  <span key={item.id} className="inline-flex min-w-0 max-w-full items-center rounded-md border bg-card pl-2 text-xs">
+                    <button type="button" onClick={() => { replaceValue(item.yaml); toast.success(`已应用模板“${item.name}”`); }} className="max-w-52 truncate py-1.5 pr-1 text-left hover:text-primary" title={item.name}>{item.name}</button>
+                    <button type="button" aria-label={`删除模板 ${item.name}`} onClick={() => { deleteGenericTemplate(yamlTemplateStorageKey, item.id); refreshLocalTemplates(); toast.success("已删除本地模板"); }} className="ml-1 rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"><XCircle className="h-3.5 w-3.5" /></button>
+                  </span>
+                ))}
+                {draft ? <Button type="button" size="sm" variant="ghost" className="h-8 px-2 text-xs text-muted-foreground" onClick={() => { clearGenericDraft(yamlTemplateStorageKey); refreshLocalTemplates(); toast.success("已清除最近草稿"); }}>清除草稿</Button> : null}
+                <Button type="button" size="sm" variant="outline" onClick={saveCurrentTemplate} disabled={!value.trim()} className="ml-auto"><BookmarkPlus className="h-3.5 w-3.5" />另存当前</Button>
               </div>
               <div className="grid min-w-0 gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
                 <div className="min-w-0 rounded-md border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">

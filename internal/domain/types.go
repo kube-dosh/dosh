@@ -2,6 +2,7 @@ package domain
 
 import (
 	"context"
+	"io"
 	"time"
 )
 
@@ -48,6 +49,9 @@ type Capabilities struct {
 	RevealSecrets     bool                            `json:"revealSecrets"`
 	EditYAML          bool                            `json:"editYAML"`
 	NodeCordon        bool                            `json:"nodeCordon"`
+	NodeDrain         bool                            `json:"nodeDrain"`
+	PodExec           bool                            `json:"podExec"`
+	HelmReleases      bool                            `json:"helmReleases"`
 	ReloadCertificate bool                            `json:"reloadCertificate"`
 	ResourceActions   map[string]ResourceCapabilities `json:"resourceActions,omitempty"`
 }
@@ -135,6 +139,21 @@ type Access struct {
 	Subresource string
 	Namespace   string
 	Name        string
+}
+
+// AccessReview explains one authorization decision for the current identity.
+// It mirrors kubectl auth can-i without exposing another user's permissions.
+type AccessReview struct {
+	Allowed        bool   `json:"allowed"`
+	Verb           string `json:"verb"`
+	APIGroup       string `json:"apiGroup,omitempty"`
+	Resource       string `json:"resource"`
+	Subresource    string `json:"subresource,omitempty"`
+	Namespace      string `json:"namespace,omitempty"`
+	Name           string `json:"name,omitempty"`
+	Reason         string `json:"reason"`
+	Guidance       string `json:"guidance"`
+	KubectlCommand string `json:"kubectlCommand"`
 }
 
 type Authorizer interface {
@@ -289,6 +308,51 @@ type NodeTaintUpdate struct {
 	ResourceVersion string  `json:"resourceVersion,omitempty"`
 }
 
+// NodeDrainOptions controls a user-confirmed node maintenance operation. Dosh
+// never enables force deletion implicitly; skipped safety checks must be
+// explicit and are recorded in the returned plan/result.
+type NodeDrainOptions struct {
+	IgnoreDaemonSets bool   `json:"ignoreDaemonSets"`
+	Force            bool   `json:"force"`
+	TimeoutSeconds   int    `json:"timeoutSeconds"`
+	Confirmation     string `json:"confirmation"`
+}
+
+// NodeDrainPod describes how one Pod is treated by a drain operation.
+type NodeDrainPod struct {
+	Name        string   `json:"name"`
+	Namespace   string   `json:"namespace"`
+	Status      string   `json:"status"`
+	OwnerKind   string   `json:"ownerKind,omitempty"`
+	OwnerName   string   `json:"ownerName,omitempty"`
+	Action      string   `json:"action"`
+	Reason      string   `json:"reason,omitempty"`
+	PDBNames    []string `json:"pdbNames,omitempty"`
+	EvictionErr string   `json:"evictionError,omitempty"`
+}
+
+// NodeDrainPlan is a bounded, non-mutating preview of a drain request.
+type NodeDrainPlan struct {
+	Node          string         `json:"node"`
+	Unschedulable bool           `json:"unschedulable"`
+	Pods          []NodeDrainPod `json:"pods"`
+	EvictCount    int            `json:"evictCount"`
+	SkippedCount  int            `json:"skippedCount"`
+	Warnings      []string       `json:"warnings,omitempty"`
+}
+
+// NodeDrainResult summarizes a completed or partially completed drain.
+type NodeDrainResult struct {
+	Node         string         `json:"node"`
+	Cordoned     bool           `json:"cordoned"`
+	Pods         []NodeDrainPod `json:"pods"`
+	EvictedCount int            `json:"evictedCount"`
+	BlockedCount int            `json:"blockedCount"`
+	FailedCount  int            `json:"failedCount"`
+	SkippedCount int            `json:"skippedCount"`
+	Warnings     []string       `json:"warnings,omitempty"`
+}
+
 type Namespace struct {
 	Name            string            `json:"name"`
 	Status          string            `json:"status"`
@@ -368,6 +432,7 @@ type WorkloadRevision struct {
 	Replicas      int32     `json:"replicas"`
 	ReadyReplicas int32     `json:"readyReplicas"`
 	Images        []string  `json:"images"`
+	Template      string    `json:"template,omitempty"`
 	CreatedAt     time.Time `json:"createdAt"`
 }
 
@@ -481,6 +546,7 @@ type CronJobSuspendUpdate struct {
 type Container struct {
 	Name               string `json:"name"`
 	Image              string `json:"image"`
+	Init               bool   `json:"init,omitempty"`
 	Ready              bool   `json:"ready"`
 	RestartCount       int32  `json:"restartCount"`
 	State              string `json:"state"`
@@ -514,6 +580,60 @@ type PodDetail struct {
 	Conditions     []Condition `json:"conditions"`
 	QOSClass       string      `json:"qosClass"`
 	ServiceAccount string      `json:"serviceAccount"`
+}
+
+// TerminalSize is one PTY resize request.
+type TerminalSize struct {
+	Columns uint16
+	Rows    uint16
+}
+
+// PodTerminalSession is a duplex PTY stream. Implementations combine stdout and
+// stderr when TTY mode is enabled and expose Wait for the remote command exit.
+type PodTerminalSession interface {
+	io.Reader
+	io.Writer
+	Resize(size TerminalSize)
+	Wait() error
+	Close() error
+}
+
+// PodTerminalOptions identifies the container, shell command and initial PTY
+// dimensions. Commands are executed as argument vectors, never through a local
+// shell.
+type PodTerminalOptions struct {
+	Container string
+	Command   []string
+	TTY       bool
+	Size      TerminalSize
+}
+
+// HelmReleaseSummary is one read-only Helm release revision exposed without
+// downloading or mutating the release.
+type HelmReleaseSummary struct {
+	Name         string    `json:"name"`
+	Namespace    string    `json:"namespace"`
+	Chart        string    `json:"chart"`
+	ChartVersion string    `json:"chartVersion"`
+	AppVersion   string    `json:"appVersion,omitempty"`
+	Revision     int       `json:"revision"`
+	Status       string    `json:"status"`
+	Description  string    `json:"description,omitempty"`
+	UpdatedAt    time.Time `json:"updatedAt,omitempty"`
+}
+
+// HelmReleaseDetail contains redacted values and manifest data. The platform
+// layer reads Helm storage; the application layer performs redaction before
+// this type reaches an HTTP response.
+type HelmReleaseDetail struct {
+	HelmReleaseSummary
+	FirstDeployed time.Time            `json:"firstDeployed,omitempty"`
+	LastDeployed  time.Time            `json:"lastDeployed,omitempty"`
+	Notes         string               `json:"notes,omitempty"`
+	Values        string               `json:"values"`
+	Manifest      string               `json:"manifest"`
+	History       []HelmReleaseSummary `json:"history"`
+	Warnings      []string             `json:"warnings,omitempty"`
 }
 
 type Event struct {

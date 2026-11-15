@@ -243,9 +243,12 @@ cd web && npm run e2e:chromium -- --grep "YAML|集群配置"
 - ✅ 已增加全 served version API Discovery、CRD 受控写入、OpenAPI Schema 预检和动态表单；Schema 不可用时回退 YAML。
 - ✅ 通用资源编辑器增加 YAML/表单双模式、Schema 字段提示、变更预览和高风险资源名称确认。
 - ✅ 资源浏览器、列表、详情、编辑器和删除确认已纳入 320px/390px、大字体、Android、Firefox 与 axe 验收。
-- 增加折叠、搜索结果导航、Schema 字段搜索和编辑器全屏模式。
-- 增加最近使用模板、资源历史和从已有资源“另存为 YAML”。
-- 增加最近使用模板、资源历史和从已有资源“另存为 YAML”。
+- ✅ 增加 Schema 字段搜索和编辑器全屏模式。
+- ✅ 增加本地模板、最近草稿恢复、最近资源和从已有 YAML 保存为模板。
+- ✅ 通用资源浏览器增加收藏、仅看收藏、保存视图和隐藏列；偏好保存在浏览器本地。
+- ✅ Pod 日志增加 Previous、Init Container、时间范围和关键词筛选；工作负载回滚增加 Pod 模板 Diff。
+- ✅ 增加 PDB 感知节点排空、Pod 终端、Helm 只读 Release 可见性和当前身份权限检查。
+- 服务端同步用户偏好、跨设备保存视图和完整资源历史仍待排期。
 - 扩展集群配置字段：kube-proxy 模式、NodePort 范围、Pod/Service 双栈、CNI 配置来源和集群创建时间。
 
 ### P2：企业治理

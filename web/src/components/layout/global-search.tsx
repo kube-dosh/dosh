@@ -1,7 +1,7 @@
-import { useDeferredValue, useState } from "react";
+import { useDeferredValue, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
-import { Boxes, CircleDot, Layers3, Search, Server } from "lucide-react";
+import { Boxes, CircleDot, Clock3, Layers3, Search, Server, Trash2 } from "lucide-react";
 import { api } from "@/api/client";
 import { NamespaceSelect } from "@/components/layout/namespace-select";
 import { Button } from "@/components/ui/button";
@@ -9,12 +9,15 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { StatusBadge } from "@/components/feedback/status-badge";
+import { clearRecentResources, recentResources, useResourcePreferencesRevision } from "@/lib/resource-preferences";
 
 export function GlobalSearch({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
   const [term, setTerm] = useState("");
   const [namespace, setNamespace] = useState("");
   const deferred = useDeferredValue(term.trim());
   const navigate = useNavigate();
+  const preferencesRevision = useResourcePreferencesRevision();
+  const recent = useMemo(() => recentResources(6), [preferencesRevision, open]);
   const enabled = open && deferred.length >= 2;
   const nodes = useQuery({ queryKey: ["search", "nodes", deferred], queryFn: () => api.nodes({ q: deferred, pageSize: 50 }), enabled, staleTime: 10_000 });
   const workloads = useQuery({ queryKey: ["search", "workloads", deferred], queryFn: () => api.workloads({ q: deferred, pageSize: 50 }), enabled, staleTime: 10_000 });
@@ -45,7 +48,7 @@ export function GlobalSearch({ open, onOpenChange }: { open: boolean; onOpenChan
       <DialogContent className="max-w-2xl gap-3 p-0">
         <DialogHeader className="border-b px-5 py-4">
           <DialogTitle className="text-base">搜索集群资源</DialogTitle>
-          <DialogDescription>搜索节点、工作负载、Pod 和已授权通用资源，至少输入两个字符。</DialogDescription>
+          <DialogDescription>搜索节点、工作负载、Pod 和已授权通用资源；输入至少两个字符，或从最近访问继续。</DialogDescription>
         </DialogHeader>
         <div className="px-5">
           <div className="relative">
@@ -58,7 +61,12 @@ export function GlobalSearch({ open, onOpenChange }: { open: boolean; onOpenChan
           </div>
         </div>
         <div className="max-h-[60vh] overflow-y-auto px-3 pb-4 scrollbar-thin">
-          {!enabled ? <p className="px-2 py-8 text-center text-sm text-muted-foreground">输入资源名称开始搜索</p> : null}
+          {!enabled && !recent.length ? <p className="px-2 py-8 text-center text-sm text-muted-foreground">输入资源名称开始搜索</p> : null}
+          {!enabled && recent.length ? <SearchGroup label="最近访问" icon={Clock3}>
+            <div className="flex justify-end px-2 pb-1"><Button variant="ghost" size="sm" className="h-7 px-2 text-xs" onClick={() => clearRecentResources()}><Trash2 className="h-3.5 w-3.5" />清除记录</Button></div>
+            {recent.map((item) => <SearchRow key={item.path} title={item.title} subtitle={item.subtitle} onClick={() => closeAndNavigate(() => void navigate({ to: item.path }))} />)}
+          </SearchGroup> : null}
+          {!enabled && recent.length < 1 && term.trim().length === 1 ? <p className="px-2 py-4 text-center text-xs text-muted-foreground">再输入一个字符开始搜索</p> : null}
           {enabled && failedGroups.length ? <div role="alert" className="mx-2 my-2 flex items-center justify-between gap-3 rounded-md border border-warning/35 bg-warning/10 px-3 py-2 text-xs text-warning"><span>{failedGroups.join("、")}资源加载失败</span><Button variant="ghost" size="sm" className="h-7 px-2 text-xs" onClick={() => { void nodes.refetch(); void workloads.refetch(); void pods.refetch(); void resources.refetch(); }}>重试</Button></div> : null}
           {enabled && resources.data?.warnings?.length ? <div role="status" className="mx-2 my-2 rounded-md border border-warning/35 bg-warning/10 px-3 py-2 text-xs text-warning">{resources.data.warnings.join("；")}</div> : null}
           {loading ? <div className="space-y-2 p-2">{Array.from({ length: 4 }).map((_, index) => <Skeleton key={index} className="h-10 w-full" />)}</div> : null}

@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Link, useNavigate, useSearch } from "@tanstack/react-router";
 import { createColumnHelper } from "@tanstack/react-table";
-import { Eye, FileCode2, Server, Settings2, ShieldOff, ShieldCheck } from "lucide-react";
+import { Eye, FileCode2, Server, Settings2, ShieldAlert, ShieldOff, ShieldCheck } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/api/client";
 import type { NodeSummary } from "@/api/types";
@@ -16,6 +16,7 @@ import { ResourceActionsMenu, type ResourceAction } from "@/components/resources
 import { YamlDialog } from "@/components/resources/yaml-dialog";
 import { Badge } from "@/components/ui/badge";
 import { useCapabilities } from "@/features/auth/use-session";
+import { NodeDrainDialog } from "@/features/nodes/node-drain-dialog";
 import { cursorPaginationProps, retryListQuery, useCursorPagination } from "@/hooks/use-cursor-pagination";
 import { formatAge, formatCPU, formatMemory } from "@/lib/utils";
 
@@ -26,6 +27,7 @@ export function NodesPage() {
   const navigate = useNavigate();
   const q = search.q ?? "";
   const [yamlTarget, setYamlTarget] = useState<NodeSummary>();
+  const [drainTarget, setDrainTarget] = useState<NodeSummary>();
   const pager = useCursorPagination(`nodes|${q}`, 20);
   const query = useQuery({
     queryKey: ["nodes", q, pager.page, pager.cursor],
@@ -44,6 +46,7 @@ export function NodesPage() {
     { label: "标签与污点", icon: <Settings2 className="h-4 w-4" />, onSelect: () => void navigate({ to: "/nodes/$name", params: { name: node.name } }) },
     { label: "查看 YAML", icon: <FileCode2 className="h-4 w-4" />, onSelect: () => setYamlTarget(node) },
     { label: node.unschedulable ? "恢复调度" : "停止调度", icon: node.unschedulable ? <ShieldCheck className="h-4 w-4" /> : <ShieldOff className="h-4 w-4" />, onSelect: () => setScheduling.mutate(node), disabled: !capabilities?.nodeCordon, separatorBefore: true },
+    { label: "排空节点", icon: <ShieldAlert className="h-4 w-4" />, onSelect: () => setDrainTarget(node), disabled: !capabilities?.nodeDrain },
   ];
   return (
     <>
@@ -68,6 +71,7 @@ export function NodesPage() {
         empty={<div className="flex flex-col items-center gap-2"><Server className="h-6 w-6" /><span>没有匹配的节点</span></div>}
       />
       <YamlDialog open={Boolean(yamlTarget)} onOpenChange={(open) => { if (!open) setYamlTarget(undefined); }} type="node" name={yamlTarget?.name ?? ""} />
+      {drainTarget ? <NodeDrainDialog node={drainTarget} open onOpenChange={(open) => { if (!open) setDrainTarget(undefined); }} /> : null}
     </>
   );
 }

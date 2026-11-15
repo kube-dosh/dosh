@@ -265,3 +265,24 @@ func TestCapabilitiesRouteUsesSessionActorAndNamespace(t *testing.T) {
 		t.Fatalf("outer-namespace capabilities = %#v", capabilities)
 	}
 }
+
+func TestAccessReviewRouteUsesQueryConditions(t *testing.T) {
+	server := newAuthTestServerWithAuthorizer(t, namespaceCapabilityAuthorizer{namespace: "team-a"})
+	cookie, _ := login(t, server)
+	headers := map[string]string{"Cookie": cookie.String()}
+	response := performJSON(server.router, http.MethodGet, "/api/v1/capabilities/review?verb=create&resource=pods&subresource=exec&namespace=team-a&name=api-0", "", headers)
+	if response.Code != http.StatusOK {
+		t.Fatalf("review status = %d, body = %s", response.Code, response.Body.String())
+	}
+	var review domain.AccessReview
+	if err := json.Unmarshal(response.Body.Bytes(), &review); err != nil {
+		t.Fatalf("decode review: %v", err)
+	}
+	if !review.Allowed || review.Reason != "allowed" || review.Namespace != "team-a" || review.Name != "api-0" || review.Subresource != "exec" {
+		t.Fatalf("review = %#v", review)
+	}
+	missing := performJSON(server.router, http.MethodGet, "/api/v1/capabilities/review?verb=create", "", headers)
+	if missing.Code != http.StatusBadRequest {
+		t.Fatalf("missing resource status = %d, body = %s", missing.Code, missing.Body.String())
+	}
+}

@@ -1,10 +1,12 @@
 package workloadshttp
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"io"
 	stdhttp "net/http"
 	"strconv"
+	"sync"
 	"unicode/utf8"
 
 	"dosh/internal/domain"
@@ -13,6 +15,7 @@ import (
 	"dosh/internal/platform/requestid"
 
 	"github.com/go-chi/chi/v5"
+	"golang.org/x/net/websocket"
 )
 
 type Handler struct {
@@ -382,6 +385,7 @@ func (h *Handler) Logs(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		httpx.BoolQuery(r, "previous", false),
 		tailLines,
 		httpx.BoolQuery(r, "timestamps", false),
+		parseInt64Query(r, "sinceSeconds"),
 	)
 	if err != nil {
 		httpx.Error(w, r, err)
@@ -433,6 +437,14 @@ func (h *Handler) Logs(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	}
 }
 
+func parseInt64Query(r *stdhttp.Request, key string) int64 {
+	value, err := strconv.ParseInt(httpx.Query(r, key), 10, 64)
+	if err != nil {
+		return 0
+	}
+	return value
+}
+
 type logStreamFrame struct {
 	Type      string `json:"type"`
 	Data      string `json:"data,omitempty"`
@@ -477,4 +489,115 @@ func (h *Handler) Mount(r chi.Router) {
 	r.Get("/pods/{namespace}/{name}", h.GetPod)
 	r.Delete("/pods/{namespace}/{name}", h.DeletePod)
 	r.Get("/pods/{namespace}/{name}/logs", h.Logs)
+	r.Get("/pods/{namespace}/{name}/terminal", h.Terminal)
+}
+
+type terminalMessage struct {
+	Type    string `json:"type"`
+	Data    string `json:"data,omitempty"`
+	Columns uint16 `json:"columns,omitempty"`
+	Rows    uint16 `json:"rows,omitempty"`
+	Message string `json:"message,omitempty"`
+}
+
+// Terminal upgrades the request to a same-origin WebSocket and bridges it to a
+// Kubernetes SPDY exec stream. The Kubernetes SubjectAccessReview is checked by
+// the application service before the remote shell is opened.
+func (h *Handler) Terminal(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	actor, _ := domain.ActorFromContext(r.Context())
+	namespace := chi.URLParam(r, "namespace")
+	name := chi.URLParam(r, "name")
+	shell := httpx.Query(r, "shell")
+	command := terminalCommand(shell)
+	columns, rows := terminalSize(httpx.Query(r, "cols"), httpx.Query(r, "rows"))
+	session, err := h.service.OpenTerminal(r.Context(), actor, namespace, name, domain.PodTerminalOptions{
+		Container: httpx.Query(r, "container"),
+		Command:   command,
+		TTY:       true,
+		Size:      domain.TerminalSize{Columns: columns, Rows: rows},
+	})
+	if err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	defer session.Close()
+	websocket.Handler(func(conn *websocket.Conn) {
+		defer conn.Close()
+		var writeMu sync.Mutex
+		send := func(message terminalMessage) bool {
+			writeMu.Lock()
+			defer writeMu.Unlock()
+			return websocket.JSON.Send(conn, message) == nil
+		}
+		send(terminalMessage{Type: "ready"})
+		go func() {
+			buffer := make([]byte, 4096)
+			for {
+				count, err := session.Read(buffer)
+				if count > 0 {
+					if !send(terminalMessage{Type: "output", Data: base64.StdEncoding.EncodeToString(buffer[:count])}) {
+						return
+					}
+				}
+				if err != nil {
+					waitErr := session.Wait()
+					message := "会话已结束"
+					if waitErr != nil {
+						message = waitErr.Error()
+					}
+					_ = send(terminalMessage{Type: "exit", Message: message})
+					return
+				}
+			}
+		}()
+		for {
+			var message terminalMessage
+			if err := websocket.JSON.Receive(conn, &message); err != nil {
+				return
+			}
+			switch message.Type {
+			case "input":
+				data, err := base64.StdEncoding.DecodeString(message.Data)
+				if err != nil {
+					_ = send(terminalMessage{Type: "error", Message: "输入编码无效"})
+					continue
+				}
+				if len(data) > 8192 {
+					_ = send(terminalMessage{Type: "error", Message: "单次输入过大"})
+					continue
+				}
+				if _, err := session.Write(data); err != nil {
+					_ = send(terminalMessage{Type: "error", Message: err.Error()})
+					return
+				}
+			case "resize":
+				if message.Columns >= 20 && message.Columns <= 300 && message.Rows >= 5 && message.Rows <= 100 {
+					session.Resize(domain.TerminalSize{Columns: message.Columns, Rows: message.Rows})
+				}
+			}
+		}
+	}).ServeHTTP(w, r)
+}
+
+func terminalCommand(shell string) []string {
+	switch shell {
+	case "bash":
+		return []string{"/bin/bash"}
+	case "ash":
+		return []string{"/bin/ash"}
+	default:
+		return []string{"/bin/sh"}
+	}
+}
+
+func terminalSize(columnsRaw, rowsRaw string) (uint16, uint16) {
+	columns, _ := strconv.Atoi(columnsRaw)
+	rows, _ := strconv.Atoi(rowsRaw)
+	if columns < 20 || columns > 300 {
+		columns = 100
+	}
+	if rows < 5 || rows > 100 {
+		rows = 30
+	}
+	return uint16(columns), uint16(rows)
 }

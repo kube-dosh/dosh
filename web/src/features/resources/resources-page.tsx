@@ -1,8 +1,8 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link, useNavigate, useSearch } from "@tanstack/react-router";
 import { createColumnHelper } from "@tanstack/react-table";
-import { ArrowUpRight, Blocks, TriangleAlert } from "lucide-react";
+import { ArrowUpRight, Blocks, Star, TriangleAlert } from "lucide-react";
 import { api } from "@/api/client";
 import type { ResourceDescriptor } from "@/api/types";
 import { DataTable } from "@/components/data/data-table";
@@ -13,6 +13,7 @@ import { SearchInput } from "@/components/layout/search-input";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
+import { favoriteResourceTypes, resourceTypeKey, toggleFavoriteResourceType, useResourcePreferencesRevision } from "@/lib/resource-preferences";
 
 type VisibleResource = ResourceDescriptor & { versions: ResourceDescriptor[] };
 
@@ -40,6 +41,8 @@ export function ResourcesPage() {
   const navigate = useNavigate();
   const q = search.q ?? "";
   const namespace = search.namespace ?? "";
+  const [favoritesOnly, setFavoritesOnly] = useState(false);
+  const preferencesRevision = useResourcePreferencesRevision();
   const groupParam = search.group;
   const group = groupParam === undefined || groupParam === "_core" ? "" : groupParam;
   const query = useQuery({
@@ -48,6 +51,7 @@ export function ResourcesPage() {
     staleTime: 60_000,
   });
   const items = query.data?.items ?? [];
+  const favorites = useMemo(() => new Set(favoriteResourceTypes()), [preferencesRevision]);
   const groups = useMemo(() => Array.from(new Set(items.map((item) => item.group))).sort((left, right) => {
     if (left === right) return 0;
     if (!left) return -1;
@@ -58,13 +62,14 @@ export function ResourcesPage() {
     const needle = q.trim().toLowerCase();
     const matching = items.filter((item) => {
       if (groupParam !== undefined && item.group !== group) return false;
+      if (favoritesOnly && !favorites.has(resourceTypeKey(item.group, item.resource))) return false;
       if (!needle) return true;
       return [item.kind, item.singularName, item.resource, item.group, item.version, ...(item.shortNames ?? []), ...(item.categories ?? [])]
         .filter(Boolean)
         .some((value) => String(value).toLowerCase().includes(needle));
     });
     return collapseResourceVersions(matching);
-  }, [group, groupParam, items, q]);
+  }, [favorites, favoritesOnly, group, groupParam, items, q]);
   const updateSearch = (patch: { q?: string; group?: string; namespace?: string }) => {
     void navigate({ to: "/resources", search: { ...search, ...patch }, replace: true });
   };
@@ -87,6 +92,9 @@ export function ResourcesPage() {
           </SelectContent>
         </Select>
         <NamespaceSelect value={namespace} onChange={(value) => updateSearch({ namespace: value || undefined })} />
+        <button type="button" aria-pressed={favoritesOnly} onClick={() => setFavoritesOnly((value) => !value)} className={cn("inline-flex h-9 items-center gap-1.5 rounded-md border px-3 text-sm transition-colors", favoritesOnly ? "border-warning/40 bg-warning/10 text-warning" : "bg-card text-muted-foreground hover:bg-accent")}>
+          <Star className={cn("h-3.5 w-3.5", favoritesOnly && "fill-current")} />只看收藏
+        </button>
         <span className="text-xs text-muted-foreground sm:ml-auto">共 {filtered.length} 个资源类型 · {items.length} 个 API 版本</span>
       </div>
       {query.data?.warnings?.length ? (
@@ -97,6 +105,16 @@ export function ResourcesPage() {
       ) : null}
       <DataTable
         columns={[
+          column.display({
+            id: "favorite",
+            header: "收藏",
+            size: 44,
+            cell: (info) => {
+              const key = resourceTypeKey(info.row.original.group, info.row.original.resource);
+              const active = favorites.has(key);
+              return <button type="button" aria-label={`${active ? "取消收藏" : "收藏"} ${info.row.original.kind}`} title={active ? "取消收藏" : "收藏资源类型"} onClick={(event) => { event.stopPropagation(); toggleFavoriteResourceType(key); }} className={cn("grid h-7 w-7 place-items-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground", active && "text-warning")}><Star className={cn("h-4 w-4", active && "fill-current")} /></button>;
+            },
+          }),
           column.accessor("kind", {
             header: "Kind",
             cell: (info) => (

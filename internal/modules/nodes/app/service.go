@@ -15,6 +15,8 @@ type Repository interface {
 	ListNodesPage(ctx context.Context, query domain.ListQuery, page domain.PageRequest) (domain.PageResult[domain.NodeSummary], error)
 	GetNode(ctx context.Context, name string) (domain.NodeDetail, error)
 	SetNodeScheduling(ctx context.Context, name string, unschedulable bool) (domain.NodeSummary, error)
+	PlanNodeDrain(ctx context.Context, name string, options domain.NodeDrainOptions) (domain.NodeDrainPlan, error)
+	DrainNode(ctx context.Context, name string, options domain.NodeDrainOptions) (domain.NodeDrainResult, error)
 	SetNodeLabels(ctx context.Context, name string, update domain.NodeLabelUpdate) (domain.NodeDetail, error)
 	SetNodeTaints(ctx context.Context, name string, update domain.NodeTaintUpdate) (domain.NodeDetail, error)
 	ListNamespaces(ctx context.Context, query domain.ListQuery) ([]domain.Namespace, error)
@@ -54,6 +56,68 @@ func (s *Service) Cordon(ctx context.Context, actor domain.Actor, name string) (
 
 func (s *Service) Uncordon(ctx context.Context, actor domain.Actor, name string) (domain.NodeSummary, error) {
 	return s.setScheduling(ctx, actor, name, "uncordon", false)
+}
+
+// PlanDrain previews node eviction without mutating the cluster. Pod names are
+// only returned after the caller's list access is verified in each namespace.
+func (s *Service) PlanDrain(ctx context.Context, actor domain.Actor, name string, options domain.NodeDrainOptions) (domain.NodeDrainPlan, error) {
+	if err := s.authorizer.Require(ctx, actor, domain.Access{Verb: "get", Resource: "nodes", Name: name}); err != nil {
+		return domain.NodeDrainPlan{}, err
+	}
+	plan, err := s.repository.PlanNodeDrain(ctx, name, options)
+	if err != nil {
+		return domain.NodeDrainPlan{}, err
+	}
+	if err := s.authorizeDrainPods(ctx, actor, plan.Pods); err != nil {
+		return domain.NodeDrainPlan{}, err
+	}
+	return plan, nil
+}
+
+func (s *Service) Drain(ctx context.Context, actor domain.Actor, name string, options domain.NodeDrainOptions) (domain.NodeDrainResult, error) {
+	if options.Confirmation != name {
+		return domain.NodeDrainResult{}, fmt.Errorf("%w: 排空节点需要输入节点名称 %q 进行二次确认", domain.ErrInvalid, name)
+	}
+	if err := s.authorizer.Require(ctx, actor, domain.Access{Verb: "update", Resource: "nodes", Name: name}); err != nil {
+		s.audit(ctx, actor, "drain", name, err)
+		return domain.NodeDrainResult{}, err
+	}
+	plan, err := s.repository.PlanNodeDrain(ctx, name, options)
+	if err != nil {
+		s.audit(ctx, actor, "drain", name, err)
+		return domain.NodeDrainResult{}, err
+	}
+	if err := s.authorizeDrainPods(ctx, actor, plan.Pods); err != nil {
+		s.audit(ctx, actor, "drain", name, err)
+		return domain.NodeDrainResult{}, err
+	}
+	for _, pod := range plan.Pods {
+		if pod.Action != "evict" {
+			continue
+		}
+		access := domain.Access{Verb: "create", Resource: "pods", Subresource: "eviction", Namespace: pod.Namespace, Name: pod.Name}
+		if err := s.authorizer.Require(ctx, actor, access); err != nil {
+			s.audit(ctx, actor, "drain", name, err)
+			return domain.NodeDrainResult{}, err
+		}
+	}
+	result, err := s.repository.DrainNode(ctx, name, options)
+	s.audit(ctx, actor, "drain", name, err)
+	return result, err
+}
+
+func (s *Service) authorizeDrainPods(ctx context.Context, actor domain.Actor, pods []domain.NodeDrainPod) error {
+	checked := make(map[string]struct{})
+	for _, pod := range pods {
+		if _, ok := checked[pod.Namespace]; ok {
+			continue
+		}
+		checked[pod.Namespace] = struct{}{}
+		if err := s.authorizer.Require(ctx, actor, domain.Access{Verb: "list", Resource: "pods", Namespace: pod.Namespace}); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s *Service) SetLabels(ctx context.Context, actor domain.Actor, name string, update domain.NodeLabelUpdate) (domain.NodeDetail, error) {

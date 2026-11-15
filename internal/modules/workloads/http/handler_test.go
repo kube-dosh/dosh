@@ -42,6 +42,7 @@ type workloadRepo struct {
 	lastSuspend      domain.CronJobSuspendUpdate
 	lastPropagation  domain.DeletionPropagation
 	lastTailLines    int64
+	lastSinceSeconds int64
 	lastQuery        domain.ListQuery
 	scaleErr         error
 	restartErr       error
@@ -168,9 +169,10 @@ func (r *workloadRepo) DeletePod(_ context.Context, namespace, name string) erro
 	return nil
 }
 
-func (r *workloadRepo) StreamPodLogs(_ context.Context, namespace, name, container string, _, _ bool, tailLines int64, _ bool, _ int64) (io.ReadCloser, error) {
+func (r *workloadRepo) StreamPodLogs(_ context.Context, namespace, name, container string, _, _ bool, tailLines int64, _ bool, sinceSeconds int64, _ int64) (io.ReadCloser, error) {
 	r.lastNamespace, r.lastName = namespace, name
 	r.lastTailLines = tailLines
+	r.lastSinceSeconds = sinceSeconds
 	if r.logsErr != nil {
 		return nil, r.logsErr
 	}
@@ -178,6 +180,10 @@ func (r *workloadRepo) StreamPodLogs(_ context.Context, namespace, name, contain
 		return r.logsReader, nil
 	}
 	return io.NopCloser(strings.NewReader(r.logsPayload)), nil
+}
+
+func (r *workloadRepo) OpenPodTerminal(context.Context, string, string, domain.PodTerminalOptions) (domain.PodTerminalSession, error) {
+	return nil, domain.ErrUnsupported
 }
 
 type failingLogReader struct {
@@ -413,7 +419,7 @@ func TestRestartDeleteAndLogs(t *testing.T) {
 		t.Fatalf("propagation = %q", server.repo.lastPropagation)
 	}
 
-	response = performWorkloadJSON(server.router, http.MethodGet, "/api/v1/pods/prod/api/logs?tailLines=999999", "", map[string]string{"Cookie": server.cookie.String()})
+	response = performWorkloadJSON(server.router, http.MethodGet, "/api/v1/pods/prod/api/logs?tailLines=999999&sinceSeconds=900", "", map[string]string{"Cookie": server.cookie.String()})
 	if response.Code != http.StatusOK {
 		t.Fatalf("logs status = %d, body = %s", response.Code, response.Body.String())
 	}
@@ -429,6 +435,9 @@ func TestRestartDeleteAndLogs(t *testing.T) {
 	}
 	if server.repo.lastTailLines != 5000 {
 		t.Fatalf("tailLines = %d", server.repo.lastTailLines)
+	}
+	if server.repo.lastSinceSeconds != 900 {
+		t.Fatalf("sinceSeconds = %d", server.repo.lastSinceSeconds)
 	}
 }
 

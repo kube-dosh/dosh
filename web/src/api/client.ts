@@ -1,4 +1,5 @@
 import type {
+  AccessReview,
   AuditRecord,
   AuthConfig,
   Capabilities,
@@ -20,12 +21,17 @@ import type {
   IngressClassSummary,
   IngressSummary,
   IngressUpdateInput,
+  HelmReleaseDetail,
+  HelmReleaseSummary,
   ListParams,
   ListResponse,
   NamespaceItem,
   NamespaceCreateInput,
   NamespaceDetail,
   NodeDetail,
+  NodeDrainOptions,
+  NodeDrainPlan,
+  NodeDrainResult,
   NodeLabelUpdate,
   NodeSummary,
   NodeTaintUpdate,
@@ -343,6 +349,8 @@ export const api = {
     setCSRFToken("");
   },
   capabilities: (namespace?: string) => request<Capabilities>(`/api/v1/capabilities${query({ namespace })}`),
+  accessReview: (input: { verb: string; resource: string; apiGroup?: string; subresource?: string; namespace?: string; name?: string }) =>
+    request<AccessReview>(`/api/v1/capabilities/review?${new URLSearchParams(Object.entries(input).filter((entry): entry is [string, string] => typeof entry[1] === "string" && Boolean(entry[1])).map(([key, value]) => [key, value])).toString()}`),
   overview: async () => normalizeOverview(await request<Overview>("/api/v1/overview")),
   clusterConfiguration: async () => {
     const configuration = await request<ClusterConfiguration>("/api/v1/cluster/config");
@@ -357,6 +365,13 @@ export const api = {
   node: async (name: string) => normalizeNodeDetail(await request<NodeDetail>(`/api/v1/nodes/${encodeURIComponent(name)}`)),
   cordonNode: (name: string) => request<NodeSummary>(`/api/v1/nodes/${encodeURIComponent(name)}/cordon`, { method: "POST" }),
   uncordonNode: (name: string) => request<NodeSummary>(`/api/v1/nodes/${encodeURIComponent(name)}/uncordon`, { method: "POST" }),
+  nodeDrainPlan: (name: string, options: { ignoreDaemonSets: boolean; force: boolean }) =>
+    request<NodeDrainPlan>(`/api/v1/nodes/${encodeURIComponent(name)}/drain-plan?${new URLSearchParams({
+      ignoreDaemonSets: String(options.ignoreDaemonSets),
+      force: String(options.force),
+    }).toString()}`),
+  drainNode: (name: string, input: NodeDrainOptions) =>
+    request<NodeDrainResult>(`/api/v1/nodes/${encodeURIComponent(name)}/drain`, { method: "POST", body: JSON.stringify(input) }),
   setNodeLabels: async (name: string, input: NodeLabelUpdate) =>
     normalizeNodeDetail(await request<NodeDetail>(`/api/v1/nodes/${encodeURIComponent(name)}/labels`, { method: "PUT", body: JSON.stringify(input) })),
   setNodeTaints: async (name: string, input: NodeTaintUpdate) =>
@@ -413,6 +428,14 @@ export const api = {
     }),
   pods: (params?: ListParams) => listRequest<PodSummary>(`/api/v1/pods${query(params)}`),
   pod: async (namespace: string, name: string) => normalizePodDetail(await request<PodDetail>(`/api/v1/pods/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}`)),
+  helmReleases: async (namespace: string) => {
+    const value = await request<{ items?: HelmReleaseSummary[]; warnings?: string[] }>(`/api/v1/helm/releases${query({ namespace })}`);
+    return { items: list(value.items), warnings: list(value.warnings) };
+  },
+  helmRelease: async (namespace: string, name: string) => {
+    const value = await request<HelmReleaseDetail>(`/api/v1/helm/releases/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}`);
+    return { ...value, history: list(value.history), warnings: list(value.warnings) };
+  },
   deletePod: (namespace: string, name: string) =>
     request<{ status: string }>(`/api/v1/pods/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}`, { method: "DELETE" }),
   events: (params?: ListParams) => listRequest<EventItem>(`/api/v1/events${query(params)}`),
@@ -531,7 +554,7 @@ export const api = {
 export async function streamLogs(
   namespace: string,
   name: string,
-  options: { container?: string; tailLines?: number; follow?: boolean; previous?: boolean; timestamps?: boolean; signal?: AbortSignal } = {},
+  options: { container?: string; tailLines?: number; follow?: boolean; previous?: boolean; timestamps?: boolean; sinceSeconds?: number; signal?: AbortSignal } = {},
 ): Promise<ReadableStreamDefaultReader<Uint8Array>> {
   const params = new URLSearchParams();
   if (options.container) params.set("container", options.container);
@@ -539,6 +562,7 @@ export async function streamLogs(
   if (options.follow) params.set("follow", "true");
   if (options.previous) params.set("previous", "true");
   if (options.timestamps) params.set("timestamps", "true");
+  if (options.sinceSeconds) params.set("sinceSeconds", String(options.sinceSeconds));
   const response = await fetch(`/api/v1/pods/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}/logs?${params}`, {
     credentials: "same-origin",
     signal: options.signal,

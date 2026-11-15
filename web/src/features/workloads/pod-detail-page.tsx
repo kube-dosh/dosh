@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useParams, useSearch } from "@tanstack/react-router";
 import { createColumnHelper } from "@tanstack/react-table";
-import { Box, FileCode2, ScrollText, Trash2 } from "lucide-react";
+import { Box, FileCode2, ScrollText, Server, TerminalSquare, Trash2 } from "lucide-react";
 import { api } from "@/api/client";
 import type { ContainerInfo } from "@/api/types";
 import { DataTable } from "@/components/data/data-table";
@@ -13,16 +13,19 @@ import { PageHeader } from "@/components/layout/page-header";
 import { DeleteResourceDialog } from "@/components/resources/delete-resource-dialog";
 import { YamlDialog, YamlPanel } from "@/components/resources/yaml-dialog";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ResourceEvents } from "@/features/events/resource-events";
 import { useCapabilities } from "@/features/auth/use-session";
 import { LogViewer } from "@/features/workloads/log-viewer";
+import { PodTerminal } from "@/features/workloads/pod-terminal";
 import { resourceCapabilities } from "@/lib/capabilities";
 import { formatCPU, formatDate, formatMemory } from "@/lib/utils";
 
 const column = createColumnHelper<ContainerInfo>();
-const podTabs = ["overview", "containers", "events", "logs", "yaml"] as const;
+const podTabs = ["overview", "containers", "events", "logs", "terminal", "yaml"] as const;
+const workloadKinds = new Set(["deployment", "statefulset", "daemonset", "job", "cronjob"]);
 type PodTab = (typeof podTabs)[number];
 
 function isPodTab(value: string | undefined): value is PodTab {
@@ -47,6 +50,7 @@ export function PodDetailPage() {
     });
   };
   const capabilities = useCapabilities(params.namespace).data;
+  const canExec = Boolean(capabilities?.podExec);
   const podCaps = resourceCapabilities(capabilities, "pods");
   const query = useQuery({ queryKey: ["pod", params.namespace, params.name], queryFn: () => api.pod(params.namespace, params.name), refetchInterval: 20_000 });
   if (query.isLoading) return <LoadingState label="正在加载 Pod 详情" className="min-h-[60vh]" />;
@@ -64,7 +68,7 @@ export function PodDetailPage() {
         </div>}
       />
       <Tabs value={tab} onValueChange={changeTab}>
-        <TabsList><TabsTrigger value="overview">概览</TabsTrigger><TabsTrigger value="containers">实例 ({pod.containers.length})</TabsTrigger><TabsTrigger value="events">事件</TabsTrigger><TabsTrigger value="logs"><ScrollText className="h-3.5 w-3.5" />日志</TabsTrigger><TabsTrigger value="yaml"><FileCode2 className="h-3.5 w-3.5" />YAML</TabsTrigger></TabsList>
+        <TabsList><TabsTrigger value="overview">概览</TabsTrigger><TabsTrigger value="containers">实例 ({pod.containers.length})</TabsTrigger><TabsTrigger value="events">事件</TabsTrigger><TabsTrigger value="logs"><ScrollText className="h-3.5 w-3.5" />日志</TabsTrigger>{canExec ? <TabsTrigger value="terminal"><TerminalSquare className="h-3.5 w-3.5" />终端</TabsTrigger> : null}<TabsTrigger value="yaml"><FileCode2 className="h-3.5 w-3.5" />YAML</TabsTrigger></TabsList>
         <TabsContent value="overview">
           <div className="grid gap-4 xl:grid-cols-2">
             <Card><CardHeader><CardTitle>Pod 信息</CardTitle></CardHeader><CardContent><dl className="grid gap-5 sm:grid-cols-2">
@@ -82,16 +86,19 @@ export function PodDetailPage() {
               <DetailItem label="内存使用" value={pod.hasMetrics ? formatMemory(pod.memoryUsageBytes ?? 0) : "Metrics 不可用"} />
             </dl></CardContent></Card>
             <Card><CardHeader><CardTitle>控制器与标签</CardTitle></CardHeader><CardContent className="space-y-5">
-              <div><p className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">归属控制器</p>{pod.ownerKind ? <Link to="/workloads" className="inline-flex items-center gap-2 rounded-md border px-3 py-2 text-sm hover:bg-muted"><Box className="h-4 w-4" />{pod.ownerKind}/{pod.ownerName}</Link> : <p className="text-sm text-muted-foreground">无控制器（裸 Pod）</p>}</div>
+              <div><p className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">归属控制器</p>{pod.ownerKind && pod.ownerName ? (workloadKinds.has(pod.ownerKind.toLowerCase()) ? <Link to="/workloads/$kind/$namespace/$name" params={{ kind: pod.ownerKind.toLowerCase(), namespace: pod.namespace, name: pod.ownerName }} search={{}} className="inline-flex min-w-0 items-center gap-2 rounded-md border px-3 py-2 text-sm hover:bg-muted"><Box className="h-4 w-4 shrink-0" /><span className="break-all">{pod.ownerKind}/{pod.ownerName}</span></Link> : <span className="inline-flex items-center gap-2 rounded-md border px-3 py-2 text-sm"><Box className="h-4 w-4" />{pod.ownerKind}/{pod.ownerName}</span>) : <p className="text-sm text-muted-foreground">无控制器（裸 Pod）</p>}</div>
+              <div><p className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">所在节点</p>{pod.node ? <Link to="/nodes/$name" params={{ name: pod.node }} search={{}} className="inline-flex min-w-0 items-center gap-2 rounded-md border px-3 py-2 text-sm hover:bg-muted"><Server className="h-4 w-4 shrink-0" /><span className="break-all">{pod.node}</span></Link> : <p className="text-sm text-muted-foreground">尚未调度</p>}</div>
               <div><p className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">Labels</p><div className="flex flex-wrap gap-1.5">{Object.entries(pod.labels || {}).map(([key, value]) => <span key={key} className="rounded border bg-muted/30 px-2 py-1 font-mono text-[11px]">{key}={value}</span>)}</div></div>
             </CardContent></Card>
             <Card className="xl:col-span-2"><CardHeader><CardTitle>Pod Conditions</CardTitle></CardHeader><CardContent className="space-y-2">{pod.conditions.length ? pod.conditions.map((condition) => <div key={condition.type} className="grid gap-2 rounded-md border px-3 py-2.5 text-sm sm:grid-cols-[180px_120px_1fr]"><span className="font-medium">{condition.type}</span><StatusBadge status={condition.status === "True" ? "Ready" : "Failed"} /><span className="text-muted-foreground">{condition.message || condition.reason || "—"}</span></div>) : <p className="py-6 text-center text-sm text-muted-foreground">暂无 Condition 数据</p>}</CardContent></Card>
           </div>
         </TabsContent>
         <TabsContent value="logs"><LogViewer namespace={pod.namespace} name={pod.name} containers={pod.containers} /></TabsContent>
+        <TabsContent value="terminal"><PodTerminal namespace={pod.namespace} name={pod.name} containers={pod.containers.filter((item) => !item.init)} /></TabsContent>
         <TabsContent value="containers">
           <DataTable columns={[
             column.accessor("name", { header: "容器", cell: (info) => <span className="font-medium">{info.getValue()}</span> }),
+            column.accessor("init", { header: "类型", cell: (info) => info.getValue() ? <Badge variant="secondary">Init</Badge> : <span className="text-xs text-muted-foreground">App</span> }),
             column.accessor("image", { header: "镜像", cell: (info) => <span className="block max-w-96 truncate font-mono text-xs" title={info.getValue()}>{info.getValue()}</span> }),
             column.accessor("ready", { header: "就绪", cell: (info) => <StatusBadge status={info.getValue() ? "Ready" : "NotReady"} /> }),
             column.accessor("state", { header: "状态", cell: (info) => <span>{info.getValue()}{info.row.original.reason ? ` · ${info.row.original.reason}` : ""}</span> }),

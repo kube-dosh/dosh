@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useParams, useSearch } from "@tanstack/react-router";
 import { ArrowLeft, FileCode2, Pencil, Trash2 } from "lucide-react";
@@ -18,6 +18,8 @@ import { GenericResourceEditorDialog } from "@/features/resources/generic-resour
 import { findGovernanceDescriptor, governanceRelationships } from "@/features/resources/governance-resources";
 import { DeleteResourceDialog } from "@/components/resources/delete-resource-dialog";
 import { formatDate } from "@/lib/utils";
+import { rememberResource } from "@/lib/resource-preferences";
+import { OwnerReferences } from "@/features/resources/owner-references";
 
 const detailTabs = ["overview", "events", "yaml"] as const;
 type DetailTab = (typeof detailTabs)[number];
@@ -57,6 +59,12 @@ export function ResourceDetailPage() {
     queryFn: () => api.resource({ group: apiGroup, version: params.version, resource: params.resource }, params.name, namespace),
     enabled: Boolean(descriptor) && !missingNamespace,
   });
+  const loadedDetail = query.data;
+  useEffect(() => {
+    if (!loadedDetail) return;
+    const path = `/resources/${encodeURIComponent(params.group)}/${encodeURIComponent(params.version)}/${encodeURIComponent(params.resource)}/${encodeURIComponent(loadedDetail.name)}${namespace ? `?namespace=${encodeURIComponent(namespace)}` : ""}`;
+    rememberResource({ path, title: loadedDetail.name, subtitle: `${loadedDetail.kind}${loadedDetail.namespace ? ` · ${loadedDetail.namespace}` : " · 集群级"}`, kind: loadedDetail.kind, namespace: loadedDetail.namespace });
+  }, [loadedDetail, namespace, params.group, params.resource, params.version]);
   const changeTab = (value: string) => {
     if (!isDetailTab(value)) return;
     void navigate({
@@ -166,6 +174,7 @@ export function ResourceDetailPage() {
               </CardContent>
             </Card>
           ) : null}
+          <Card className="mt-4"><CardHeader><CardTitle>对象关系</CardTitle></CardHeader><CardContent><OwnerReferences object={detail.object} descriptors={discovery.data?.items ?? []} namespace={namespace} /></CardContent></Card>
           <div className="mt-4"><MetadataCard labels={detail.labels} annotations={detail.annotations} /></div>
         </TabsContent>
         <TabsContent value="events"><ResourceEvents namespace={namespace} objectKind={detail.kind} objectName={detail.name} /></TabsContent>

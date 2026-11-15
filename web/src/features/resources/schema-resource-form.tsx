@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { Plus } from "lucide-react";
+import { Plus, Search } from "lucide-react";
 import { parse, stringify } from "yaml";
 import type { ResourceSchema } from "@/api/types";
 import { Input } from "@/components/ui/input";
@@ -19,6 +19,7 @@ export function SchemaResourceForm({ schema, object, namespaced, issues, disable
   disabled?: boolean;
   onChange: (object: ResourceObject) => void;
 }) {
+  const [fieldFilter, setFieldFilter] = useState("");
   const definitions = schema?.definitions as Record<string, SchemaNode> | undefined;
   const root = useMemo(() => resolveSchemaNode(schema?.schema as SchemaNode | undefined, definitions), [definitions, schema?.schema]);
   const properties = schemaProperties(root.properties);
@@ -31,7 +32,9 @@ export function SchemaResourceForm({ schema, object, namespaced, issues, disable
   }
   const metadata = isRecord(object.metadata) ? object.metadata : {};
   const setMetadata = (key: string, value: unknown) => onChange(setObjectPath(object, ["metadata", key], value));
-  const rootNames = Object.keys(properties).filter((name) => !["apiVersion", "kind", "metadata", "status"].includes(name));
+  const filter = fieldFilter.trim().toLowerCase();
+  const baseRootNames = Object.keys(properties).filter((name) => !["apiVersion", "kind", "metadata", "status"].includes(name));
+  const rootNames = filter ? baseRootNames.filter((name) => schemaNodeHasMatch(properties[name], name, ["$", name], filter, definitions)) : baseRootNames;
   return (
     <div className="min-w-0 space-y-5">
       <section className="min-w-0 rounded-lg border p-3 sm:p-4" aria-labelledby="schema-form-identity">
@@ -65,7 +68,14 @@ export function SchemaResourceForm({ schema, object, namespaced, issues, disable
       </section>
       {rootNames.length ? (
         <section className="min-w-0 rounded-lg border p-3 sm:p-4" aria-labelledby="schema-form-fields">
-          <h3 id="schema-form-fields" className="mb-3 text-sm font-semibold">资源字段</h3>
+          <div className="mb-3 flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <h3 id="schema-form-fields" className="text-sm font-semibold">资源字段</h3>
+            <div className="relative w-full sm:w-64">
+              <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+              <Input value={fieldFilter} onChange={(event) => setFieldFilter(event.target.value)} placeholder="搜索字段名或说明" aria-label="搜索 Schema 字段" className="h-8 pl-8 text-xs" />
+            </div>
+          </div>
+          {filter ? <p className="mb-3 text-xs text-muted-foreground">匹配 {rootNames.length} 个顶层字段；嵌套字段会按名称和说明过滤。</p> : null}
           <div className="min-w-0 space-y-4">
             {rootNames.map((name) => (
               <SchemaField
@@ -79,23 +89,24 @@ export function SchemaResourceForm({ schema, object, namespaced, issues, disable
                 issues={issues}
                 disabled={disabled}
                 depth={0}
+                filter={filter}
                 onChange={(value) => onChange(setObjectPath(object, [name], value))}
               />
             ))}
           </div>
-          <OptionalFieldAdder
+          {!filter ? <OptionalFieldAdder
             properties={properties}
             present={rootNames}
             disabled={disabled}
             onAdd={(name) => onChange(setObjectPath(object, [name], defaultValueForSchema(properties[name], definitions)))}
-          />
+          /> : null}
         </section>
-      ) : null}
+      ) : filter ? <p className="rounded-md border border-dashed px-4 py-8 text-center text-sm text-muted-foreground">没有匹配“{fieldFilter}”的 Schema 字段。</p> : null}
     </div>
   );
 }
 
-function SchemaField({ name, path, schema, value, required, definitions, issues, disabled, depth, onChange }: {
+function SchemaField({ name, path, schema, value, required, definitions, issues, disabled, depth, filter = "", onChange }: {
   name: string;
   path: string[];
   schema: SchemaNode;
@@ -105,6 +116,7 @@ function SchemaField({ name, path, schema, value, required, definitions, issues,
   issues: SchemaIssue[];
   disabled?: boolean;
   depth: number;
+  filter?: string;
   onChange: (value: unknown) => void;
 }) {
   const resolved = useMemo(() => resolveSchemaNode(schema, definitions), [definitions, schema]);
@@ -112,11 +124,14 @@ function SchemaField({ name, path, schema, value, required, definitions, issues,
   const pathText = path.join(".").replace("$.", "");
   const issue = issues.find((item) => item.path === path.join("."));
   const label = fieldLabel(name, path, resolved);
+  const selfMatches = schemaFieldMatches(name, path, resolved, filter);
 
   if (type === "object") {
     const nestedProperties = schemaProperties(resolved.properties);
     const nestedValue = isRecord(value) ? value : {};
-    const visible = Object.keys(nestedProperties).filter((key) => schemaRequired(resolved.required).includes(key) || key in nestedValue);
+    const declared = Object.keys(nestedProperties).filter((key) => schemaRequired(resolved.required).includes(key) || key in nestedValue);
+    const visible = filter && !selfMatches ? declared.filter((key) => schemaNodeHasMatch(nestedProperties[key], key, [...path, key], filter, definitions)) : declared;
+    if (filter && !selfMatches && visible.length === 0) return null;
     return (
       <fieldset className="min-w-0 rounded-md border bg-muted/10 p-3" aria-describedby={issue ? `${fieldID(path)}-error` : undefined}>
         <legend className="px-1 text-sm font-medium">{label}{required ? <span className="ml-1 text-destructive-strong" aria-hidden="true">*</span> : null}</legend>
@@ -137,21 +152,23 @@ function SchemaField({ name, path, schema, value, required, definitions, issues,
                 issues={issues}
                 disabled={disabled}
                 depth={depth + 1}
+                filter={filter}
                 onChange={(nested) => onChange(setObjectPath(nestedValue, [key], nested))}
               />
             ))}
           </div>
         )}
-        <OptionalFieldAdder
+        {!filter ? <OptionalFieldAdder
           properties={nestedProperties}
           present={visible}
           disabled={disabled}
           onAdd={(key) => onChange(setObjectPath(nestedValue, [key], defaultValueForSchema(nestedProperties[key], definitions)))}
-        />
+        /> : null}
         <SchemaIssueText path={path} issue={issue} />
       </fieldset>
     );
   }
+  if (filter && !selfMatches) return null;
   if (type === "array" || type === "int-or-string") {
     return (
       <ArrayOrFreeformField
@@ -239,6 +256,25 @@ function SchemaField({ name, path, schema, value, required, definitions, issues,
       onChange={(next) => onChange(next)}
     />
   );
+}
+
+function schemaFieldMatches(name: string, path: string[], schema: SchemaNode, filter: string): boolean {
+  if (!filter) return true;
+  const pathText = path.join(".").replace("$.", "").toLowerCase();
+  const description = typeof schema.description === "string" ? schema.description.toLowerCase() : "";
+  const title = typeof schema.title === "string" ? schema.title.toLowerCase() : "";
+  return name.toLowerCase().includes(filter) || pathText.includes(filter) || title.includes(filter) || description.includes(filter);
+}
+
+function schemaNodeHasMatch(schema: SchemaNode, name: string, path: string[], filter: string, definitions?: Record<string, SchemaNode>, depth = 0): boolean {
+  if (!filter) return true;
+  const resolved = resolveSchemaNode(schema, definitions);
+  if (schemaFieldMatches(name, path, resolved, filter)) return true;
+  if (depth >= 8) return false;
+  const nested = schemaProperties(resolved.properties);
+  if (Object.keys(nested).some((key) => schemaNodeHasMatch(nested[key], key, [...path, key], filter, definitions, depth + 1))) return true;
+  if (isRecord(resolved.items)) return schemaNodeHasMatch(resolved.items, `${name}[]`, [...path, "[]"], filter, definitions, depth + 1);
+  return false;
 }
 
 function ArrayOrFreeformField({ path, label, required, value, issue, disabled, description, onChange }: {

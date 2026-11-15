@@ -116,6 +116,51 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/capabilities/review": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Explain one SubjectAccessReview decision for the current identity */
+        get: {
+            parameters: {
+                query: {
+                    verb: string;
+                    apiGroup?: string;
+                    resource: string;
+                    subresource?: string;
+                    namespace?: string;
+                    name?: string;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Authorization decision and remediation guidance */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["AccessReview"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                401: components["responses"]["Unauthorized"];
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/auth/config": {
         parameters: {
             query?: never;
@@ -504,6 +549,99 @@ export interface paths {
                         "application/json": components["schemas"]["NodeSummary"];
                     };
                 };
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+                404: components["responses"]["NotFound"];
+                409: components["responses"]["Conflict"];
+                503: components["responses"]["DependencyUnavailable"];
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/nodes/{name}/drain-plan": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Preview Pod eviction, PDBs and skip reasons before draining a node */
+        get: {
+            parameters: {
+                query?: {
+                    ignoreDaemonSets?: boolean;
+                    force?: boolean;
+                };
+                header?: never;
+                path: {
+                    name: components["parameters"]["Name"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Non-mutating drain plan */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["NodeDrainPlan"];
+                    };
+                };
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+                404: components["responses"]["NotFound"];
+                503: components["responses"]["DependencyUnavailable"];
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/nodes/{name}/drain": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Cordon a node and evict eligible Pods with PDB safety checks */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    name: components["parameters"]["Name"];
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["NodeDrainOptions"];
+                };
+            };
+            responses: {
+                /** @description Drain result, including blocked or remaining Pods */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["NodeDrainResult"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
                 401: components["responses"]["Unauthorized"];
                 403: components["responses"]["Forbidden"];
                 404: components["responses"]["NotFound"];
@@ -1487,6 +1625,8 @@ export interface paths {
                     timestamps?: boolean;
                     /** @description Read logs from the previous terminated container instance. */
                     previous?: boolean;
+                    /** @description Only return logs newer than this many seconds. Capped at seven days. */
+                    sinceSeconds?: number;
                 };
                 header?: never;
                 path: {
@@ -1750,6 +1890,146 @@ export interface paths {
                 503: components["responses"]["DependencyUnavailable"];
             };
         };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/pods/{namespace}/{name}/terminal": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Upgrade to a same-origin WebSocket and bridge to Kubernetes Pod exec
+         * @description Requires `create pods/exec` through SubjectAccessReview. Messages are JSON
+         *     text frames. Input and output payloads are base64 encoded. Resize messages
+         *     carry columns and rows. The shell is allow-listed to sh, bash or ash.
+         */
+        get: {
+            parameters: {
+                query: {
+                    container: string;
+                    shell?: "sh" | "bash" | "ash";
+                    cols?: number;
+                    rows?: number;
+                };
+                header?: never;
+                path: {
+                    namespace: components["parameters"]["NamespacePath"];
+                    name: components["parameters"]["Name"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description WebSocket protocol switch */
+                101: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                400: components["responses"]["BadRequest"];
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+                404: components["responses"]["NotFound"];
+                503: components["responses"]["DependencyUnavailable"];
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/helm/releases": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List latest Helm release revisions stored in one namespace */
+        get: {
+            parameters: {
+                query?: {
+                    namespace?: components["parameters"]["Namespace"];
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Helm release summaries and non-fatal decode warnings */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            items: components["schemas"]["HelmReleaseSummary"][];
+                            warnings: string[];
+                        };
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+                503: components["responses"]["DependencyUnavailable"];
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/helm/releases/{namespace}/{name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read one Helm release with redacted values, manifest and history */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    namespace: components["parameters"]["NamespacePath"];
+                    name: components["parameters"]["Name"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Redacted Helm release detail */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["HelmReleaseDetail"];
+                    };
+                };
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+                404: components["responses"]["NotFound"];
+                503: components["responses"]["DependencyUnavailable"];
+            };
+        };
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -3503,10 +3783,26 @@ export interface components {
             revealSecrets: boolean;
             editYAML: boolean;
             nodeCordon: boolean;
+            nodeDrain: boolean;
+            podExec: boolean;
+            helmReleases: boolean;
             reloadCertificate: boolean;
             resourceActions?: {
                 [key: string]: components["schemas"]["ResourceCapabilities"];
             };
+        };
+        AccessReview: {
+            allowed: boolean;
+            verb: string;
+            apiGroup?: string;
+            resource: string;
+            subresource?: string;
+            namespace?: string;
+            name?: string;
+            /** @enum {string} */
+            reason: "allowed" | "read_only" | "rbac_denied" | "authorization_unavailable";
+            guidance: string;
+            kubectlCommand: string;
         };
         ResourceCapabilities: {
             create: boolean;
@@ -3724,6 +4020,42 @@ export interface components {
             taints: components["schemas"]["Taint"][];
             resourceVersion?: string;
         };
+        NodeDrainOptions: {
+            ignoreDaemonSets: boolean;
+            force: boolean;
+            timeoutSeconds: number;
+            confirmation: string;
+        };
+        NodeDrainPod: {
+            name: string;
+            namespace: string;
+            status: string;
+            ownerKind?: string;
+            ownerName?: string;
+            /** @enum {string} */
+            action: "evict" | "skip" | "block" | "blocked" | "failed" | "remaining";
+            reason?: string;
+            pdbNames?: string[];
+            evictionError?: string;
+        };
+        NodeDrainPlan: {
+            node: string;
+            unschedulable: boolean;
+            pods: components["schemas"]["NodeDrainPod"][];
+            evictCount: number;
+            skippedCount: number;
+            warnings?: string[];
+        };
+        NodeDrainResult: {
+            node: string;
+            cordoned: boolean;
+            pods: components["schemas"]["NodeDrainPod"][];
+            evictedCount: number;
+            blockedCount: number;
+            failedCount: number;
+            skippedCount: number;
+            warnings?: string[];
+        };
         Namespace: {
             name: string;
             status: string;
@@ -3794,6 +4126,8 @@ export interface components {
             desired: number;
             restarts: number;
             images: string[];
+            /** @description Read-only pod template YAML used for rollback preview and targeted patch. */
+            template?: string;
             /** Format: date-time */
             createdAt: string;
             labels?: {
@@ -3945,6 +4279,7 @@ export interface components {
         Container: {
             name: string;
             image: string;
+            init?: boolean;
             ready: boolean;
             restartCount: number;
             state: string;
@@ -3963,6 +4298,31 @@ export interface components {
             conditions: components["schemas"]["Condition"][];
             qosClass: string;
             serviceAccount: string;
+        };
+        HelmReleaseSummary: {
+            name: string;
+            namespace: string;
+            chart: string;
+            chartVersion: string;
+            appVersion?: string;
+            revision: number;
+            status: string;
+            description?: string;
+            /** Format: date-time */
+            updatedAt?: string;
+        };
+        HelmReleaseDetail: components["schemas"]["HelmReleaseSummary"] & {
+            /** Format: date-time */
+            firstDeployed?: string;
+            /** Format: date-time */
+            lastDeployed?: string;
+            notes?: string;
+            /** @description Redacted YAML values. */
+            values: string;
+            /** @description Redacted rendered manifest. Secret data and stringData are always masked. */
+            manifest: string;
+            history: components["schemas"]["HelmReleaseSummary"][];
+            warnings?: string[];
         };
         ServicePort: {
             name?: string;

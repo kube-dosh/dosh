@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { createColumnHelper } from "@tanstack/react-table";
-import { History, Loader2, RefreshCw, RotateCcw } from "lucide-react";
+import { GitCompareArrows, History, Loader2, RefreshCw, RotateCcw } from "lucide-react";
 import { toast } from "sonner";
 import { ApiError, api } from "@/api/client";
 import type { WorkloadRevision } from "@/api/types";
@@ -15,6 +15,8 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { formatAge, formatDate } from "@/lib/utils";
+import { diffStats, diffYAML } from "@/features/resources/yaml-diff";
+import { cn } from "@/lib/utils";
 
 const column = createColumnHelper<WorkloadRevision>();
 
@@ -49,6 +51,9 @@ export function WorkloadRevisionHistory({ kind, namespace, name, canRollback, on
       toast.error(error.message);
     },
   });
+  const currentRevision = query.data?.find((item) => item.current);
+  const targetDiff = target?.template && currentRevision?.template ? diffYAML(currentRevision.template, target.template) : [];
+  const targetStats = diffStats(targetDiff);
 
   return (
     <Card>
@@ -93,11 +98,25 @@ export function WorkloadRevisionHistory({ kind, namespace, name, canRollback, on
         )}
       </CardContent>
       <AlertDialog open={Boolean(target)} onOpenChange={(open) => { if (!open && !rollback.isPending) setTarget(undefined); }}>
-        <AlertDialogContent>
+        <AlertDialogContent className="max-h-[90dvh] max-w-3xl overflow-y-auto">
           <AlertDialogHeader>
             <AlertDialogTitle>回滚到 revision {target?.revision}？</AlertDialogTitle>
             <AlertDialogDescription>将把 {namespace}/{name} 的 Pod 模板和变更原因恢复为该版本并触发滚动更新。回滚只 Patch 目标字段，不会覆盖副本数、标签或其他并发修改。此操作会记录审计。</AlertDialogDescription>
           </AlertDialogHeader>
+          {targetDiff.length ? (
+            <div className="min-w-0 space-y-2">
+              <p className="flex flex-wrap items-center gap-2 text-xs font-medium"><GitCompareArrows className="h-4 w-4" />Pod 模板变更 Preview<span className="font-mono text-success">+{targetStats.added}</span><span className="font-mono text-destructive-strong">-{targetStats.removed}</span></p>
+              <div className="max-h-64 min-w-0 overflow-auto rounded-md border bg-muted/10 font-mono text-[11px]" aria-label="回滚变更预览">
+                {targetDiff.filter((line) => line.kind !== "context" || targetDiff.length < 80).map((line, index) => (
+                  <div key={`${line.kind}-${line.oldLine ?? "n"}-${line.newLine ?? "n"}-${index}`} className={cn("flex min-w-0 items-start gap-2 border-b border-border/40 px-2 py-0.5 last:border-b-0", line.kind === "added" && "bg-success/10 text-success", line.kind === "removed" && "bg-destructive/10 text-destructive-strong", line.kind === "meta" && "bg-warning/10 font-sans text-warning")}>
+                    <span className="w-7 shrink-0 select-none text-right text-muted-foreground">{line.oldLine ?? ""}</span>
+                    <span className="w-3 shrink-0 select-none">{line.kind === "added" ? "+" : line.kind === "removed" ? "-" : " "}</span>
+                    <span className="min-w-0 whitespace-pre-wrap break-words">{line.text || " "}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : <p className="rounded-md border bg-muted/20 px-3 py-2 text-xs text-muted-foreground">历史记录未提供模板快照；回滚仍将按 Pod 模板定向 Patch 执行。</p>}
           <AlertDialogFooter>
             <AlertDialogCancel disabled={rollback.isPending}>取消</AlertDialogCancel>
             <AlertDialogAction onClick={(event) => { event.preventDefault(); if (target) rollback.mutate(target); }} disabled={rollback.isPending}>

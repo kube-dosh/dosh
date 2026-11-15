@@ -78,6 +78,25 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Capabilities" }
         "401": { $ref: "#/components/responses/Unauthorized" }
+  /api/v1/capabilities/review:
+    get:
+      tags: [auth]
+      summary: Explain one SubjectAccessReview decision for the current identity
+      parameters:
+        - { name: verb, in: query, required: true, schema: { type: string, maxLength: 253 } }
+        - { name: apiGroup, in: query, schema: { type: string, maxLength: 253 } }
+        - { name: resource, in: query, required: true, schema: { type: string, maxLength: 253 } }
+        - { name: subresource, in: query, schema: { type: string, maxLength: 253 } }
+        - { name: namespace, in: query, schema: { type: string, maxLength: 253 } }
+        - { name: name, in: query, schema: { type: string, maxLength: 253 } }
+      responses:
+        "200":
+          description: Authorization decision and remediation guidance
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AccessReview" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
   /api/v1/auth/config:
     get:
       tags: [auth]
@@ -220,6 +239,54 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/NodeSummary" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
+  /api/v1/nodes/{name}/drain-plan:
+    get:
+      tags: [cluster]
+      summary: Preview Pod eviction, PDBs and skip reasons before draining a node
+      parameters:
+        - { $ref: "#/components/parameters/Name" }
+        - name: ignoreDaemonSets
+          in: query
+          schema: { type: boolean, default: false }
+        - name: force
+          in: query
+          schema: { type: boolean, default: false }
+      responses:
+        "200":
+          description: Non-mutating drain plan
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/NodeDrainPlan" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
+  /api/v1/nodes/{name}/drain:
+    post:
+      tags: [cluster]
+      summary: Cordon a node and evict eligible Pods with PDB safety checks
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      parameters:
+        - { $ref: "#/components/parameters/Name" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/NodeDrainOptions" }
+      responses:
+        "200":
+          description: Drain result, including blocked or remaining Pods
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/NodeDrainResult" }
+        "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
@@ -782,6 +849,10 @@ paths:
           in: query
           description: Read logs from the previous terminated container instance.
           schema: { type: boolean, default: false }
+        - name: sinceSeconds
+          in: query
+          description: Only return logs newer than this many seconds. Capped at seven days.
+          schema: { type: integer, minimum: 0, maximum: 604800 }
       responses:
         "200":
           description: NDJSON log stream (`log`, `end` or terminal `error` frames)
@@ -908,6 +979,79 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "409": { $ref: "#/components/responses/Conflict" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
+  /api/v1/pods/{namespace}/{name}/terminal:
+    get:
+      tags: [workloads]
+      summary: Upgrade to a same-origin WebSocket and bridge to Kubernetes Pod exec
+      description: |
+        Requires `create pods/exec` through SubjectAccessReview. Messages are JSON
+        text frames. Input and output payloads are base64 encoded. Resize messages
+        carry columns and rows. The shell is allow-listed to sh, bash or ash.
+      parameters:
+        - { $ref: "#/components/parameters/NamespacePath" }
+        - { $ref: "#/components/parameters/Name" }
+        - name: container
+          in: query
+          required: true
+          schema: { type: string }
+        - name: shell
+          in: query
+          schema: { type: string, enum: [sh, bash, ash], default: sh }
+        - name: cols
+          in: query
+          schema: { type: integer, minimum: 20, maximum: 300, default: 100 }
+        - name: rows
+          in: query
+          schema: { type: integer, minimum: 5, maximum: 100, default: 30 }
+      responses:
+        "101": { description: WebSocket protocol switch }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
+  /api/v1/helm/releases:
+    get:
+      tags: [releases]
+      summary: List latest Helm release revisions stored in one namespace
+      parameters:
+        - { $ref: "#/components/parameters/Namespace" }
+      responses:
+        "200":
+          description: Helm release summaries and non-fatal decode warnings
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, warnings]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/HelmReleaseSummary" }
+                  warnings:
+                    type: array
+                    items: { type: string }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
+  /api/v1/helm/releases/{namespace}/{name}:
+    get:
+      tags: [releases]
+      summary: Read one Helm release with redacted values, manifest and history
+      parameters:
+        - { $ref: "#/components/parameters/NamespacePath" }
+        - { $ref: "#/components/parameters/Name" }
+      responses:
+        "200":
+          description: Redacted Helm release detail
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/HelmReleaseDetail" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
         "503": { $ref: "#/components/responses/DependencyUnavailable" }
   /api/v1/services/{namespace}/{name}:
     get:
@@ -2061,7 +2205,7 @@ components:
         admin: { type: boolean }
     Capabilities:
       type: object
-      required: [read, scale, restart, updateImage, suspendCronJob, delete, create, createService, updateService, deleteService, deleteNamespace, revealSecrets, editYAML, nodeCordon, reloadCertificate]
+      required: [read, scale, restart, updateImage, suspendCronJob, delete, create, createService, updateService, deleteService, deleteNamespace, revealSecrets, editYAML, nodeCordon, nodeDrain, podExec, helmReleases, reloadCertificate]
       properties:
         read: { type: boolean }
         scale: { type: boolean }
@@ -2077,10 +2221,27 @@ components:
         revealSecrets: { type: boolean }
         editYAML: { type: boolean }
         nodeCordon: { type: boolean }
+        nodeDrain: { type: boolean }
+        podExec: { type: boolean }
+        helmReleases: { type: boolean }
         reloadCertificate: { type: boolean }
         resourceActions:
           type: object
           additionalProperties: { $ref: "#/components/schemas/ResourceCapabilities" }
+    AccessReview:
+      type: object
+      required: [allowed, verb, resource, reason, guidance, kubectlCommand]
+      properties:
+        allowed: { type: boolean }
+        verb: { type: string }
+        apiGroup: { type: string }
+        resource: { type: string }
+        subresource: { type: string }
+        namespace: { type: string }
+        name: { type: string }
+        reason: { type: string, enum: [allowed, read_only, rbac_denied, authorization_unavailable] }
+        guidance: { type: string }
+        kubectlCommand: { type: string }
     ResourceCapabilities:
       type: object
       required: [create, update, delete, scale]
@@ -2335,6 +2496,59 @@ components:
           type: array
           items: { $ref: "#/components/schemas/Taint" }
         resourceVersion: { type: string }
+    NodeDrainOptions:
+      type: object
+      required: [ignoreDaemonSets, force, timeoutSeconds, confirmation]
+      properties:
+        ignoreDaemonSets: { type: boolean }
+        force: { type: boolean }
+        timeoutSeconds: { type: integer, minimum: 0, maximum: 300 }
+        confirmation: { type: string }
+    NodeDrainPod:
+      type: object
+      required: [name, namespace, status, action]
+      properties:
+        name: { type: string }
+        namespace: { type: string }
+        status: { type: string }
+        ownerKind: { type: string }
+        ownerName: { type: string }
+        action: { type: string, enum: [evict, skip, block, blocked, failed, remaining] }
+        reason: { type: string }
+        pdbNames:
+          type: array
+          items: { type: string }
+        evictionError: { type: string }
+    NodeDrainPlan:
+      type: object
+      required: [node, unschedulable, pods, evictCount, skippedCount]
+      properties:
+        node: { type: string }
+        unschedulable: { type: boolean }
+        pods:
+          type: array
+          items: { $ref: "#/components/schemas/NodeDrainPod" }
+        evictCount: { type: integer }
+        skippedCount: { type: integer }
+        warnings:
+          type: array
+          items: { type: string }
+    NodeDrainResult:
+      type: object
+      required: [node, cordoned, pods, evictedCount, blockedCount, failedCount, skippedCount]
+      properties:
+        node: { type: string }
+        cordoned: { type: boolean }
+        pods:
+          type: array
+          items: { $ref: "#/components/schemas/NodeDrainPod" }
+        evictedCount: { type: integer }
+        blockedCount: { type: integer }
+        failedCount: { type: integer }
+        skippedCount: { type: integer }
+        warnings:
+          type: array
+          items: { type: string }
     Namespace:
       type: object
       required: [name, status, createdAt]
@@ -2432,6 +2646,9 @@ components:
         images:
           type: array
           items: { type: string }
+        template:
+          type: string
+          description: Read-only pod template YAML used for rollback preview and targeted patch.
         createdAt: { type: string, format: date-time }
         labels:
           type: object
@@ -2635,6 +2852,7 @@ components:
       properties:
         name: { type: string }
         image: { type: string }
+        init: { type: boolean }
         ready: { type: boolean }
         restartCount: { type: integer }
         state: { type: string }
@@ -2657,6 +2875,40 @@ components:
               items: { $ref: "#/components/schemas/Condition" }
             qosClass: { type: string }
             serviceAccount: { type: string }
+    HelmReleaseSummary:
+      type: object
+      required: [name, namespace, chart, chartVersion, revision, status]
+      properties:
+        name: { type: string }
+        namespace: { type: string }
+        chart: { type: string }
+        chartVersion: { type: string }
+        appVersion: { type: string }
+        revision: { type: integer }
+        status: { type: string }
+        description: { type: string }
+        updatedAt: { type: string, format: date-time }
+    HelmReleaseDetail:
+      allOf:
+        - { $ref: "#/components/schemas/HelmReleaseSummary" }
+        - type: object
+          required: [values, manifest, history]
+          properties:
+            firstDeployed: { type: string, format: date-time }
+            lastDeployed: { type: string, format: date-time }
+            notes: { type: string }
+            values:
+              type: string
+              description: Redacted YAML values.
+            manifest:
+              type: string
+              description: Redacted rendered manifest. Secret data and stringData are always masked.
+            history:
+              type: array
+              items: { $ref: "#/components/schemas/HelmReleaseSummary" }
+            warnings:
+              type: array
+              items: { type: string }
     ServicePort:
       type: object
       required: [protocol, port, targetPort]

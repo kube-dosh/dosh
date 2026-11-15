@@ -19,6 +19,9 @@ export interface Capabilities {
   revealSecrets: boolean;
   editYAML: boolean;
   nodeCordon: boolean;
+  nodeDrain: boolean;
+  podExec: boolean;
+  helmReleases: boolean;
   reloadCertificate: boolean;
   resourceActions?: Record<string, ResourceCapabilities>;
 }
@@ -31,6 +34,19 @@ export interface ResourceCapabilities {
   riskLevel?: "normal" | "high" | "critical";
   riskReasons?: string[];
   requireConfirmation?: boolean;
+}
+
+export interface AccessReview {
+  allowed: boolean;
+  verb: string;
+  apiGroup?: string;
+  resource: string;
+  subresource?: string;
+  namespace?: string;
+  name?: string;
+  reason: "allowed" | "read_only" | "rbac_denied" | "authorization_unavailable";
+  guidance: string;
+  kubectlCommand: string;
 }
 
 export interface ServerCertificate {
@@ -245,6 +261,47 @@ export interface NodeTaintUpdate {
   resourceVersion: string;
 }
 
+export interface NodeDrainOptions {
+  ignoreDaemonSets: boolean;
+  force: boolean;
+  timeoutSeconds: number;
+  confirmation: string;
+}
+
+export type NodeDrainAction = "evict" | "skip" | "block" | "blocked" | "failed" | "remaining";
+
+export interface NodeDrainPod {
+  name: string;
+  namespace: string;
+  status: string;
+  ownerKind?: string;
+  ownerName?: string;
+  action: NodeDrainAction;
+  reason?: string;
+  pdbNames?: string[];
+  evictionError?: string;
+}
+
+export interface NodeDrainPlan {
+  node: string;
+  unschedulable: boolean;
+  pods: NodeDrainPod[];
+  evictCount: number;
+  skippedCount: number;
+  warnings?: string[];
+}
+
+export interface NodeDrainResult {
+  node: string;
+  cordoned: boolean;
+  pods: NodeDrainPod[];
+  evictedCount: number;
+  blockedCount: number;
+  failedCount: number;
+  skippedCount: number;
+  warnings?: string[];
+}
+
 export interface NamespaceItem {
   name: string;
   status: string;
@@ -318,6 +375,7 @@ export interface WorkloadRevision {
   replicas: number;
   readyReplicas: number;
   images: string[];
+  template?: string;
   createdAt: string;
 }
 
@@ -439,6 +497,7 @@ export interface DeploymentPreview {
 export interface ContainerInfo {
   name: string;
   image: string;
+  init?: boolean;
   ready: boolean;
   restartCount: number;
   state: string;
@@ -471,6 +530,28 @@ export interface PodDetail extends PodSummary {
   conditions: Condition[];
   qosClass: string;
   serviceAccount: string;
+}
+
+export interface HelmReleaseSummary {
+  name: string;
+  namespace: string;
+  chart: string;
+  chartVersion: string;
+  appVersion?: string;
+  revision: number;
+  status: string;
+  description?: string;
+  updatedAt?: string;
+}
+
+export interface HelmReleaseDetail extends HelmReleaseSummary {
+  firstDeployed?: string;
+  lastDeployed?: string;
+  notes?: string;
+  values: string;
+  manifest: string;
+  history: HelmReleaseSummary[];
+  warnings?: string[];
 }
 
 export interface ServicePort {

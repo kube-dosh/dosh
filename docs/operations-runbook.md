@@ -274,6 +274,137 @@ curl -sS -H "Authorization: Bearer $TOKEN" \
 
 浏览器收到 `stale_cursor` 时会自动回到第一页并重新请求；其他列表错误保持原分页位置重试。
 
+### 2.1.8 PDB 感知的节点排空
+
+节点列表和节点详情在具备 `nodeDrain` capability 时提供“排空节点”。页面必须先调用
+`GET /api/v1/nodes/{name}/drain-plan` 展示计划，再由用户确认。计划是只读的，不会 Cordon、
+驱逐 Pod 或修改 PDB。
+
+```http
+GET  /api/v1/nodes/{name}/drain-plan?ignoreDaemonSets=false&force=false
+POST /api/v1/nodes/{name}/drain
+Content-Type: application/json
+X-CSRF-Token: <token>
+
+{"ignoreDaemonSets":false,"force":false}
+```
+
+执行流程先 Cordon 节点，再通过 Eviction API 驱逐符合条件的 Pod。DaemonSet Pod、mirror Pod
+和已经结束的 Pod 默认跳过；裸 Pod 或不受控制器管理的 Pod 在没有 `force` 时保留并明确提示。
+命中 PodDisruptionBudget、Eviction 返回 Forbidden 或 API Server 不可用时，后续驱逐立即停止，
+响应保留已驱逐和剩余 Pod，不得把部分结果展示为完整成功。
+
+操作前后必须对账：
+
+```bash
+kubectl get node <node> -o jsonpath='{.spec.unschedulable}{"\n"}'
+kubectl get pods -A -o wide --field-selector spec.nodeName=<node>
+kubectl get pdb -A -o wide
+```
+
+仅在隔离测试节点或已批准的维护窗口使用 `force`。不要在生产节点上做排空验收；验收失败应立即
+停止后续驱逐，必要时对节点执行 Uncordon 并人工确认剩余 Pod。成功、部分失败、无权限和冲突都会
+进入审计。
+
+### 2.1.9 Pod 终端
+
+Pod 详情的“终端”页签要求当前身份具备 `create pods/exec`，并且使用有效的 Dosh 同源 Cookie
+会话；前端 CSP 仅允许同源 WebSocket 连接。终端通过同源 WebSocket 升级并桥接到 Kubernetes SPDY exec；命令只允许
+`sh`、`bash`、`ash`，按参数向量执行，不拼接本地 Shell。终端列数限制为 20–300、行数限制为
+5–100，打开和关闭都会写审计。
+
+```http
+GET /api/v1/pods/{namespace}/{name}/terminal?container=<container>&shell=sh&cols=100&rows=30
+```
+
+限制：
+
+- 目标容器必须存在可用的 allow-list Shell；没有 Shell 的 distroless 容器当前无法进入，
+  应使用 `kubectl debug` Ephemeral Container 或其他受控排障流程。
+- 全屏交互程序（例如 `vim`、`top`）不保证可用；优先使用 `ls`、`cat`、`env`、`ps` 等命令。
+- 终端不提供任意文件上传、端口转发或宿主机访问；不要在终端中输出 Secret 或 Token。
+- 相同身份还可能受 Kubernetes `pods/exec` 的容器和资源名限制；前端隐藏按钮不是权限边界。
+
+对账：
+
+```bash
+kubectl auth can-i create pods/exec -n <namespace>
+kubectl auth can-i create pods/exec -n <namespace> --subresource=exec
+```
+
+若页面显示 403，请使用下方权限检查页面确认是 RBAC 拒绝、只读模式还是授权服务不可用。
+
+### 2.1.10 Helm Release 只读可见性
+
+`Helm Releases` 页面读取 Helm v3 存放在目标命名空间的 release Secret，要求当前身份具备
+`list secrets`。页面展示最新 revision、chart、status、values、rendered manifest、notes、
+warnings 和 revision history；单个损坏或无法解码的 Secret 会以 warning 返回，不应阻断其他
+Release。
+
+```bash
+kubectl -n <namespace> get secret -l owner=helm
+kubectl auth can-i list secrets -n <namespace>
+```
+
+安全边界：
+
+- values、manifest 和 Secret `data`/`stringData` 中的常见敏感键在服务端遮蔽；遮蔽不等于完整
+  Secret 审计，不能据此认为响应中一定不存在业务敏感信息。
+- 敏感环境变量按 `name` 识别并遮蔽相邻 `value`；不要通过构造特殊 key 绕过脱敏。
+- 当前只提供只读可见性，不提供 Helm 升级、回滚或 diff。任何后续写能力都必须独立授权、二次确认
+  和审计，不能复用 `helmReleases` 只读 capability 自动放行。
+- 解压后的 Release 内容有大小上限；超出上限或格式异常时返回可理解的错误，不加载到浏览器。
+
+### 2.1.11 当前身份权限检查
+
+`/access` 页面调用 `GET /api/v1/capabilities/review`，使用当前会话身份执行一次
+SubjectAccessReview，返回 `allowed`、`reason`、`guidance` 和可复现的 `kubectl auth can-i`
+命令。页面支持 verb、apiGroup、resource、subresource、namespace 和资源名。
+
+```http
+GET /api/v1/capabilities/review?verb=create&resource=pods&subresource=exec&namespace=team-a&name=api-0
+```
+
+常见 reason：
+
+| reason | 含义 | 处理 |
+|---|---|---|
+| `allowed` | Kubernetes RBAC 允许 | 若业务请求仍失败，核对命名空间、资源名和子资源是否完全一致 |
+| `read_only` | Dosh 处于只读模式 | 检查服务启动配置和 `DOSH_READ_ONLY`，不是只改 RBAC |
+| `rbac_denied` | Role/ClusterRole 或 Binding 未授权 | 根据 guidance 增加 verb/resource 并确认命名空间绑定 |
+| `authorization_unavailable` | 无法完成 SubjectAccessReview | 检查 API Server 连通性和授权相关权限 |
+
+权限检查只代表当前身份的 Kubernetes 授权结果，不代替 Session、CSRF、资源版本和业务校验。
+
+### 2.1.12 本地收藏、视图、列偏好、模板和草稿
+
+资源浏览器的收藏、仅看收藏、保存视图、隐藏列、最近资源、本地模板、草稿恢复和最近日志选项只
+保存在当前浏览器的 localStorage，不会上传到 Dosh 服务端，也不会跨设备同步。清理站点数据会
+同时丢失这些偏好和草稿。
+
+操作约束：
+
+- 本地视图只保存筛选条件和列显示，不扩大 RBAC；删除或隐藏列不改变服务端返回的数据和权限检查。
+- 模板和草稿可能包含 Secret 或环境变量内容；不要在不信任的共享设备上保存敏感 YAML。
+- 当前没有服务端偏好同步或团队共享视图；需要审计和统一管理时应使用 Git 或平台配置。
+
+### 2.1.13 日志时间范围、Init Container 和回滚 Diff
+
+Pod 日志支持 `previous=true`、Init Container 选择、`tailLines`、`timestamps`、
+`sinceSeconds` 和前端关键词筛选。`sinceSeconds` 最大 604800 秒（7 天），超过上限返回 400；
+回退历史日志仍受集群日志保留策略和容器 runtime 能力限制。
+
+```http
+GET /api/v1/pods/{namespace}/{name}/logs?container=<name>&previous=true&sinceSeconds=3600&tailLines=500
+```
+
+Init Container 只在其运行过或存在上一实例时可读取日志；没有日志时应展示空状态。前端关键词筛选
+只过滤当前已读取的有界结果，不改变服务端 tail 上限，也不代表跨 Pod 聚合。
+
+Deployment/StatefulSet 回滚前的 Diff 来自 revision 中保留的 Pod 模板快照。Diff 只预览将被
+恢复的 Pod 模板和 change-cause；副本数、状态和 Pod 模板以外的并发字段不会被回滚覆盖。确认回滚
+仍需资源级 update/patch 授权、CSRF 和审计；无模板快照的旧 revision 应提示预览能力受限。
+
 ## 3. 发布
 
 ```bash

@@ -2,7 +2,7 @@
 
 | 项目 | 内容 |
 |---|---|
-| 状态 | 第四阶段已实现：全 served version Discovery、OpenAPI Schema 预检与动态表单、高风险写入确认、变更 Diff、移动端与无障碍专项；保留通用列表/详情、受控 YAML 写入、发布历史与回滚、Secret 脱敏与审计 |
+| 状态 | 第五阶段已实现：在第四阶段通用资源读写能力之上，补齐 PDB 感知节点排空、Pod Exec 终端、Helm Release 只读视图、权限解释、资源收藏/保存视图/列偏好、本地模板与草稿、Init Container 与日志时间范围、回滚 Diff；固定资源页面继续保留并强化 |
 | 目标 | 从固定资源控制台走向通用 Kubernetes 控制台，为 CRD、Operator 资源和后续动态表单提供统一底座 |
 | 边界 | 不开放任意 API 代理、客户端指定上游 URL、跨资源批量原子写入或绕过 SubjectAccessReview 的读写路径；通用 Secret 创建/更新仍由专用页面承担 |
 
@@ -120,6 +120,38 @@
 
 当用户在 320px、390px、大字体或 Android 视口使用资源浏览器、列表、详情、编辑器、Schema 表单和删除确认框时，页面不得产生横向溢出；弹窗及后代控件不得超出弹窗或主内容区。表单字段必须有关联 label、可键盘操作、错误使用可读文本和 `aria-invalid`/`role=alert`，并进入 Chromium、Firefox 与 axe 验收矩阵。
 
+### GR-029 节点排空
+
+当用户具备 `update nodes` 权限时，系统应先生成非变更排空计划，列出每个 Pod 的 owner、PDB 关联、将驱逐/跳过/需确认原因和 warning；正式执行必须输入节点名称确认，并通过 Kubernetes Eviction API 逐个驱逐。PDB 阻止、裸 Pod、DaemonSet、mirror Pod 和已结束 Pod 必须被明确分类；PDB 拒绝或权限拒绝后停止后续驱逐，结果必须如实返回已驱逐、阻止、失败、跳过和未处理数量。
+
+### GR-030 Pod 交互终端
+
+当用户具备 `create pods/exec` 且容器存在时，系统应通过同源 WebSocket 将浏览器输入/输出桥接到 Kubernetes SPDY exec。Shell 仅允许白名单中的 `sh`、`bash`、`ash`；PTY 尺寸必须在 20–300 列、5–100 行内；单次输入和命令参数有界；打开和关闭分别生成审计。终端不承诺支持 `vim`、`top` 等依赖完整终端能力的全屏程序，移动端以命令输入模式优先。
+
+### GR-031 Helm Release 可见性
+
+当用户具备目标命名空间的 `list secrets` 权限时，系统应读取 Helm v3 Secret 存储，展示每个 Release 的最新 revision、Chart/App 版本、状态、说明、values、渲染 manifest、Notes 和历史 revision。Helm 存储解析失败必须以 warning 跳过，不得阻断其他 Release；values 中常见敏感键、manifest 中 Secret `data/stringData` 以及敏感名称对应的环境变量值必须在服务端遮蔽。
+
+### GR-032 权限解释
+
+当用户提交 verb、apiGroup、resource、subresource、namespace 和可选资源名称时，系统应以当前身份执行 SubjectAccessReview，返回 allowed、reason、guidance 和可复现的 `kubectl auth can-i` 命令，并区分 allowed、read_only、rbac_denied 与 authorization_unavailable；接口不得接受任意待检查身份。
+
+### GR-033 本地资源工作区
+
+当用户浏览、收藏、保存视图或编辑资源时，系统应支持按资源类型持久化收藏、最近访问对象、保存视图和隐藏列，并支持按 GVR 保存本地模板和最近草稿。偏好仅存于浏览器 localStorage，不进入服务端或跨用户同步；损坏的本地存储必须被安全忽略，不得阻断页面。
+
+### GR-034 日志与关联导航
+
+当用户查看 Pod 时，系统应展示 Init Container、归属工作负载和节点深链；日志支持容器选择、Previous、tailLines、timestamps、时间范围和关键词过滤。服务端应将时间范围限制在最多七天，并对非流式日志实施有界读取。
+
+### GR-035 回滚 Diff
+
+当用户查看 Deployment 或 StatefulSet 发布历史时，系统应提供历史 Pod 模板快照，并在回滚确认框中展示当前模板与目标模板的只读 Diff；模板快照不参与写入，回滚仍只 Patch Pod 模板和变更原因。
+
+### GR-036 新页面移动端验收
+
+当用户在 320px、390px、大字体或 Android 视口访问 Helm、权限检查、资源偏好、终端、排空和回滚确认时，页面与弹窗不得横向溢出；新页面必须进入 Chromium、Firefox、明暗主题和 axe 验收矩阵。
+
 ## 2. 实现落点
 
 | 层 | 文件 | 职责 |
@@ -128,10 +160,13 @@
 | app | `internal/modules/resources/app/service.go`、`risk.go`、`schema_validation.go` | GVR 校验、SAR、通用读写、能力/风险、Schema 预检、Secret 脱敏、managedFields 清理和审计 |
 | http | `internal/modules/resources/http/handler.go` | Discovery、Schema、列表、详情、能力、创建/更新/删除路由与稳定错误映射 |
 | kube | `internal/platform/kube/resources.go`、`resource_schema.go` | API Discovery、OpenAPI v2 读取与缓存、动态客户端读写、分页和搜索 |
-| workloads | `internal/modules/workloads/**`、`internal/platform/kube/workloads.go` | 发布历史读取、revision 解析、回滚和冲突映射 |
+| nodes | `internal/modules/nodes/**`、`internal/platform/kube/node_drain.go` | 排空计划、PDB/DaemonSet/mirror/bare Pod 分类、Eviction API 执行和部分失败结果 |
+| workloads | `internal/modules/workloads/**`、`internal/platform/kube/workloads.go`、`pod_exec.go` | 发布历史/模板快照、回滚 Diff、日志时间范围、Init Container、SPDY Exec 与审计包装 |
+| releases | `internal/modules/releases/**`、`internal/platform/kube/helm_releases.go` | Helm v3 Secret 解码、最新 revision/历史、values/manifest 脱敏和 Secret 权限门禁 |
+| auth | `internal/modules/auth/**` | 当前身份 SubjectAccessReview 解释、reason/guidance 与 `kubectl auth can-i` 复现命令 |
 | bootstrap | `internal/bootstrap/app.go`、`router.go` | 依赖装配和受保护路由挂载 |
-| frontend | `web/src/features/resources/`、`web/src/features/workloads/`、`web/src/features/governance/` | 多版本类型目录、对象列表/详情、Schema 表单、YAML/Diff 编辑器、风险确认、发布历史、回滚和治理入口 |
-| contract | `api/openapi.yaml`、`web/src/api/schema.d.ts` | Discovery、Schema、通用读写、能力/风险查询、发布历史与回滚 REST 契约 |
+| frontend | `web/src/features/resources/`、`workloads/`、`nodes/`、`helm/`、`access/`、`web/src/lib/` | 通用资源、排空、终端、Helm、权限检查、回滚 Diff、收藏/视图/列偏好、本地模板与草稿 |
+| contract | `api/openapi.yaml`、`web/src/api/schema.d.ts` | Discovery、Schema、通用读写、排空、Exec、Helm、权限检查、发布历史与回滚 REST 契约 |
 
 ## 3. 验证矩阵
 
@@ -147,15 +182,20 @@
   - Deployment ReplicaSet 与 StatefulSet ControllerRevision 历史、回滚冲突和 change-cause 恢复。
   - 多 served version Discovery、preferred 标记、OpenAPI 定义匹配/引用裁剪/缓存/降级。
   - 高风险能力分级、名称确认和 HTTP 边界；Schema 必填/类型预检与 Schema 不可用降级。
+  - 排空计划分类、PDB 检测、mirror/已结束 Pod 跳过、PDB 拒绝中止和部分结果计数。
+  - 终端 shell/尺寸白名单、`pods/exec` 授权、打开/关闭审计、Init Container 详情和 `sinceSeconds` 透传。
+  - Helm gzip/base64 解码、最新 revision/历史、损坏 Secret warning、values/manifest/环境变量敏感值遮蔽。
+  - 权限解释 allowed/read_only/rbac_denied/unavailable、匿名身份提示和 HTTP 参数校验。
+  - 本地收藏、保存视图、列偏好、最近资源、模板和草稿的持久化与损坏数据降级。
 - `cd web && npm run api:check && npm run typecheck`
 - `cd web && npm test -- --run`
-- Playwright Chromium/Firefox：多版本切换、动态表单、Diff、风险确认、390px/320px/大字体/Android 和弹窗后代边界。
-- axe：资源浏览器、列表、详情在亮暗主题下无 serious/critical 问题。
+- Playwright Chromium/Firefox：多版本切换、动态表单、Diff、风险确认、排空、终端、Helm、权限检查、本地模板、回滚 Diff、390px/320px/大字体/Android 和弹窗后代边界。
+- axe：资源浏览器、Helm、权限检查、列表、详情在亮暗主题下无 serious/critical 问题。
 - `make arch`
 
 ## 4. 后续阶段
 
-1. 提供 CRD 模板库、字段搜索、Schema 字段级文档和从已有对象“另存为模板”。
-2. 将回滚改为仅 Patch Pod 模板，并增加回滚前 Diff。
-3. 将 CRD 资源接入事件对象跳转、保存视图和按资源类型收藏。
-4. 增加跨 Pod 日志聚合和可配置日志后端，不在浏览器端做无界全量扫描。
+1. 将全局搜索从节点/工作负载/Pod 扩展到已发现资源，并支持最近对象与收藏类型。
+2. 为 CRD Schema 增加字段级文档、更多组合类型提示和从已有对象一键另存模板。
+3. 增加跨 Pod 日志聚合、可配置日志后端和 Loki 等外部数据源，不在浏览器端做无界全量扫描。
+4. 评估 Ephemeral Container、Port-forward 和 Helm rollback；后者必须保持显式权限、二次确认和审计，不因“只读 Helm 可见性”自动获得写能力。

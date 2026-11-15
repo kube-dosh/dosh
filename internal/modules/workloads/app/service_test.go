@@ -18,6 +18,7 @@ type fakeRepository struct {
 	tailLines      int64
 	limitBytes     int64
 	previous       bool
+	sinceSeconds   int64
 	lastLogStream  io.ReadCloser
 	createCalls    []bool
 	previewCalls   int
@@ -51,6 +52,10 @@ type fakeRepository struct {
 	revisionErr    error
 	rollbackCalls  int
 	rollbackErr    error
+	terminalCalls  int
+	terminalErr    error
+	terminalOpts   domain.PodTerminalOptions
+	terminal       domain.PodTerminalSession
 	lastRevision   int64
 	lastRV         string
 }
@@ -135,13 +140,35 @@ func (f *fakeRepository) DeletePod(_ context.Context, namespace, name string) er
 	f.lastNamespace, f.lastName = namespace, name
 	return nil
 }
-func (f *fakeRepository) StreamPodLogs(_ context.Context, _ string, _ string, _ string, _, previous bool, tailLines int64, _ bool, limitBytes int64) (io.ReadCloser, error) {
+func (f *fakeRepository) StreamPodLogs(_ context.Context, _ string, _ string, _ string, _, previous bool, tailLines int64, _ bool, sinceSeconds int64, limitBytes int64) (io.ReadCloser, error) {
 	f.tailLines = tailLines
 	f.limitBytes = limitBytes
 	f.previous = previous
+	f.sinceSeconds = sinceSeconds
 	f.lastLogStream = io.NopCloser(strings.NewReader("log line"))
 	return f.lastLogStream, nil
 }
+func (f *fakeRepository) OpenPodTerminal(_ context.Context, _ string, _ string, options domain.PodTerminalOptions) (domain.PodTerminalSession, error) {
+	f.terminalCalls++
+	f.terminalOpts = options
+	if f.terminalErr != nil {
+		return nil, f.terminalErr
+	}
+	if f.terminal != nil {
+		return f.terminal, nil
+	}
+	return &fakeTerminalSession{}, nil
+}
+
+type fakeTerminalSession struct {
+	closed int
+}
+
+func (*fakeTerminalSession) Read([]byte) (int, error)         { return 0, io.EOF }
+func (*fakeTerminalSession) Write(buffer []byte) (int, error) { return len(buffer), nil }
+func (*fakeTerminalSession) Resize(domain.TerminalSize)       {}
+func (*fakeTerminalSession) Wait() error                      { return nil }
+func (f *fakeTerminalSession) Close() error                   { f.closed++; return nil }
 
 type fakeGuard struct {
 	allow  bool
@@ -237,7 +264,7 @@ func TestStreamLogsClampsTailLines(t *testing.T) {
 	t.Parallel()
 	repo := &fakeRepository{}
 	service := New(repo, fakeGuard{allow: true}, &fakeAuditor{})
-	stream, err := service.StreamLogs(context.Background(), domain.Actor{Username: "alice"}, "default", "pod", "app", false, false, 999999, false)
+	stream, err := service.StreamLogs(context.Background(), domain.Actor{Username: "alice"}, "default", "pod", "app", false, false, 999999, false, 900)
 	if err != nil {
 		t.Fatalf("StreamLogs() error = %v", err)
 	}
@@ -248,13 +275,16 @@ func TestStreamLogsClampsTailLines(t *testing.T) {
 	if repo.limitBytes != maxNonStreamLogBytes {
 		t.Fatalf("limitBytes = %d, want %d", repo.limitBytes, maxNonStreamLogBytes)
 	}
-	if _, err := service.StreamLogs(context.Background(), domain.Actor{Username: "alice"}, "default", "pod", "app", true, false, 100, false); err != nil {
+	if repo.sinceSeconds != 900 {
+		t.Fatalf("sinceSeconds = %d, want 900", repo.sinceSeconds)
+	}
+	if _, err := service.StreamLogs(context.Background(), domain.Actor{Username: "alice"}, "default", "pod", "app", true, false, 100, false, 0); err != nil {
 		t.Fatalf("StreamLogs(follow) error = %v", err)
 	}
 	if repo.limitBytes != 0 {
 		t.Fatalf("follow limitBytes = %d, want 0", repo.limitBytes)
 	}
-	if _, err := service.StreamLogs(context.Background(), domain.Actor{Username: "alice"}, "default", "pod", "app", false, false, -1, false); !errors.Is(err, domain.ErrInvalid) {
+	if _, err := service.StreamLogs(context.Background(), domain.Actor{Username: "alice"}, "default", "pod", "app", false, false, -1, false, 0); !errors.Is(err, domain.ErrInvalid) {
 		t.Fatalf("negative tailLines error = %v, want ErrInvalid", err)
 	}
 }
@@ -265,7 +295,7 @@ func TestStreamLogsAuthorizesPodsLogAndAudits(t *testing.T) {
 	auditor := &fakeAuditor{}
 	var access domain.Access
 	service := New(repo, fakeGuard{allow: true, access: &access}, auditor)
-	stream, err := service.StreamLogs(context.Background(), domain.Actor{Username: "alice"}, "prod", "api-0", "app", false, true, 100, true)
+	stream, err := service.StreamLogs(context.Background(), domain.Actor{Username: "alice"}, "prod", "api-0", "app", false, true, 100, true, 0)
 	if err != nil {
 		t.Fatalf("StreamLogs() error = %v", err)
 	}
@@ -283,11 +313,65 @@ func TestStreamLogsAuthorizesPodsLogAndAudits(t *testing.T) {
 	deniedRepo := &fakeRepository{}
 	deniedAuditor := &fakeAuditor{}
 	denied := New(deniedRepo, fakeGuard{allow: false}, deniedAuditor)
-	if _, err := denied.StreamLogs(context.Background(), domain.Actor{Username: "alice"}, "prod", "api-0", "app", false, false, 100, false); !errors.Is(err, domain.ErrForbidden) {
+	if _, err := denied.StreamLogs(context.Background(), domain.Actor{Username: "alice"}, "prod", "api-0", "app", false, false, 100, false, 0); !errors.Is(err, domain.ErrForbidden) {
 		t.Fatalf("StreamLogs(denied) error = %v", err)
 	}
 	if deniedRepo.lastLogStream != nil || len(deniedAuditor.results) != 1 || deniedAuditor.results[0] != "denied" {
 		t.Fatalf("denied stream reached repository or audit was wrong: %#v %#v", deniedRepo.lastLogStream, deniedAuditor.results)
+	}
+}
+
+func TestOpenTerminalValidatesShellSizeAndAuthorization(t *testing.T) {
+	t.Parallel()
+	repo := &fakeRepository{}
+	auditor := &fakeAuditor{}
+	var access domain.Access
+	service := New(repo, fakeGuard{allow: true, access: &access}, auditor)
+	actor := domain.Actor{Username: "alice"}
+	valid := domain.PodTerminalOptions{Container: "api", Command: []string{"/bin/sh"}, TTY: true, Size: domain.TerminalSize{Columns: 100, Rows: 30}}
+
+	for name, options := range map[string]domain.PodTerminalOptions{
+		"builtin command":  {Container: "api", Command: []string{"sh", "-c", "id"}, Size: valid.Size},
+		"disallowed shell": {Container: "api", Command: []string{"/bin/zsh"}, Size: valid.Size},
+		"too narrow":       {Container: "api", Command: valid.Command, Size: domain.TerminalSize{Columns: 19, Rows: 30}},
+		"too tall":         {Container: "api", Command: valid.Command, Size: domain.TerminalSize{Columns: 100, Rows: 101}},
+	} {
+		if _, err := service.OpenTerminal(context.Background(), actor, "prod", "api-0", options); !errors.Is(err, domain.ErrInvalid) {
+			t.Fatalf("%s error = %v, want ErrInvalid", name, err)
+		}
+	}
+	if repo.terminalCalls != 0 {
+		t.Fatalf("invalid requests reached repository %d times", repo.terminalCalls)
+	}
+
+	session, err := service.OpenTerminal(context.Background(), actor, "prod", "api-0", valid)
+	if err != nil {
+		t.Fatalf("OpenTerminal() error = %v", err)
+	}
+	if access != (domain.Access{Verb: "create", Resource: "pods", Subresource: "exec", Namespace: "prod", Name: "api-0"}) {
+		t.Fatalf("authorization access = %#v", access)
+	}
+	if repo.terminalCalls != 1 || repo.terminalOpts.Container != "api" || !repo.terminalOpts.TTY {
+		t.Fatalf("terminal options = %#v calls=%d", repo.terminalOpts, repo.terminalCalls)
+	}
+	if len(auditor.actions) != 1 || auditor.actions[0] != "exec" || auditor.results[0] != "success" {
+		t.Fatalf("open audit = %#v %#v", auditor.actions, auditor.results)
+	}
+	if err := session.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+	if len(auditor.actions) != 2 || auditor.actions[1] != "exec-close" {
+		t.Fatalf("close audit = %#v", auditor.actions)
+	}
+
+	deniedRepo := &fakeRepository{}
+	deniedAuditor := &fakeAuditor{}
+	denied := New(deniedRepo, fakeGuard{allow: false}, deniedAuditor)
+	if _, err := denied.OpenTerminal(context.Background(), actor, "prod", "api-0", valid); !errors.Is(err, domain.ErrForbidden) {
+		t.Fatalf("denied OpenTerminal() error = %v", err)
+	}
+	if deniedRepo.terminalCalls != 0 || len(deniedAuditor.results) != 1 || deniedAuditor.results[0] != "denied" {
+		t.Fatalf("denied calls = %d audit = %#v", deniedRepo.terminalCalls, deniedAuditor.results)
 	}
 }
 

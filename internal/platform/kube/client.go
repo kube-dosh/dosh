@@ -29,6 +29,7 @@ type Client struct {
 	dynamic        dynamic.Interface
 	discovery      discovery.DiscoveryInterface
 	metrics        metricsclient.Interface
+	restConfig     *rest.Config
 	requestTimeout time.Duration
 	clusterName    string
 	tokenAudience  string
@@ -82,7 +83,9 @@ func NewFromRESTConfig(restConfig *rest.Config, cfg config.Config) (*Client, err
 	if err != nil {
 		return nil, fmt.Errorf("create Kubernetes metrics client: %w", err)
 	}
-	return NewForClientsWithMetrics(clientset, dynamicClient, discoveryClient, metricsClient, cfg), nil
+	client := NewForClientsWithMetrics(clientset, dynamicClient, discoveryClient, metricsClient, cfg)
+	client.restConfig = restConfig
+	return client, nil
 }
 
 func prepareRESTConfig(restConfig *rest.Config, cfg config.Config) *rest.Config {

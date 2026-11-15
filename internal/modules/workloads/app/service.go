@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"sync"
 
 	"dosh/internal/domain"
 )
@@ -30,7 +31,8 @@ type Repository interface {
 	ListPodsPage(ctx context.Context, query domain.ListQuery, page domain.PageRequest) (domain.PageResult[domain.PodSummary], error)
 	GetPod(ctx context.Context, namespace, name string) (domain.PodDetail, error)
 	DeletePod(ctx context.Context, namespace, name string) error
-	StreamPodLogs(ctx context.Context, namespace, name, container string, follow, previous bool, tailLines int64, timestamps bool, limitBytes int64) (io.ReadCloser, error)
+	StreamPodLogs(ctx context.Context, namespace, name, container string, follow, previous bool, tailLines int64, timestamps bool, sinceSeconds int64, limitBytes int64) (io.ReadCloser, error)
+	OpenPodTerminal(ctx context.Context, namespace, name string, options domain.PodTerminalOptions) (domain.PodTerminalSession, error)
 }
 
 type Service struct {
@@ -200,12 +202,18 @@ func (s *Service) DeletePod(ctx context.Context, actor domain.Actor, namespace, 
 	return err
 }
 
-func (s *Service) StreamLogs(ctx context.Context, actor domain.Actor, namespace, name, container string, follow, previous bool, tailLines int64, timestamps bool) (io.ReadCloser, error) {
+func (s *Service) StreamLogs(ctx context.Context, actor domain.Actor, namespace, name, container string, follow, previous bool, tailLines int64, timestamps bool, sinceSeconds int64) (io.ReadCloser, error) {
 	if tailLines < 0 {
 		return nil, fmt.Errorf("%w: tailLines must not be negative", domain.ErrInvalid)
 	}
 	if tailLines > 5000 {
 		tailLines = 5000
+	}
+	if sinceSeconds < 0 {
+		return nil, fmt.Errorf("%w: sinceSeconds must not be negative", domain.ErrInvalid)
+	}
+	if sinceSeconds > 7*24*60*60 {
+		sinceSeconds = 7 * 24 * 60 * 60
 	}
 	limitBytes := int64(0)
 	if !follow {
@@ -216,9 +224,71 @@ func (s *Service) StreamLogs(ctx context.Context, actor domain.Actor, namespace,
 		s.audit(ctx, actor, "stream-pod-logs", "pod", namespace, name, err)
 		return nil, err
 	}
-	stream, err := s.repository.StreamPodLogs(ctx, namespace, name, container, follow, previous, tailLines, timestamps, limitBytes)
+	stream, err := s.repository.StreamPodLogs(ctx, namespace, name, container, follow, previous, tailLines, timestamps, sinceSeconds, limitBytes)
 	s.audit(ctx, actor, "stream-pod-logs", "pod", namespace, name, err)
 	return stream, err
+}
+
+// OpenTerminal authorizes pods/exec before opening the SPDY stream. The
+// returned wrapper records both successful and failed interactive sessions.
+func (s *Service) OpenTerminal(ctx context.Context, actor domain.Actor, namespace, name string, options domain.PodTerminalOptions) (domain.PodTerminalSession, error) {
+	if namespace == "" || name == "" || options.Container == "" {
+		return nil, fmt.Errorf("%w: namespace, pod and container are required", domain.ErrInvalid)
+	}
+	if len(options.Command) == 0 {
+		options.Command = []string{"/bin/sh"}
+	}
+	if !supportedShell(options.Command) {
+		return nil, fmt.Errorf("%w: terminal shell is not allow-listed", domain.ErrInvalid)
+	}
+	if options.Size.Columns < 20 || options.Size.Columns > 300 || options.Size.Rows < 5 || options.Size.Rows > 100 {
+		return nil, fmt.Errorf("%w: terminal size is out of range", domain.ErrInvalid)
+	}
+	access := domain.Access{Verb: "create", Resource: "pods", Subresource: "exec", Namespace: namespace, Name: name}
+	if err := s.authorizer.Require(ctx, actor, access); err != nil {
+		s.audit(ctx, actor, "exec", "pod", namespace, name, err)
+		return nil, err
+	}
+	session, err := s.repository.OpenPodTerminal(ctx, namespace, name, options)
+	if err != nil {
+		s.audit(ctx, actor, "exec", "pod", namespace, name, err)
+		return nil, err
+	}
+	s.audit(ctx, actor, "exec", "pod", namespace, name, nil)
+	return &auditedTerminalSession{
+		PodTerminalSession: session, service: s, ctx: ctx, actor: actor,
+		namespace: namespace, name: name,
+	}, nil
+}
+
+func supportedShell(command []string) bool {
+	if len(command) != 1 {
+		return false
+	}
+	switch command[0] {
+	case "/bin/sh", "/bin/bash", "/bin/ash", "/usr/bin/sh", "/usr/bin/bash", "/usr/bin/ash", "sh", "bash", "ash":
+		return true
+	default:
+		return false
+	}
+}
+
+type auditedTerminalSession struct {
+	domain.PodTerminalSession
+	service   *Service
+	ctx       context.Context
+	actor     domain.Actor
+	namespace string
+	name      string
+	closeOnce sync.Once
+}
+
+func (s *auditedTerminalSession) Close() error {
+	err := s.PodTerminalSession.Close()
+	s.closeOnce.Do(func() {
+		s.service.audit(s.ctx, s.actor, "exec-close", "pod", s.namespace, s.name, err)
+	})
+	return err
 }
 
 func (s *Service) audit(ctx context.Context, actor domain.Actor, action, resource, namespace, name string, err error) {

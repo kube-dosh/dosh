@@ -10,11 +10,12 @@ import { cn } from "@/lib/utils";
 
 const maxLogBytes = 1_500_000;
 
-export function LogViewer({ namespace, name, containers }: { namespace: string; name: string; containers: { name: string; ready: boolean }[] }) {
+export function LogViewer({ namespace, name, containers }: { namespace: string; name: string; containers: { name: string; ready: boolean; init?: boolean }[] }) {
   const [container, setContainer] = useState(containers[0]?.name || "");
   const [follow, setFollow] = useState(true);
   const [tailLines, setTailLines] = useState(300);
   const [timestamps, setTimestamps] = useState(false);
+  const [sinceSeconds, setSinceSeconds] = useState(0);
   const [previous, setPrevious] = useState(false);
   const [filter, setFilter] = useState("");
   const [logs, setLogs] = useState("");
@@ -34,7 +35,7 @@ export function LogViewer({ namespace, name, containers }: { namespace: string; 
     stickToBottom.current = true;
     const run = async () => {
       try {
-        const reader = await streamLogs(namespace, name, { container, tailLines, follow: follow && !previous, previous, timestamps, signal: controller.signal });
+        const reader = await streamLogs(namespace, name, { container, tailLines, follow: follow && !previous, previous, timestamps, sinceSeconds, signal: controller.signal });
         const decoder = new TextDecoder();
         const sanitizer = createLogSanitizer();
         const parser = createLogStreamParser();
@@ -80,7 +81,7 @@ export function LogViewer({ namespace, name, containers }: { namespace: string; 
     };
     void run();
     return () => { active = false; controller.abort(); };
-  }, [container, follow, generation, name, namespace, previous, tailLines, timestamps]);
+  }, [container, follow, generation, name, namespace, previous, sinceSeconds, tailLines, timestamps]);
 
   const visibleLogs = useMemo(() => {
     const needle = filter.trim().toLowerCase();
@@ -99,11 +100,21 @@ export function LogViewer({ namespace, name, containers }: { namespace: string; 
       <div className="flex flex-wrap items-center gap-2 border-b border-slate-800 bg-slate-900 px-3 py-2.5">
         <Select value={container} onValueChange={setContainer}>
           <SelectTrigger className="h-8 w-52 border-slate-700 bg-slate-900 text-xs text-slate-200"><SelectValue placeholder="选择容器" /></SelectTrigger>
-          <SelectContent>{containers.map((item) => <SelectItem key={item.name} value={item.name}>{item.name}{item.ready ? " · Ready" : ""}</SelectItem>)}</SelectContent>
+          <SelectContent>{containers.map((item) => <SelectItem key={item.name} value={item.name}>{item.init ? "Init · " : ""}{item.name}{item.ready ? " · Ready" : ""}</SelectItem>)}</SelectContent>
         </Select>
         <Select value={String(tailLines)} onValueChange={(value) => setTailLines(Number(value))}>
           <SelectTrigger className="h-8 w-32 border-slate-700 bg-slate-900 text-xs text-slate-200"><SelectValue /></SelectTrigger>
           <SelectContent>{[100, 300, 1000, 3000].map((value) => <SelectItem key={value} value={String(value)}>最近 {value} 行</SelectItem>)}</SelectContent>
+        </Select>
+        <Select value={String(sinceSeconds)} onValueChange={(value) => setSinceSeconds(Number(value))}>
+          <SelectTrigger className="h-8 w-32 border-slate-700 bg-slate-900 text-xs text-slate-200" aria-label="日志时间范围"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="0">全部时间</SelectItem>
+            <SelectItem value="300">最近 5 分钟</SelectItem>
+            <SelectItem value="900">最近 15 分钟</SelectItem>
+            <SelectItem value="3600">最近 1 小时</SelectItem>
+            <SelectItem value="21600">最近 6 小时</SelectItem>
+          </SelectContent>
         </Select>
         <Button variant="ghost" size="sm" className="h-8 text-xs text-slate-300 hover:bg-slate-800 hover:text-white" onClick={() => { setPrevious(false); setFollow((value) => !value); }}>
           {follow ? <CircleStop className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}{follow ? "停止跟随" : "跟随日志"}
@@ -137,7 +148,7 @@ export function LogViewer({ namespace, name, containers }: { namespace: string; 
       <div className="border-t border-slate-800 bg-slate-900 px-3 py-2 text-[11px] text-slate-400">
         {previous ? "正在查看上一次容器实例日志 · " : ""}
         {filter ? `筛选结果 ${visibleLogs.split("\n").filter(Boolean).length} 行 · ` : ""}
-        日志仅用于当前会话查看，不会写入浏览器持久存储。
+        {sinceSeconds ? `时间范围 ${sinceSeconds < 3600 ? `${sinceSeconds / 60} 分钟` : `${sinceSeconds / 3600} 小时`} · ` : ""}日志仅用于当前会话查看，不会写入浏览器持久存储。
       </div>
     </div>
   );

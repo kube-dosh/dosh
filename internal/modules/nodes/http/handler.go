@@ -2,6 +2,7 @@ package nodeshttp
 
 import (
 	stdhttp "net/http"
+	"strconv"
 
 	"dosh/internal/domain"
 	nodesapp "dosh/internal/modules/nodes/app"
@@ -58,6 +59,35 @@ func (h *Handler) Cordon(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 func (h *Handler) Uncordon(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	actor, _ := domain.ActorFromContext(r.Context())
 	item, err := h.service.Uncordon(r.Context(), actor, chi.URLParam(r, "name"))
+	if err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	httpx.JSON(w, stdhttp.StatusOK, item)
+}
+
+func (h *Handler) DrainPlan(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	ignoreDaemonSets, _ := strconv.ParseBool(httpx.Query(r, "ignoreDaemonSets"))
+	force, _ := strconv.ParseBool(httpx.Query(r, "force"))
+	actor, _ := domain.ActorFromContext(r.Context())
+	item, err := h.service.PlanDrain(r.Context(), actor, chi.URLParam(r, "name"), domain.NodeDrainOptions{
+		IgnoreDaemonSets: ignoreDaemonSets,
+		Force:            force,
+	})
+	if err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	httpx.JSON(w, stdhttp.StatusOK, item)
+}
+
+func (h *Handler) Drain(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	var request domain.NodeDrainOptions
+	if !httpx.DecodeJSON(w, r, &request) {
+		return
+	}
+	actor, _ := domain.ActorFromContext(r.Context())
+	item, err := h.service.Drain(r.Context(), actor, chi.URLParam(r, "name"), request)
 	if err != nil {
 		httpx.Error(w, r, err)
 		return
@@ -178,6 +208,8 @@ func (h *Handler) Mount(r chi.Router) {
 	r.Get("/nodes/{name}", h.Get)
 	r.Post("/nodes/{name}/cordon", h.Cordon)
 	r.Post("/nodes/{name}/uncordon", h.Uncordon)
+	r.Get("/nodes/{name}/drain-plan", h.DrainPlan)
+	r.Post("/nodes/{name}/drain", h.Drain)
 	r.Put("/nodes/{name}/labels", h.SetLabels)
 	r.Put("/nodes/{name}/taints", h.SetTaints)
 	r.Get("/namespaces", h.ListNamespaces)
