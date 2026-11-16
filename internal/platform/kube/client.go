@@ -25,14 +25,15 @@ import (
 )
 
 type Client struct {
-	clientset      kubernetes.Interface
-	dynamic        dynamic.Interface
-	discovery      discovery.DiscoveryInterface
-	metrics        metricsclient.Interface
-	restConfig     *rest.Config
-	requestTimeout time.Duration
-	clusterName    string
-	tokenAudience  string
+	clientset            kubernetes.Interface
+	dynamic              dynamic.Interface
+	discovery            discovery.DiscoveryInterface
+	metrics              metricsclient.Interface
+	restConfig           *rest.Config
+	requestTimeout       time.Duration
+	clusterName          string
+	tokenAudience        string
+	preferencesNamespace string
 
 	metricsMu        sync.Mutex
 	metricsCheckedAt time.Time
@@ -124,13 +125,14 @@ func NewForClients(clientset kubernetes.Interface, dynamicClient dynamic.Interfa
 
 func NewForClientsWithMetrics(clientset kubernetes.Interface, dynamicClient dynamic.Interface, discoveryClient discovery.DiscoveryInterface, metricsClient metricsclient.Interface, cfg config.Config) *Client {
 	return &Client{
-		clientset:      clientset,
-		dynamic:        dynamicClient,
-		discovery:      discoveryClient,
-		metrics:        metricsClient,
-		requestTimeout: cfg.RequestTimeout,
-		clusterName:    cfg.ClusterName,
-		tokenAudience:  cfg.TokenReviewAudience,
+		clientset:            clientset,
+		dynamic:              dynamicClient,
+		discovery:            discoveryClient,
+		metrics:              metricsClient,
+		requestTimeout:       cfg.RequestTimeout,
+		clusterName:          cfg.ClusterName,
+		tokenAudience:        cfg.TokenReviewAudience,
+		preferencesNamespace: cfg.PreferencesNamespace,
 	}
 }
 

@@ -26,8 +26,9 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useCapabilities } from "@/features/auth/use-session";
 import { workloadCapabilities } from "@/lib/capabilities";
 import { ResourceEvents } from "@/features/events/resource-events";
-import { PodLogs } from "@/features/workloads/pod-logs";
 import { PodTerminal } from "@/features/workloads/pod-terminal";
+import { WorkloadLogViewer } from "@/features/workloads/workload-log-viewer";
+import { ResourceRelationsPanel } from "@/features/resources/resource-relations-panel";
 import { WorkloadContainerConfigPanel } from "@/features/workloads/workload-container-config-panel";
 import { WorkloadRevisionHistory } from "@/features/workloads/workload-revision-history";
 import { WorkloadServicesPanel } from "@/features/workloads/workload-services-panel";
@@ -73,6 +74,8 @@ export function WorkloadDetailPage() {
   const [terminalPod, setTerminalPod] = useState<PodSummary | null>(null);
   const kind = params.kind.toLowerCase();
   const kindLabel = workloadKindLabel(kind);
+  const relationGroup = ["job", "cronjob"].includes(kind) ? "batch" : "apps";
+  const relationResource = kind === "cronjob" ? "cronjobs" : kind === "job" ? "jobs" : kind === "daemonset" ? "daemonsets" : kind === "statefulset" ? "statefulsets" : "deployments";
   const supportsRevisions = ["deployment", "statefulset"].includes(kind);
   const requestedTab = isWorkloadTab(search.tab) ? search.tab : "overview";
   const tab = requestedTab === "history" && !supportsRevisions ? "overview" : requestedTab;
@@ -232,6 +235,7 @@ export function WorkloadDetailPage() {
               </CardContent>
             </Card>
           </div>
+          <div className="mt-4"><ResourceRelationsPanel reference={{ group: relationGroup, version: "v1", resource: relationResource }} name={workload.name} namespace={workload.namespace} title="故障拓扑与直接关系" /></div>
         </TabsContent>
         <TabsContent value="config"><WorkloadContainerConfigPanel workload={workload} canEdit={canUpdateContainerConfig} onSaved={invalidate} /></TabsContent>
         <TabsContent value="pods">
@@ -253,7 +257,7 @@ export function WorkloadDetailPage() {
         </TabsContent>
         <TabsContent value="services"><WorkloadServicesPanel namespace={workload.namespace} workloadName={workload.name} workloadSelector={workload.selector} /></TabsContent>
         <TabsContent value="events"><ResourceEvents namespace={workload.namespace} objectKind={kindLabel} objectName={workload.name} /></TabsContent>
-        <TabsContent value="logs"><PodLogs pods={workload.pods} emptyMessage="该工作负载当前没有可查看日志的实例。" /></TabsContent>
+        <TabsContent value="logs"><WorkloadLogViewer kind={kind} namespace={workload.namespace} name={workload.name} containers={workload.containers} /></TabsContent>
         {supportsRevisions ? <TabsContent value="history"><WorkloadRevisionHistory kind={kind} namespace={workload.namespace} name={workload.name} canRollback={canRollback} onRolledBack={invalidate} /></TabsContent> : null}
         <TabsContent value="yaml"><YamlPanel type={kind} name={workload.name} namespace={workload.namespace} height="64vh" /></TabsContent>
       </Tabs>

@@ -77,6 +77,76 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/preferences": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read bounded UI preferences synchronized for the current user
+         * @description Contains only favorites, recent resources, saved views and hidden columns. No Secret values or command output are stored.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Current user preferences */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["UserPreferences"];
+                    };
+                };
+                401: components["responses"]["Unauthorized"];
+                503: components["responses"]["DependencyUnavailable"];
+            };
+        };
+        /** Replace bounded UI preferences for the current user */
+        put: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["UserPreferences"];
+                };
+            };
+            responses: {
+                /** @description Saved user preferences */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["UserPreferences"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                401: components["responses"]["Unauthorized"];
+                409: components["responses"]["Conflict"];
+                501: components["responses"]["NotSupported"];
+                503: components["responses"]["DependencyUnavailable"];
+            };
+        };
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/capabilities": {
         parameters: {
             query?: never;
@@ -1715,6 +1785,65 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/workloads/{kind}/{namespace}/{name}/logs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Aggregate bounded Pod and container logs for one workload
+         * @description Opens up to 20 Pod/container log streams after authorizing `pods/log`
+         *     for each Pod. Frames are newline-delimited JSON `log` entries carrying
+         *     `pod` and `container`, plus `warning` frames for skipped streams and a
+         *     terminal `end` frame. Supplying no container aggregates all regular
+         *     containers from the workload template.
+         */
+        get: {
+            parameters: {
+                query?: {
+                    container?: string;
+                    follow?: boolean;
+                    tailLines?: number;
+                    timestamps?: boolean;
+                    previous?: boolean;
+                    sinceSeconds?: number;
+                };
+                header?: never;
+                path: {
+                    kind: components["parameters"]["KindPath"];
+                    namespace: components["parameters"]["NamespacePath"];
+                    name: components["parameters"]["Name"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description NDJSON aggregate log stream */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/x-ndjson": string;
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+                404: components["responses"]["NotFound"];
+                501: components["responses"]["NotSupported"];
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/events": {
         parameters: {
             query?: never;
@@ -2089,6 +2218,109 @@ export interface paths {
         };
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/helm/releases/{namespace}/{name}/diff": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Compare two server-redacted Helm revisions
+         * @description Both revisions are redacted before a bounded unified diff is generated. At most 6000 source lines per side are compared.
+         */
+        get: {
+            parameters: {
+                query: {
+                    from: number;
+                    to: number;
+                };
+                header?: never;
+                path: {
+                    namespace: components["parameters"]["NamespacePath"];
+                    name: components["parameters"]["Name"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Redacted values and manifest diff */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["HelmReleaseDiff"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+                404: components["responses"]["NotFound"];
+                503: components["responses"]["DependencyUnavailable"];
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/helm/releases/{namespace}/{name}/rollback": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Apply a previous Helm revision and record new Helm history
+         * @description Preflights every manifest object with server-side apply DryRun before applying any object. Helm hooks are skipped and removed objects are not deleted; both limitations are returned as warnings. Requires create and update access to Secrets in the release namespace. The release name must be supplied as confirmation.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    namespace: components["parameters"]["NamespacePath"];
+                    name: components["parameters"]["Name"];
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["HelmReleaseRollbackRequest"];
+                };
+            };
+            responses: {
+                /** @description Rollback completed and new Helm revision recorded */
+                202: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["HelmReleaseRollbackResult"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+                404: components["responses"]["NotFound"];
+                409: components["responses"]["Conflict"];
+                501: components["responses"]["NotSupported"];
+                503: components["responses"]["DependencyUnavailable"];
+            };
+        };
         delete?: never;
         options?: never;
         head?: never;
@@ -3408,7 +3640,7 @@ export interface paths {
         };
         /**
          * Search a bounded set of authorized Kubernetes resource types
-         * @description Searches up to 16 discovered resource types that the authenticated user may list. Namespaced resources require an explicit namespace; when it is omitted only cluster-scoped resources are searched. Results and type coverage are bounded and include truncation warnings.
+         * @description Searches up to 24 discovered resource types that the authenticated user may list. A concrete namespace limits the search to that namespace. `namespace=all` enumerates up to 8 visible namespaces and performs a fail-closed SelfSubjectRulesReview for each namespace. An omitted namespace searches cluster-scoped resources only. Results, namespaces and type/scope combinations are bounded and emit truncation warnings.
          */
         get: {
             parameters: {
@@ -3776,6 +4008,59 @@ export interface paths {
                 503: components["responses"]["DependencyUnavailable"];
             };
         };
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/resources/{group}/{version}/{resource}/{name}/relations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read bounded direct relationships for one discovered resource
+         * @description Returns immediate owners, managed Pods, Services, Ingresses, nodes and storage relationships. Related-type list failures degrade to warnings. At most 40 edges are returned.
+         */
+        get: {
+            parameters: {
+                query?: {
+                    namespace?: components["parameters"]["Namespace"];
+                };
+                header?: never;
+                path: {
+                    /** @description Kubernetes API group, or `_core` for the core API group. */
+                    group: components["parameters"]["ResourceGroupPath"];
+                    version: components["parameters"]["ResourceVersionPath"];
+                    /** @description Plural Kubernetes resource name, for example `pods` or `prometheuses`. */
+                    resource: components["parameters"]["ResourceNamePath"];
+                    name: components["parameters"]["Name"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Direct resource relationships */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ResourceRelations"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+                404: components["responses"]["NotFound"];
+                503: components["responses"]["DependencyUnavailable"];
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -4405,6 +4690,30 @@ export interface components {
             history: components["schemas"]["HelmReleaseSummary"][];
             warnings?: string[];
         };
+        HelmReleaseDiff: {
+            namespace: string;
+            name: string;
+            from: components["schemas"]["HelmReleaseSummary"];
+            to: components["schemas"]["HelmReleaseSummary"];
+            /** @description Unified diff after sensitive values are redacted. */
+            valuesDiff: string;
+            /** @description Unified diff after Secret data and sensitive manifest fields are redacted. */
+            manifestDiff: string;
+            warnings?: string[];
+        };
+        HelmReleaseRollbackRequest: {
+            targetRevision: number;
+            /** @description Must exactly equal the Helm release name. */
+            confirmation: string;
+        };
+        HelmReleaseRollbackResult: {
+            namespace: string;
+            name: string;
+            targetRevision: number;
+            revision: number;
+            appliedObjects: number;
+            warnings?: string[];
+        };
         ServicePort: {
             name?: string;
             protocol: string;
@@ -4759,6 +5068,36 @@ export interface components {
             name: string;
             yaml: string;
         };
+        RecentResourcePreference: {
+            path: string;
+            title: string;
+            subtitle: string;
+            kind?: string;
+            namespace?: string;
+            /** Format: int64 */
+            visitedAt: number;
+        };
+        SavedResourceViewPreference: {
+            id: string;
+            name: string;
+            q?: string;
+            namespace?: string;
+            hiddenColumns?: string[];
+            /** Format: int64 */
+            createdAt: number;
+        };
+        UserPreferences: {
+            favorites?: string[];
+            recent?: components["schemas"]["RecentResourcePreference"][];
+            savedViews?: {
+                [key: string]: components["schemas"]["SavedResourceViewPreference"][];
+            };
+            hiddenColumns?: {
+                [key: string]: string[];
+            };
+            /** Format: date-time */
+            updatedAt?: string;
+        };
         ResourceDescriptor: {
             group: string;
             version: string;
@@ -4852,6 +5191,21 @@ export interface components {
             yaml: string;
             redacted?: boolean;
             warnings?: string[];
+        };
+        ResourceRelations: {
+            items: components["schemas"]["ResourceRelation"][];
+            warnings?: string[];
+        };
+        ResourceRelation: {
+            apiVersion: string;
+            kind: string;
+            resource?: string;
+            name: string;
+            namespace?: string;
+            relationship: string;
+            /** @enum {string} */
+            direction: "upstream" | "downstream" | "related";
+            status?: string;
         };
         GenericResourceMutation: {
             /** @description Selected namespace. Must agree with metadata.namespace for namespaced resources. */

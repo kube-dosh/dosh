@@ -22,6 +22,7 @@ type handlerRepository struct {
 	object      map[string]any
 	err         error
 	schema      domain.ResourceSchema
+	relations   domain.ResourceRelations
 
 	lastQuery     domain.ListQuery
 	lastNamespace string
@@ -34,6 +35,10 @@ type handlerRepository struct {
 
 func (r *handlerRepository) DiscoverResources(context.Context) ([]domain.ResourceDescriptor, []string, error) {
 	return r.descriptors, r.warnings, r.err
+}
+
+func (r *handlerRepository) ListNamespaceNames(context.Context) ([]string, error) {
+	return []string{"prod"}, r.err
 }
 
 func (r *handlerRepository) GetResourceSchema(context.Context, domain.ResourceDescriptor) (domain.ResourceSchema, error) {
@@ -52,6 +57,11 @@ func (r *handlerRepository) ListGenericResources(_ context.Context, _ domain.Res
 func (r *handlerRepository) GetGenericResource(_ context.Context, _ domain.ResourceDescriptor, namespace, name string) (map[string]any, error) {
 	r.lastNamespace, r.lastName = namespace, name
 	return r.object, r.err
+}
+
+func (r *handlerRepository) GetResourceRelations(_ context.Context, _ domain.ResourceDescriptor, namespace, name string) (domain.ResourceRelations, error) {
+	r.lastNamespace, r.lastName = namespace, name
+	return r.relations, r.err
 }
 
 func (r *handlerRepository) CreateGenericResource(_ context.Context, _ domain.ResourceDescriptor, namespace string, _ map[string]any, _ bool) (map[string]any, error) {

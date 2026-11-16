@@ -17,6 +17,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ResourceEvents } from "@/features/events/resource-events";
+import { ResourceRelationsPanel } from "@/features/resources/resource-relations-panel";
 import { useCapabilities } from "@/features/auth/use-session";
 import { IngressFormDialog } from "@/features/network/ingress-form-dialog";
 import { NetworkMetadataCard } from "@/features/network/network-detail-shared";
@@ -102,6 +103,7 @@ export function IngressDetailPage() {
               </CardContent>
             </Card>
           </div>
+          <div className="mt-4"><ResourceRelationsPanel reference={{ group: "networking.k8s.io", version: "v1", resource: "ingresses" }} name={ingress.name} namespace={ingress.namespace} title="流量拓扑与直接关系" /></div>
           <div className="mt-4"><NetworkMetadataCard labels={ingress.labels} annotations={ingress.annotations} /></div>
         </TabsContent>
         <TabsContent value="routes">

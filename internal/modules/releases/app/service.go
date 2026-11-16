@@ -15,6 +15,8 @@ import (
 type Repository interface {
 	ListHelmReleases(ctx context.Context, namespace string) ([]domain.HelmReleaseSummary, []string, error)
 	GetHelmRelease(ctx context.Context, namespace, name string) (domain.HelmReleaseDetail, error)
+	GetHelmReleaseRevision(ctx context.Context, namespace, name string, revision int) (domain.HelmReleaseDetail, error)
+	RollbackHelmRelease(ctx context.Context, namespace, name string, targetRevision int) (domain.HelmReleaseRollbackResult, error)
 }
 
 type Service struct {
@@ -63,6 +65,77 @@ func (s *Service) Get(ctx context.Context, actor domain.Actor, namespace, name s
 	}
 	s.audit(ctx, actor, "get-helm-release", namespace, name, nil)
 	return detail, nil
+}
+
+func (s *Service) Diff(ctx context.Context, actor domain.Actor, namespace, name string, fromRevision, toRevision int) (domain.HelmReleaseDiff, error) {
+	if strings.TrimSpace(namespace) == "" || strings.TrimSpace(name) == "" {
+		return domain.HelmReleaseDiff{}, fmt.Errorf("%w: namespace and Helm release name are required", domain.ErrInvalid)
+	}
+	if fromRevision <= 0 || toRevision <= 0 || fromRevision == toRevision {
+		return domain.HelmReleaseDiff{}, fmt.Errorf("%w: from and to revisions must be positive and different", domain.ErrInvalid)
+	}
+	if err := s.authorize(ctx, actor, namespace); err != nil {
+		s.audit(ctx, actor, "diff-helm-release", namespace, name, err)
+		return domain.HelmReleaseDiff{}, err
+	}
+	from, err := s.repository.GetHelmReleaseRevision(ctx, namespace, name, fromRevision)
+	if err != nil {
+		s.audit(ctx, actor, "diff-helm-release", namespace, name, err)
+		return domain.HelmReleaseDiff{}, err
+	}
+	to, err := s.repository.GetHelmReleaseRevision(ctx, namespace, name, toRevision)
+	if err != nil {
+		s.audit(ctx, actor, "diff-helm-release", namespace, name, err)
+		return domain.HelmReleaseDiff{}, err
+	}
+	from, to = s.redactDetail(from), s.redactDetail(to)
+	result := domain.HelmReleaseDiff{
+		Namespace: namespace, Name: name, From: from.HelmReleaseSummary, To: to.HelmReleaseSummary,
+		ValuesDiff:   unifiedDiff(from.Values, to.Values, fmt.Sprintf("values rev %d", fromRevision), fmt.Sprintf("values rev %d", toRevision)),
+		ManifestDiff: unifiedDiff(from.Manifest, to.Manifest, fmt.Sprintf("manifest rev %d", fromRevision), fmt.Sprintf("manifest rev %d", toRevision)),
+		Warnings:     append(append([]string(nil), from.Warnings...), to.Warnings...),
+	}
+	s.audit(ctx, actor, "diff-helm-release", namespace, name, nil)
+	return result, nil
+}
+
+func (s *Service) Rollback(ctx context.Context, actor domain.Actor, namespace, name string, targetRevision int, confirmation string) (domain.HelmReleaseRollbackResult, error) {
+	if strings.TrimSpace(namespace) == "" || strings.TrimSpace(name) == "" {
+		return domain.HelmReleaseRollbackResult{}, fmt.Errorf("%w: namespace and Helm release name are required", domain.ErrInvalid)
+	}
+	if targetRevision <= 0 {
+		return domain.HelmReleaseRollbackResult{}, fmt.Errorf("%w: target revision must be positive", domain.ErrInvalid)
+	}
+	if confirmation != name {
+		err := fmt.Errorf("%w: release name confirmation does not match", domain.ErrInvalid)
+		s.audit(ctx, actor, "rollback-helm-release", namespace, name, err)
+		return domain.HelmReleaseRollbackResult{}, err
+	}
+	// Helm stores its release record in a Secret and may update that Secret
+	// multiple times during rollback. Requiring both verbs keeps the write
+	// permission explicit even though the API server remains authoritative for
+	// every manifest object applied by the Helm-compatible action.
+	for _, verb := range []string{"update", "create"} {
+		if err := s.authorizer.Require(ctx, actor, domain.Access{Verb: verb, Resource: "secrets", Namespace: namespace}); err != nil {
+			s.audit(ctx, actor, "rollback-helm-release", namespace, name, err)
+			return domain.HelmReleaseRollbackResult{}, err
+		}
+	}
+	result, err := s.repository.RollbackHelmRelease(ctx, namespace, name, targetRevision)
+	s.audit(ctx, actor, "rollback-helm-release", namespace, name, err)
+	return result, err
+}
+
+func (s *Service) redactDetail(detail domain.HelmReleaseDetail) domain.HelmReleaseDetail {
+	detail.Values = redactValues(detail.Values)
+	manifest, err := redactManifest(detail.Manifest)
+	if err != nil {
+		detail.Warnings = append(detail.Warnings, "manifest 解析失败，已隐藏完整内容")
+		detail.Manifest = "# manifest 无法安全解析，内容已隐藏"
+	} else {
+		detail.Manifest = manifest
+	}
+	return detail
 }
 
 func (s *Service) authorize(ctx context.Context, actor domain.Actor, namespace string) error {

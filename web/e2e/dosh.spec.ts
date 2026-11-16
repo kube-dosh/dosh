@@ -3,6 +3,8 @@ import AxeBuilder from "@axe-core/playwright";
 import type {
   AccessReview,
   HelmReleaseDetail,
+  HelmReleaseDiff,
+  HelmReleaseRollbackResult,
   HelmReleaseSummary,
   ListResponse,
   ClusterConfiguration,
@@ -17,6 +19,7 @@ import type {
   PersistentVolumeClaimDetail,
   PersistentVolumeDetail,
   ResourceDescriptor,
+  ResourceRelations,
   ServerCertificate,
   ServiceDetail,
   SessionResponse,
@@ -24,12 +27,17 @@ import type {
   WorkloadDetail,
   WorkloadRevision,
   WorkloadSummary,
+  UserPreferences,
 } from "../src/api/types";
 
 const csrfToken = "e2e-csrf-token";
 
 function logFrames(...lines: string[]): string {
   return `${lines.map((line) => JSON.stringify({ type: "log", data: `${line}\n` })).join("\n")}\n{"type":"end"}\n`;
+}
+
+function workloadLogFrames(...lines: Array<{ pod: string; container: string; data: string }>): string {
+  return `${lines.map((line) => JSON.stringify({ type: "log", data: `${line.data}\n`, pod: line.pod, container: line.container })).join("\n")}\n{"type":"end"}\n`;
 }
 
 const session: SessionResponse = {
@@ -240,6 +248,42 @@ const helmReleaseDetail: HelmReleaseDetail = {
   warnings: [],
 };
 
+const helmReleaseDiff: HelmReleaseDiff = {
+  namespace: "default",
+  name: "web",
+  from: { ...helmReleaseSummary, revision: 1, status: "superseded", appVersion: "1.0.0" },
+  to: helmReleaseSummary,
+  valuesDiff: "--- values rev 1\n+++ values rev 2\n@@\n-image:\n-  tag: 1.0.0\n+image:\n+  tag: alpine\n",
+  manifestDiff: "--- manifest rev 1\n+++ manifest rev 2\n@@\n-  replicas: 1\n+  replicas: 2\n",
+  warnings: [],
+};
+
+const helmRollbackResult: HelmReleaseRollbackResult = {
+  namespace: "default",
+  name: "web",
+  targetRevision: 1,
+  revision: 3,
+  appliedObjects: 2,
+  warnings: ["已跳过 1 个 Helm Hook"],
+};
+
+const resourceRelations: ResourceRelations = {
+  items: [
+    { apiVersion: "apps/v1", kind: "ReplicaSet", resource: "replicasets", name: "web-abcdef", namespace: "default", relationship: "owner", direction: "upstream" },
+    { apiVersion: "v1", kind: "Service", resource: "services", name: "web", namespace: "default", relationship: "selects", direction: "downstream", status: "Running" },
+    { apiVersion: "v1", kind: "Node", resource: "nodes", name: "worker-0001", relationship: "scheduled on", direction: "upstream" },
+  ],
+  warnings: [],
+};
+
+const emptyPreferences: UserPreferences = {
+  favorites: [],
+  recent: [],
+  savedViews: {},
+  hiddenColumns: {},
+  updatedAt: "2026-11-16T00:00:00Z",
+};
+
 const nodeDrainPlan: NodeDrainPlan = {
   node: "worker-0001",
   unschedulable: false,
@@ -424,8 +468,9 @@ async function openResourceMenu(page: Page, resource: string) {
 
 type NodeSchedulingRequest = { method: string; path: string; csrf: string | null };
 type NodeMetadataRequest = { method: string; path: string; csrf: string | null; body: Record<string, unknown> };
+type PreferenceRequest = { method: string; body: UserPreferences };
 
-async function installApiMocks(page: Page, options: { authenticated?: boolean; authMode?: "local" | "token"; overview?: Overview; overviewStatus?: number; nodeSchedulingRequests?: NodeSchedulingRequest[]; nodeMetadataRequests?: NodeMetadataRequest[]; expireSessionOnNodes?: boolean; noIngressController?: boolean; podName?: string; podExec?: boolean; podEphemeralDebug?: boolean; emptyDiscovery?: boolean; ephemeralRequests?: Array<{ image: string; targetContainerName?: string; shell?: string }> } = {}) {
+async function installApiMocks(page: Page, options: { authenticated?: boolean; authMode?: "local" | "token"; overview?: Overview; overviewStatus?: number; nodeSchedulingRequests?: NodeSchedulingRequest[]; nodeMetadataRequests?: NodeMetadataRequest[]; preferenceRequests?: PreferenceRequest[]; expireSessionOnNodes?: boolean; noIngressController?: boolean; podName?: string; podExec?: boolean; podEphemeralDebug?: boolean; emptyDiscovery?: boolean; ephemeralRequests?: Array<{ image: string; targetContainerName?: string; shell?: string }> } = {}) {
   const authenticated = options.authenticated ?? true;
   const authMode = options.authMode ?? "local";
   const sessionResponse: SessionResponse = { ...session, authMode, capabilities: { ...session.capabilities, podExec: options.podExec ?? session.capabilities.podExec, podEphemeralDebug: options.podEphemeralDebug ?? session.capabilities.podEphemeralDebug } };
@@ -437,6 +482,7 @@ async function installApiMocks(page: Page, options: { authenticated?: boolean; a
   let nodeResourceVersion = 1;
   let services: ServiceDetail[] = [{ ...serviceDetail }];
   let widgetRevision = 1;
+  let preferences = { ...emptyPreferences };
   const currentNodeDetail = () => ({
     ...nodeDetail,
     unschedulable: nodeSchedulingDisabled,
@@ -473,6 +519,13 @@ async function installApiMocks(page: Page, options: { authenticated?: boolean; a
       signedIn = false;
       return json(route, { code: "unauthorized", message: "authentication required" }, 401);
     }
+    if (path === "/api/v1/preferences" && method === "GET") return json(route, preferences);
+    if (path === "/api/v1/preferences" && method === "PUT") {
+      const body = request.postDataJSON() as UserPreferences;
+      options.preferenceRequests?.push({ method, body });
+      preferences = { ...body, updatedAt: "2026-11-16T00:00:00Z" };
+      return json(route, preferences);
+    }
     if (path === "/api/v1/overview") return json(route, options.overview ?? overview, options.overviewStatus ?? 200);
     if (path === "/api/v1/resources/discovery") {
       const resources: ResourceDescriptor[] = options.emptyDiscovery ? [] : [
@@ -496,6 +549,17 @@ async function installApiMocks(page: Page, options: { authenticated?: boolean; a
         { group: "example.io", version: "v1", resource: "clusterwidgets", kind: "ClusterWidget", namespaced: false, preferred: true, verbs: ["get", "list", "create", "update", "patch", "delete"] },
       ];
       return json(route, { items: resources });
+    }
+    if (path === "/api/v1/resources/search" && method === "GET") {
+      const q = new URL(request.url()).searchParams.get("q")?.trim().toLowerCase() ?? "";
+      return json(route, {
+        items: q.length >= 2 && "sample-widget".includes(q) ? [{
+          apiVersion: "example.io/v1", kind: "Widget", resource: "widgets", name: "sample-widget", namespace: "default",
+          resourceVersion: String(widgetRevision), createdAt: "2026-11-02T00:00:00Z",
+        }] : [],
+        warnings: [],
+        truncated: false,
+      });
     }
     if (path === "/api/v1/resources/_core/v1/pods" && method === "GET") {
       return json(route, list([{ apiVersion: "v1", kind: "Pod", resource: "pods", name: "web-abcdef-12345", namespace: "default", resourceVersion: "1", createdAt: "2026-11-02T00:00:00Z" }]));
@@ -681,6 +745,16 @@ async function installApiMocks(page: Page, options: { authenticated?: boolean; a
       return json(route, { status: "deleting" }, 202);
     }
     if (path === "/api/v1/workloads/deployment/default/web") return json(route, workloadDetail);
+    if (path === "/api/v1/workloads/deployment/default/web/logs") {
+      return route.fulfill({
+        status: 200,
+        contentType: "application/x-ndjson; charset=utf-8",
+        body: workloadLogFrames(
+          { pod: "web-abcdef-12345", container: "web", data: "aggregate log from web instance" },
+          { pod: "web-abcdef-67890", container: "web", data: "aggregate log from second instance" },
+        ),
+      });
+    }
     if (path === "/api/v1/workloads/deployment/default/web/scale" && method === "POST") {
       return json(route, { status: "ok" });
     }
@@ -831,7 +905,10 @@ async function installApiMocks(page: Page, options: { authenticated?: boolean; a
       data: { token: "dG9rZW49YWJjCg==", blob: "AP8K" },
     });
     if (path === "/api/v1/helm/releases" && method === "GET") return json(route, { items: [helmReleaseSummary], warnings: [] });
+    if (path === "/api/v1/helm/releases/default/web/diff" && method === "GET") return json(route, helmReleaseDiff);
+    if (path === "/api/v1/helm/releases/default/web/rollback" && method === "POST") return json(route, helmRollbackResult, 202);
     if (path === "/api/v1/helm/releases/default/web" && method === "GET") return json(route, helmReleaseDetail);
+    if (path.endsWith("/relations") && method === "GET") return json(route, resourceRelations);
     if (path === "/api/v1/certificate") return json(route, serverCertificate);
     if (path === "/api/v1/certificate/reload" && method === "POST") return json(route, serverCertificate);
     return json(route, { code: "not_found", message: `unmocked API route: ${method} ${path}` }, 404);
@@ -1184,8 +1261,22 @@ test("Helm Release 列表、详情和历史版本可读且敏感值已遮蔽", a
   await expect(page.getByText("password: <redacted>")).toBeVisible();
   await page.getByRole("tab", { name: /Manifest/ }).click();
   await expect(page.getByText("token: <redacted>")).toBeVisible();
+  await page.getByRole("tab", { name: /Diff/ }).click();
+  await expect(page.getByRole("heading", { name: "版本对比" })).toBeVisible();
+  await page.getByRole("button", { name: "生成 Diff" }).click();
+  await expect(page.getByText("Values Diff")).toBeVisible();
+  await expect(page.getByText("Manifest Diff")).toBeVisible();
+  await expect(page.getByText("+  replicas: 2", { exact: false })).toBeVisible();
   await page.getByRole("tab", { name: /历史/ }).click();
   await expect(page.getByRole("row").filter({ hasText: "#1" })).toBeVisible();
+  await page.getByRole("button", { name: "回滚到此版本" }).click();
+  const rollbackDialog = page.getByRole("dialog", { name: "受控回滚 Helm Release" });
+  await expect(rollbackDialog).toBeVisible();
+  await rollbackDialog.getByLabel(/输入 Release 名称/).fill("web");
+  const rollbackRequest = page.waitForRequest((request) => request.url().endsWith("/api/v1/helm/releases/default/web/rollback") && request.method() === "POST");
+  await rollbackDialog.getByRole("button", { name: "确认回滚" }).click();
+  expect((await rollbackRequest).postDataJSON()).toEqual({ targetRevision: 1, confirmation: "web" });
+  await expect(page.getByText(/已创建 Helm revision #3/)).toBeVisible();
   await expectNoPageOverflow(page, "helm release detail");
 });
 
@@ -1844,6 +1935,43 @@ test("Pod 日志通过流式接口加载", async ({ page }) => {
   await expect(page.getByText("request served by web-abcdef-12345", { exact: false })).toBeVisible();
 });
 
+test("工作负载日志聚合多个 Pod 并标注来源", async ({ page }) => {
+  await installApiMocks(page);
+  await page.goto("/workloads/deployment/default/web?tab=logs");
+  await expect(page.getByText("多实例聚合", { exact: true })).toBeVisible();
+  await expect(page.getByText("[web-abcdef-12345/web] aggregate log from web instance", { exact: false })).toBeVisible();
+  await expect(page.getByText("[web-abcdef-67890/web] aggregate log from second instance", { exact: false })).toBeVisible();
+  await expectNoPageOverflow(page, "workload aggregate logs");
+});
+
+test("资源详情展示直接关系与故障拓扑", async ({ page }) => {
+  await installApiMocks(page);
+  await page.goto("/resources/example.io/v1/widgets/sample-widget?namespace=default");
+  await expect(page.getByRole("heading", { name: "故障拓扑与直接关系" })).toBeVisible();
+  await expect(page.getByText("上游依赖")).toBeVisible();
+  await expect(page.getByText("下游对象")).toBeVisible();
+  await expect(page.getByText("worker-0001", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "web", exact: true }).click();
+  await expect(page).toHaveURL(/\/network\/services\/default\/web/);
+  await page.goto("/network/ingresses/default/web");
+  await expect(page.getByRole("heading", { name: "流量拓扑与直接关系" })).toBeVisible();
+  await expectNoPageOverflow(page, "resource relations");
+});
+
+test("全局搜索默认跨命名空间检索并记录最近资源偏好", async ({ page }) => {
+  const preferenceRequests: PreferenceRequest[] = [];
+  await installApiMocks(page, { preferenceRequests });
+  await page.goto("/");
+  await page.keyboard.press("Control+K");
+  const dialog = page.getByRole("dialog", { name: "搜索集群资源" });
+  await dialog.getByPlaceholder("输入资源名称…").fill("sample");
+  await expect(dialog.getByText("sample-widget", { exact: true })).toBeVisible();
+  await dialog.getByText("sample-widget", { exact: true }).click();
+  await expect(page).toHaveURL(/\/resources\/example\.io\/v1\/widgets\/sample-widget/);
+  await expect.poll(() => preferenceRequests.some((request) => request.body.recent?.some((item) => item.path.includes("/resources/example.io/v1/widgets/sample-widget"))), { timeout: 5_000 }).toBe(true);
+  await expectNoPageOverflow(page, "global search and recent preferences");
+});
+
 test("Pod 日志中的 HTML 与 ANSI 控制字符仅作为纯文本渲染", async ({ page }) => {
   await installApiMocks(page);
   await page.goto("/pods/default/web-abcdef-12345?tab=logs");
@@ -2196,6 +2324,7 @@ test("移动端逐页布局无页面级横向溢出", async ({ page }) => {
     { path: "/helm/releases/default/web?namespace=default&tab=values", name: "helm-release-values" },
     { path: "/helm/releases/default/web?namespace=default&tab=manifest", name: "helm-release-manifest" },
     { path: "/helm/releases/default/web?namespace=default&tab=history", name: "helm-release-history" },
+    { path: "/helm/releases/default/web?namespace=default&tab=diff", name: "helm-release-diff" },
   ];
 
   for (const route of routes) {
@@ -2281,6 +2410,7 @@ test("320px 窄屏关键页面无横向溢出", async ({ page }) => {
     { path: "/helm/releases?namespace=default", name: "helm-releases" },
     { path: "/helm/releases/default/web?namespace=default", name: "helm-release-detail" },
     { path: "/helm/releases/default/web?namespace=default&tab=history", name: "helm-release-history" },
+    { path: "/helm/releases/default/web?namespace=default&tab=diff", name: "helm-release-diff" },
   ]) {
     await page.goto(route.path);
     await page.locator("main h1").waitFor({ state: "visible" });
@@ -2582,6 +2712,15 @@ test("移动端节点排空与回滚预览不产生横向溢出", async ({ page 
     await expectElementInsideViewport(page, dialog, `${viewport.width}px rollback dialog`);
     await expectNoPageOverflow(page, `${viewport.width}px rollback dialog`);
     await page.screenshot({ path: `test-results/mobile-interactions/rollback-${viewport.width}.png`, fullPage: true });
+    await page.keyboard.press("Escape");
+
+    await page.goto("/helm/releases/default/web?namespace=default&tab=history");
+    await page.getByRole("button", { name: "回滚到此版本" }).click();
+    dialog = page.getByRole("dialog", { name: "受控回滚 Helm Release" });
+    await expect(dialog).toBeVisible();
+    await expectElementInsideViewport(page, dialog, `${viewport.width}px Helm rollback dialog`);
+    await expectNoPageOverflow(page, `${viewport.width}px Helm rollback dialog`);
+    await page.screenshot({ path: `test-results/mobile-interactions/helm-rollback-${viewport.width}.png`, fullPage: true });
     await page.keyboard.press("Escape");
   }
 });

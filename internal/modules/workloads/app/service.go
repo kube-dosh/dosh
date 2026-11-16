@@ -16,6 +16,7 @@ import (
 )
 
 const maxNonStreamLogBytes int64 = 1 << 20
+const maxWorkloadLogStreams = 20
 
 type Repository interface {
 	ListWorkloads(ctx context.Context, query domain.ListQuery) ([]domain.WorkloadSummary, error)
@@ -242,6 +243,112 @@ func (s *Service) StreamLogs(ctx context.Context, actor domain.Actor, namespace,
 	stream, err := s.repository.StreamPodLogs(ctx, namespace, name, container, follow, previous, tailLines, timestamps, sinceSeconds, limitBytes)
 	s.audit(ctx, actor, "stream-pod-logs", "pod", namespace, name, err)
 	return stream, err
+}
+
+// StreamWorkloadLogs opens a bounded set of Pod/container log streams for one
+// workload. Each Pod is authorized independently; a denial or unavailable Pod
+// is reported as a warning so the remaining streams can still be used.
+func (s *Service) StreamWorkloadLogs(ctx context.Context, actor domain.Actor, kind, namespace, name, container string, follow, previous bool, tailLines int64, timestamps bool, sinceSeconds int64) (domain.WorkloadLogStreams, error) {
+	if err := ValidateKind(kind); err != nil {
+		return domain.WorkloadLogStreams{}, err
+	}
+	if strings.TrimSpace(namespace) == "" || strings.TrimSpace(name) == "" {
+		return domain.WorkloadLogStreams{}, fmt.Errorf("%w: namespace and workload name are required", domain.ErrInvalid)
+	}
+	if tailLines < 0 {
+		return domain.WorkloadLogStreams{}, fmt.Errorf("%w: tailLines must not be negative", domain.ErrInvalid)
+	}
+	if tailLines > 5000 {
+		tailLines = 5000
+	}
+	if sinceSeconds < 0 {
+		return domain.WorkloadLogStreams{}, fmt.Errorf("%w: sinceSeconds must not be negative", domain.ErrInvalid)
+	}
+	if sinceSeconds > 7*24*60*60 {
+		sinceSeconds = 7 * 24 * 60 * 60
+	}
+	workload, err := s.repository.GetWorkload(ctx, kind, namespace, name)
+	if err != nil {
+		s.audit(ctx, actor, "stream-workload-logs", kind, namespace, name, err)
+		return domain.WorkloadLogStreams{}, err
+	}
+	containers := make([]string, 0, len(workload.Containers))
+	for _, item := range workload.Containers {
+		if item.Name != "" {
+			containers = append(containers, item.Name)
+		}
+	}
+	if len(containers) == 0 {
+		return domain.WorkloadLogStreams{}, fmt.Errorf("%w: workload has no regular containers", domain.ErrUnsupported)
+	}
+	if container != "" {
+		if !containsString(containers, container) {
+			return domain.WorkloadLogStreams{}, fmt.Errorf("%w: container %q is not part of the workload template", domain.ErrInvalid, container)
+		}
+		containers = []string{container}
+	}
+	limitBytes := int64(0)
+	if !follow {
+		limitBytes = maxNonStreamLogBytes
+	}
+	result := domain.WorkloadLogStreams{Streams: make([]domain.WorkloadLogStream, 0, maxWorkloadLogStreams), Warnings: make([]string, 0)}
+	hadStreamFailure := false
+	closeOpened := func() {
+		for _, item := range result.Streams {
+			_ = item.Stream.Close()
+		}
+	}
+	for _, pod := range workload.Pods {
+		for _, containerName := range containers {
+			if len(result.Streams) >= maxWorkloadLogStreams {
+				result.Warnings = append(result.Warnings, fmt.Sprintf("最多同时聚合 %d 条 Pod/容器日志流，其余实例已省略", maxWorkloadLogStreams))
+				s.audit(ctx, actor, "stream-workload-logs", kind, namespace, name, nil)
+				return result, nil
+			}
+			access := domain.Access{Verb: "get", Resource: "pods", Subresource: "log", Namespace: pod.Namespace, Name: pod.Name}
+			if authErr := s.authorizer.Require(ctx, actor, access); authErr != nil {
+				if errors.Is(authErr, domain.ErrForbidden) {
+					result.Warnings = append(result.Warnings, fmt.Sprintf("无权读取 %s/%s 的日志", pod.Namespace, pod.Name))
+					continue
+				}
+				closeOpened()
+				s.audit(ctx, actor, "stream-workload-logs", kind, namespace, name, authErr)
+				return domain.WorkloadLogStreams{}, authErr
+			}
+			stream, streamErr := s.repository.StreamPodLogs(ctx, pod.Namespace, pod.Name, containerName, follow, previous, tailLines, timestamps, sinceSeconds, limitBytes)
+			if streamErr != nil {
+				if errors.Is(streamErr, domain.ErrForbidden) {
+					result.Warnings = append(result.Warnings, fmt.Sprintf("无权读取 %s/%s/%s 的日志", pod.Namespace, pod.Name, containerName))
+					continue
+				}
+				hadStreamFailure = true
+				result.Warnings = append(result.Warnings, fmt.Sprintf("无法打开 %s/%s/%s 的日志流", pod.Namespace, pod.Name, containerName))
+				continue
+			}
+			result.Streams = append(result.Streams, domain.WorkloadLogStream{Namespace: pod.Namespace, Pod: pod.Name, Container: containerName, Stream: stream})
+		}
+	}
+	if len(result.Streams) == 0 {
+		err := domain.ErrForbidden
+		if len(workload.Pods) == 0 {
+			err = fmt.Errorf("%w: workload has no Pods to stream logs from", domain.ErrNotFound)
+		} else if hadStreamFailure {
+			err = fmt.Errorf("%w: no workload log stream could be opened", domain.ErrUnavailable)
+		}
+		s.audit(ctx, actor, "stream-workload-logs", kind, namespace, name, err)
+		return domain.WorkloadLogStreams{}, err
+	}
+	s.audit(ctx, actor, "stream-workload-logs", kind, namespace, name, nil)
+	return result, nil
+}
+
+func containsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }
 
 // OpenTerminal authorizes pods/exec before opening the SPDY stream. The

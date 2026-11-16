@@ -4,9 +4,11 @@ import {
   deleteResourceView,
   favoriteResourceTypes,
   hiddenResourceColumns,
+  mergeServerResourcePreferences,
   recentResources,
   rememberResource,
   resourceTypeKey,
+  resourcePreferencesSnapshot,
   saveResourceView,
   savedResourceViews,
   setHiddenResourceColumns,
@@ -52,5 +54,25 @@ describe("resource preferences", () => {
     expect(favoriteResourceTypes()).toEqual([]);
     expect(hiddenResourceColumns("example.io/widgets")).toEqual([]);
     expect(recentResources()).toEqual([]);
+  });
+
+  it("merges cross-device preferences without dropping local state", () => {
+    toggleFavoriteResourceType("_core/pods");
+    rememberResource({ path: "/nodes/worker-1", title: "worker-1", subtitle: "Node" });
+    mergeServerResourcePreferences({
+      favorites: ["_core/pods", "example.io/widgets"],
+      recent: [
+        { path: "/nodes/worker-1", title: "worker-1", subtitle: "Node", visitedAt: 10 },
+        { path: "/pods/default/api-0", title: "api-0", subtitle: "Pod", visitedAt: 20 },
+        { path: "https://example.test/unsafe", title: "unsafe", subtitle: "Unsafe", visitedAt: 30 },
+      ],
+      savedViews: { "example.io/widgets": [{ id: "server-view", name: "生产", namespace: "prod", createdAt: 5 }] },
+      hiddenColumns: { "example.io/widgets": ["labels", "labels"] },
+    });
+    expect(favoriteResourceTypes()).toEqual(["_core/pods", "example.io/widgets"]);
+    expect(recentResources().map((item) => item.path)).toEqual(["/nodes/worker-1", "/pods/default/api-0"]);
+    expect(savedResourceViews("example.io/widgets")).toMatchObject([{ id: "server-view", name: "生产" }]);
+    expect(hiddenResourceColumns("example.io/widgets")).toEqual(["labels"]);
+    expect(resourcePreferencesSnapshot().favorites).toEqual(["_core/pods", "example.io/widgets"]);
   });
 });

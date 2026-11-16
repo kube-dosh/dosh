@@ -5,7 +5,7 @@
 
   <p><strong>A lightweight Kubernetes operations console for everyday cluster work</strong></p>
 
-  <p>One binary for cluster overview, curated and generic resource views, Pod diagnostics, Helm visibility, access review, networking, configuration, storage, events, YAML creation, and audit trails.</p>
+  <p>One binary for cluster overview, curated and generic resource views, Pod diagnostics, aggregated logs, Helm diagnostics and guarded rollback, access review, networking, configuration, storage, events, YAML creation, and audit trails.</p>
 
   <p><a href="#quick-start">Quick start</a> · <a href="#screenshots">Screenshots</a> · <a href="#features">Features</a> · <a href="#deployment-and-configuration">Deployment</a> · <a href="#authentication-and-permissions">Authentication</a> · <a href="#local-development">Development</a> · <a href="docs/operations-runbook.md">Runbook</a></p>
 
@@ -50,15 +50,15 @@ Dosh does not replace Kubernetes or bypass it. Authentication, authorization, an
 | Workloads | Deployments, StatefulSets, DaemonSets, Jobs, and CronJobs; details, Pods, container configuration, related Services, events, logs, and YAML |
 | Workload actions | Create Deployments, scale, rolling restart, update images, suspend/resume CronJobs, delete resources, inspect Deployment/StatefulSet revision history with a rollback Pod-template diff, roll back revisions, and edit YAML within resource-level permissions |
 | Pods | Status, regular, Init, and Ephemeral Containers, restart counts, resources, owner and node deep links, events, logs, YAML, and an audited interactive shell through WebSocket when `pods/exec` is allowed; authorized users can add a bounded Ephemeral debug container when the target image has no shell |
-| Logs | Live single-Pod logs, previous container instance, Init Container selection, tail lines, timestamps, time range, keyword filtering, and bounded non-stream reads |
-| Helm | Read-only release list, current values, rendered manifest, notes, warnings, and revision history from Helm Secrets; common sensitive keys and Secret payloads are redacted server-side. Requires `list secrets`. |
+| Logs | Live single-Pod logs and bounded workload-level aggregation across up to 20 Pod/container streams, with container, previous instance, tail, timestamps, time range, source prefix, keyword filtering, and per-stream permission warnings |
+| Helm | Release list, values, rendered manifest, notes, warnings, revision history, revision-to-revision values/manifest diff, and guarded rollback from Helm Secrets; common sensitive keys and Secret payloads are redacted server-side. Rolling back requires release-name confirmation plus `secrets/create` and `secrets/update`, skips Helm hooks, and never deletes objects absent from the target manifest. |
 | Access review | Explain the current identity's SubjectAccessReview decision, distinguish Dosh read-only mode from RBAC denial, and generate the matching `kubectl auth can-i` command |
 | Networking | Service and Ingress lists and details; create, edit, and delete ClusterIP, NodePort, LoadBalancer, and Ingress resources according to permissions |
 | Configuration | View, create, edit, delete, inspect data, and edit YAML for ConfigMaps and Secrets; Secret data is returned only to authorized, audited requests |
 | Storage | Create and manage PVCs; inspect PVs and StorageClasses and navigate their relationships |
 | Namespaces | Create, inspect, view YAML, and perform protected cascade deletion; `default` and `kube-*` are always protected from deletion |
 | Events | Cluster-wide search, namespace filtering, warning detection, object deep links, and a live event stream |
-| Resource explorer | Kubernetes API Discovery catalog for every served version of built-in resources and CRD types; filter by API group, kind, and resource name and switch versions; favorites, recent resources, saved views, hidden columns, generic list/detail/events, schema-driven forms with field search, YAML create/edit/delete, change diff, local templates/draft recovery, fullscreen editing, and owner references, with all reads and writes enforced by Kubernetes RBAC; generic Secret writes remain in the dedicated editor |
+| Resource explorer | Kubernetes API Discovery catalog for every served version of built-in resources and CRD types; filter by API group, kind, and resource name and switch versions; favorites, recent resources, saved views, hidden columns, generic list/detail/events, cross-resource relation topology, schema-driven forms with field search, YAML create/edit/delete, change diff, local templates/draft recovery, fullscreen editing, and owner references, with all reads and writes enforced by Kubernetes RBAC; generic Secret writes remain in the dedicated editor |
 | YAML creation | Template editing, local templates and recent draft recovery, dry run, create, or server-side apply; multi-document sequential submission with a built-in resource allowlist; CRDs and other discovered resources use the resource explorer's schema/YAML dual editor, and high-risk writes require name confirmation |
 | Cluster configuration | Kubernetes version, platform, CNI, control-plane endpoint, DNS domain, Pod/Service CIDRs, and per-node Pod CIDRs |
 | Audit | Authentication and write-operation history; events are written to stdout with optional HTTPS webhook delivery and HMAC signing |

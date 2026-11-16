@@ -20,6 +20,7 @@ import { DeleteResourceDialog } from "@/components/resources/delete-resource-dia
 import { formatDate } from "@/lib/utils";
 import { rememberResource } from "@/lib/resource-preferences";
 import { OwnerReferences } from "@/features/resources/owner-references";
+import { ResourceRelationsPanel } from "@/features/resources/resource-relations-panel";
 
 const detailTabs = ["overview", "events", "yaml"] as const;
 type DetailTab = (typeof detailTabs)[number];
@@ -175,6 +176,7 @@ export function ResourceDetailPage() {
             </Card>
           ) : null}
           <Card className="mt-4"><CardHeader><CardTitle>对象关系</CardTitle></CardHeader><CardContent><OwnerReferences object={detail.object} descriptors={discovery.data?.items ?? []} namespace={namespace} /></CardContent></Card>
+          <div className="mt-4"><ResourceRelationsPanel reference={{ group: apiGroup, version: params.version, resource: params.resource }} name={detail.name} namespace={namespace} title="故障拓扑与直接关系" /></div>
           <div className="mt-4"><MetadataCard labels={detail.labels} annotations={detail.annotations} /></div>
         </TabsContent>
         <TabsContent value="events"><ResourceEvents namespace={namespace} objectKind={detail.kind} objectName={detail.name} /></TabsContent>

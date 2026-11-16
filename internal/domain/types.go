@@ -672,6 +672,47 @@ type HelmReleaseDetail struct {
 	Warnings      []string             `json:"warnings,omitempty"`
 }
 
+// HelmReleaseDiff is the server-redacted comparison between two release
+// revisions. The platform layer never exposes raw Secret values here; the
+// application layer redacts both revisions before generating the diff.
+type HelmReleaseDiff struct {
+	Namespace    string             `json:"namespace"`
+	Name         string             `json:"name"`
+	From         HelmReleaseSummary `json:"from"`
+	To           HelmReleaseSummary `json:"to"`
+	ValuesDiff   string             `json:"valuesDiff"`
+	ManifestDiff string             `json:"manifestDiff"`
+	Warnings     []string           `json:"warnings,omitempty"`
+}
+
+// HelmReleaseRollbackResult reports the new revision created by a controlled
+// rollback and the number of manifest objects applied to the cluster.
+type HelmReleaseRollbackResult struct {
+	Namespace      string   `json:"namespace"`
+	Name           string   `json:"name"`
+	TargetRevision int      `json:"targetRevision"`
+	Revision       int      `json:"revision"`
+	AppliedObjects int      `json:"appliedObjects"`
+	Warnings       []string `json:"warnings,omitempty"`
+}
+
+// WorkloadLogStream is one opened pod/container log stream. The HTTP adapter
+// multiplexes streams into bounded NDJSON frames.
+type WorkloadLogStream struct {
+	Namespace string
+	Pod       string
+	Container string
+	Stream    io.ReadCloser
+}
+
+// WorkloadLogStreams is the result of authorizing and opening a bounded set of
+// workload log streams. Warnings describe Pods or containers skipped without
+// failing the remaining streams.
+type WorkloadLogStreams struct {
+	Streams  []WorkloadLogStream
+	Warnings []string
+}
+
 type Event struct {
 	UID        string    `json:"uid"`
 	Namespace  string    `json:"namespace"`

@@ -22,10 +22,12 @@ import (
 // discovered GVR before issuing a request.
 type Repository interface {
 	DiscoverResources(ctx context.Context) ([]domain.ResourceDescriptor, []string, error)
+	ListNamespaceNames(ctx context.Context) ([]string, error)
 	GetResourceSchema(ctx context.Context, descriptor domain.ResourceDescriptor) (domain.ResourceSchema, error)
 	ListResourceRules(ctx context.Context, actor domain.Actor, namespace string) (domain.ResourceRules, []string, error)
 	ListGenericResources(ctx context.Context, descriptor domain.ResourceDescriptor, query domain.ListQuery, page domain.PageRequest) (domain.GenericResourcePage, error)
 	GetGenericResource(ctx context.Context, descriptor domain.ResourceDescriptor, namespace, name string) (map[string]any, error)
+	GetResourceRelations(ctx context.Context, descriptor domain.ResourceDescriptor, namespace, name string) (domain.ResourceRelations, error)
 	CreateGenericResource(ctx context.Context, descriptor domain.ResourceDescriptor, namespace string, object map[string]any, dryRun bool) (map[string]any, error)
 	UpdateGenericResource(ctx context.Context, descriptor domain.ResourceDescriptor, namespace string, object map[string]any, resourceVersion string, dryRun bool) (map[string]any, error)
 	ApplyGenericResource(ctx context.Context, descriptor domain.ResourceDescriptor, namespace string, object map[string]any, resourceVersion string, dryRun bool) (map[string]any, error)
@@ -191,6 +193,37 @@ func (s *Service) Get(ctx context.Context, actor domain.Actor, ref domain.Resour
 		s.auditSecret(ctx, actor, namespace, name, nil)
 	}
 	return detail, nil
+}
+
+// Relations returns bounded direct relationships for one authorized object.
+// The source object requires get permission; related object reads are still
+// enforced by Kubernetes and permission failures degrade to warnings.
+func (s *Service) Relations(ctx context.Context, actor domain.Actor, ref domain.ResourceReference, namespace, name string) (domain.ResourceRelations, error) {
+	descriptor, err := s.descriptor(ctx, ref)
+	if err != nil {
+		return domain.ResourceRelations{}, err
+	}
+	if name == "" {
+		return domain.ResourceRelations{}, fmt.Errorf("%w: resource name is required", domain.ErrInvalid)
+	}
+	if descriptor.Namespaced && namespace == "" {
+		return domain.ResourceRelations{}, fmt.Errorf("%w: namespace is required for %s", domain.ErrInvalid, descriptor.Resource)
+	}
+	if !descriptor.Namespaced {
+		namespace = ""
+	}
+	access := domain.Access{Verb: "get", APIGroup: descriptor.Group, Resource: descriptor.Resource, Namespace: namespace, Name: name}
+	if err := s.authorizer.Require(ctx, actor, access); err != nil {
+		return domain.ResourceRelations{}, err
+	}
+	result, err := s.repository.GetResourceRelations(ctx, descriptor, namespace, name)
+	if err != nil {
+		return domain.ResourceRelations{}, err
+	}
+	if result.Items == nil {
+		result.Items = []domain.ResourceRelation{}
+	}
+	return result, nil
 }
 
 func (s *Service) Create(ctx context.Context, actor domain.Actor, ref domain.ResourceReference, request domain.GenericResourceMutation) (domain.GenericResourceDetail, error) {
@@ -499,10 +532,22 @@ func (s *Service) descriptor(ctx context.Context, ref domain.ResourceReference) 
 	return domain.ResourceDescriptor{}, fmt.Errorf("%w: resource type is not discoverable", domain.ErrNotFound)
 }
 
+type searchScope struct {
+	descriptor domain.ResourceDescriptor
+	namespace  string
+}
+
+const (
+	maxSearchTypes      = 24
+	maxSearchNamespaces = 8
+	maxSearchScopes     = 64
+)
+
 // Search performs a bounded cross-type search over the resource types the
-// actor may list. Cluster-scoped resources are searched when namespace is
-// empty; namespaced resources require an explicit namespace so the
-// SelfSubjectRulesReview decision has a concrete authorization scope.
+// actor may list. A concrete namespace searches only that namespace, the
+// special value "all" enumerates a bounded set of visible namespaces, and an
+// empty namespace searches cluster-scoped resources only. Every namespaced
+// type is still gated by a SelfSubjectRulesReview for its concrete scope.
 func (s *Service) Search(ctx context.Context, actor domain.Actor, query, namespace string, limit int) (domain.GenericResourceSearch, error) {
 	query = strings.TrimSpace(query)
 	if len([]rune(query)) < 2 {
@@ -519,31 +564,65 @@ func (s *Service) Search(ctx context.Context, actor domain.Actor, query, namespa
 		return domain.GenericResourceSearch{}, err
 	}
 	items = preferredResourceTypes(items)
+	allNamespaces := namespace == "all" || namespace == "*"
+	if allNamespaces {
+		namespace = ""
+	}
+	namespaceRules := make(map[string]domain.ResourceRules)
+	namespaceOrder := make([]string, 0)
+	if allNamespaces {
+		names, listErr := s.repository.ListNamespaceNames(ctx)
+		if listErr != nil {
+			warnings = append(warnings, "无法枚举可见命名空间，已回退为仅搜索集群级资源")
+		} else {
+			if len(names) > maxSearchNamespaces {
+				warnings = append(warnings, fmt.Sprintf("跨命名空间搜索最多覆盖 %d 个命名空间，其余命名空间已省略", maxSearchNamespaces))
+				names = names[:maxSearchNamespaces]
+			}
+			for _, name := range names {
+				rules, ruleWarnings, ruleErr := s.repository.ListResourceRules(ctx, actor, name)
+				warnings = append(warnings, ruleWarnings...)
+				if ruleErr != nil {
+					warnings = append(warnings, fmt.Sprintf("无法读取命名空间 %s 的 RBAC 规则，该命名空间已跳过", name))
+					continue
+				}
+				namespaceRules[name] = rules
+				namespaceOrder = append(namespaceOrder, name)
+			}
+		}
+	} else if namespace != "" {
+		rules, ruleWarnings, ruleErr := s.repository.ListResourceRules(ctx, actor, namespace)
+		warnings = append(warnings, ruleWarnings...)
+		if ruleErr != nil {
+			warnings = append(warnings, "无法读取当前身份的 RBAC 规则，搜索已按失败关闭策略停止")
+			return domain.GenericResourceSearch{Items: []domain.GenericResourceSummary{}, Warnings: warnings}, nil
+		}
+		namespaceRules[namespace] = rules
+		namespaceOrder = []string{namespace}
+	}
 	candidates := make([]domain.ResourceDescriptor, 0, len(items))
 	clusterAuthFailed := false
-	if namespace == "" {
-		for _, item := range items {
-			if item.Namespaced {
-				continue
+	for _, item := range items {
+		if item.Namespaced {
+			listable := false
+			for _, scope := range namespaceOrder {
+				if descriptorListable(item, namespaceRules[scope], scope) {
+					listable = true
+					break
+				}
 			}
+			if listable {
+				candidates = append(candidates, item)
+			}
+			continue
+		}
+		if namespace == "" || allNamespaces {
 			allowed, authErr := s.canListClusterResource(ctx, actor, item)
 			if authErr != nil {
 				clusterAuthFailed = true
 				continue
 			}
 			if allowed {
-				candidates = append(candidates, item)
-			}
-		}
-	} else {
-		rules, ruleWarnings, err := s.repository.ListResourceRules(ctx, actor, namespace)
-		warnings = append(warnings, ruleWarnings...)
-		if err != nil {
-			warnings = append(warnings, "无法读取当前身份的 RBAC 规则，搜索已按失败关闭策略停止")
-			return domain.GenericResourceSearch{Items: []domain.GenericResourceSummary{}, Warnings: warnings}, nil
-		}
-		for _, item := range items {
-			if item.Namespaced && descriptorListable(item, rules, namespace) {
 				candidates = append(candidates, item)
 			}
 		}
@@ -561,48 +640,61 @@ func (s *Service) Search(ctx context.Context, actor domain.Actor, query, namespa
 		}
 		return candidates[i].Group < candidates[j].Group
 	})
-	const maxSearchTypes = 16
 	truncated := len(candidates) > maxSearchTypes
 	if truncated {
 		candidates = candidates[:maxSearchTypes]
-		warnings = append(warnings, "仅搜索优先级最高的 16 个已授权资源类型，请进入资源浏览器缩小范围")
+		warnings = append(warnings, fmt.Sprintf("仅搜索优先级最高的 %d 个已授权资源类型，请进入资源浏览器缩小范围", maxSearchTypes))
+	}
+	scopes := make([]searchScope, 0, len(candidates)*max(1, len(namespaceOrder)))
+	for _, descriptor := range candidates {
+		if !descriptor.Namespaced {
+			scopes = append(scopes, searchScope{descriptor: descriptor})
+			continue
+		}
+		for _, scope := range namespaceOrder {
+			if descriptorListable(descriptor, namespaceRules[scope], scope) {
+				scopes = append(scopes, searchScope{descriptor: descriptor, namespace: scope})
+			}
+		}
+	}
+	if len(scopes) > maxSearchScopes {
+		scopes = scopes[:maxSearchScopes]
+		truncated = true
+		warnings = append(warnings, fmt.Sprintf("搜索范围达到 %d 个资源类型/命名空间组合上限，其余范围已省略", maxSearchScopes))
 	}
 	result := domain.GenericResourceSearch{Items: make([]domain.GenericResourceSummary, 0, limit), Warnings: warnings, Truncated: truncated}
-	type typeResult struct {
+	type scopeResult struct {
 		items []domain.GenericResourceSummary
 		err   error
 	}
-	results := make([]typeResult, len(candidates))
+	results := make([]scopeResult, len(scopes))
 	sem := make(chan struct{}, 4)
 	var wait sync.WaitGroup
-	for i, descriptor := range candidates {
+	for i, scope := range scopes {
 		wait.Add(1)
-		go func(index int, descriptor domain.ResourceDescriptor) {
+		go func(index int, scope searchScope) {
 			defer wait.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
-			scope := ""
-			if descriptor.Namespaced {
-				scope = namespace
-			}
-			page, listErr := s.repository.ListGenericResources(ctx, descriptor, domain.ListQuery{Namespace: scope, Search: query}, domain.PageRequest{Number: 1, Size: min(4, limit)})
+			page, listErr := s.repository.ListGenericResources(ctx, scope.descriptor, domain.ListQuery{Namespace: scope.namespace, Search: query}, domain.PageRequest{Number: 1, Size: min(4, limit)})
 			if listErr != nil {
-				results[index] = typeResult{err: listErr}
+				results[index] = scopeResult{err: listErr}
 				return
 			}
 			items := page.Items
-			if isSecret(descriptor) {
+			if isSecret(scope.descriptor) {
 				for itemIndex := range items {
 					items[itemIndex].Annotations = redactedAnnotationKeys(items[itemIndex].Annotations)
 				}
 			}
-			results[index] = typeResult{items: items}
-		}(i, descriptor)
+			results[index] = scopeResult{items: items}
+		}(i, scope)
 	}
 	wait.Wait()
-	for index, candidate := range candidates {
+	seen := make(map[string]struct{})
+	for index, scope := range scopes {
 		if results[index].err != nil {
-			result.Warnings = append(result.Warnings, fmt.Sprintf("%s/%s 搜索失败", candidate.Group, candidate.Resource))
+			result.Warnings = append(result.Warnings, fmt.Sprintf("%s/%s%s 搜索失败", scope.descriptor.Group, scope.descriptor.Resource, namespaceSuffix(scope.namespace)))
 			continue
 		}
 		for _, item := range results[index].items {
@@ -610,10 +702,25 @@ func (s *Service) Search(ctx context.Context, actor domain.Actor, query, namespa
 				result.Truncated = true
 				break
 			}
+			key := item.UID
+			if key == "" {
+				key = item.APIVersion + "\x00" + item.Resource + "\x00" + item.Namespace + "\x00" + item.Name
+			}
+			if _, exists := seen[key]; exists {
+				continue
+			}
+			seen[key] = struct{}{}
 			result.Items = append(result.Items, item)
 		}
 	}
 	return result, nil
+}
+
+func namespaceSuffix(namespace string) string {
+	if namespace == "" {
+		return ""
+	}
+	return " (命名空间 " + namespace + ")"
 }
 
 // preferredResourceTypes collapses served-version duplicates for cross-type

@@ -5,7 +5,7 @@
 
   <p><strong>面向 Kubernetes 日常运维的轻量级可视化控制台</strong></p>
 
-  <p>一个二进制，提供集群总览、固定与通用资源视图、Pod 排障、Helm 可见性、权限检查、网络、配置、存储、事件、YAML 创建与审计能力。</p>
+  <p>一个二进制，提供集群总览、固定与通用资源视图、Pod 排障、工作负载日志聚合、Helm 诊断与受控回滚、权限检查、网络、配置、存储、事件、YAML 创建与审计能力。</p>
 
   <p><a href="#快速开始">快速开始</a> · <a href="#产品截图">产品截图</a> · <a href="#功能一览">功能一览</a> · <a href="#部署与配置">部署与配置</a> · <a href="#认证与权限">认证与权限</a> · <a href="#本地开发">本地开发</a> · <a href="docs/operations-runbook.md">运维手册</a></p>
 
@@ -50,15 +50,15 @@ Dosh 不替代 Kubernetes，也不绕过 Kubernetes。所有身份、权限和�
 | 工作负载 | Deployment、StatefulSet、DaemonSet、Job、CronJob；详情、实例、容器配置、关联 Service、事件、日志和 YAML |
 | 工作负载操作 | 创建 Deployment、扩缩容、滚动重启、更新镜像、暂停/恢复 CronJob、删除、查看 Deployment/StatefulSet 发布历史及回滚前 Pod 模板 Diff 并回滚，以及按资源级权限编辑 YAML |
 | Pod | 状态、普通/Init/Ephemeral Container、重启次数、资源、归属控制器与节点深链、事件、日志和 YAML；在具备 `pods/exec` 权限时提供经审计的浏览器交互终端，并允许有权限的用户为无 Shell 镜像创建受控的 Ephemeral 调试容器 |
-| 日志 | 单 Pod 实时日志、上一容器实例、Init Container、行数、时间戳、时间范围、关键词过滤和有界非流式读取 |
-| Helm | 从 Helm Secret 只读查看 Release、当前 values、渲染清单、Notes、warning 和 revision 历史；常见敏感键与 Secret 载荷在服务端遮蔽。需要 `list secrets` 权限。 |
+| 日志 | 单 Pod 实时日志，以及最多 20 条 Pod/容器流的受控工作负载级聚合；支持容器、上一实例、行数、时间戳、时间范围、来源前缀、关键词过滤和逐流权限 warning |
+| Helm | 从 Helm Secret 查看 Release、values、渲染清单、Notes、warning、revision 历史、任意两个 revision 间的 values/清单 Diff 和受控回滚；常见敏感键与 Secret 载荷在服务端遮蔽。回滚需要输入 Release 名称确认并具备 `secrets/create`、`secrets/update`，会跳过 Helm Hook，且不会删除目标清单中不存在的旧对象。 |
 | 权限检查 | 解释当前身份的 SubjectAccessReview 结果，区分 Dosh 只读模式与 RBAC 拒绝，并生成对应的 `kubectl auth can-i` 命令 |
 | 网络 | Service 与 Ingress 列表和详情；按权限创建、编辑、删除 ClusterIP、NodePort、LoadBalancer 和 Ingress |
 | 配置与密钥 | ConfigMap、Secret 的查看、创建、编辑、删除、数据查看和 YAML；Secret 数据仅对有权限且经过审计的请求返回 |
 | 存储 | PVC 创建与管理；PV、StorageClass 查看与关联关系导航 |
 | 命名空间 | 创建、详情、YAML 和受保护的级联删除；`default` 与 `kube-*` 始终拒绝删除 |
 | 事件 | 集群事件检索、命名空间过滤、Warning 识别、对象快速跳转和实时事件流 |
-| 资源浏览器 | 通过 Kubernetes API Discovery 浏览全部 served version 的内置资源与 CRD 类型；按 API Group、Kind、资源名筛选并切换版本；提供收藏、最近资源、保存视图、隐藏列、通用列表/详情/事件、带字段搜索的 Schema 动态表单、YAML 创建/编辑/删除、变更 Diff、本地模板/草稿恢复、全屏编辑和 Owner References，所有读写均受 Kubernetes RBAC 约束；通用 Secret 写入仍由专用页面承担 |
+| 资源浏览器 | 通过 Kubernetes API Discovery 浏览全部 served version 的内置资源与 CRD 类型；按 API Group、Kind、资源名筛选并切换版本；提供收藏、最近资源、保存视图、隐藏列、通用列表/详情/事件、跨资源关系拓扑、带字段搜索的 Schema 动态表单、YAML 创建/编辑/删除、变更 Diff、本地模板/草稿恢复、全屏编辑和 Owner References，所有读写均受 Kubernetes RBAC 约束；通用 Secret 写入仍由专用页面承担 |
 | YAML 创建 | 按模板编辑、本地模板与最近草稿恢复、Dry Run、创建或 Server-Side Apply；支持多文档顺序提交和常用内置资源白名单；CRD 与其他已发现资源通过资源浏览器的 Schema/YAML 双模式写入，高风险资源需要名称二次确认 |
 | 集群配置 | Kubernetes 版本、平台、CNI、控制面地址、DNS 域名、Pod/Service 网段和节点 Pod CIDR |
 | 审计 | 查看认证与写操作审计记录；审计同时写入标准输出，可选 HTTPS Webhook 和 HMAC 签名 |

@@ -162,6 +162,10 @@ spec:
                 fieldRef:
                   fieldPath: metadata.namespace
             {{- end }}
+            - name: DOSH_PREFERENCES_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
             - name: DOSH_SESSION_KEY
               valueFrom:
                 secretKeyRef:

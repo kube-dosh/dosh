@@ -24,6 +24,7 @@ type Config struct {
 	SessionTTL              time.Duration
 	LoginRateLimitMode      string
 	LoginRateLimitNamespace string
+	PreferencesNamespace    string
 	CookieSecure            bool
 	ReadOnly                bool
 	KubeQPS                 float32
@@ -73,6 +74,7 @@ func Load() (Config, error) {
 		SessionTTL:              durationEnv("DOSH_SESSION_TTL", 8*time.Hour, &loadErrs),
 		LoginRateLimitMode:      strings.ToLower(env("DOSH_LOGIN_RATE_LIMIT_MODE", "memory")),
 		LoginRateLimitNamespace: strings.TrimSpace(env("DOSH_LOGIN_RATE_LIMIT_NAMESPACE", "")),
+		PreferencesNamespace:    strings.TrimSpace(env("DOSH_PREFERENCES_NAMESPACE", "")),
 		ReadOnly:                boolEnv("DOSH_READ_ONLY", false, &loadErrs),
 		KubeQPS:                 floatEnv("DOSH_KUBE_QPS", 50, &loadErrs),
 		KubeBurst:               intEnv("DOSH_KUBE_BURST", 100, &loadErrs),

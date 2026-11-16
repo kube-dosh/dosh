@@ -15,6 +15,7 @@ import (
 	networkhttp "dosh/internal/modules/network/http"
 	nodeshttp "dosh/internal/modules/nodes/http"
 	overviewhttp "dosh/internal/modules/overview/http"
+	preferenceshttp "dosh/internal/modules/preferences/http"
 	releaseshttp "dosh/internal/modules/releases/http"
 	resourceshttp "dosh/internal/modules/resources/http"
 	storagehttp "dosh/internal/modules/storage/http"
@@ -34,6 +35,7 @@ type routerDependencies struct {
 	kube          *kube.Client
 	auth          *authhttp.Handler
 	overview      *overviewhttp.Handler
+	preferences   *preferenceshttp.Handler
 	resources     *resourceshttp.Handler
 	clusterConfig *clusterconfighttp.Handler
 	nodes         *nodeshttp.Handler
@@ -74,6 +76,7 @@ func buildRouter(deps routerDependencies) (stdhttp.Handler, error) {
 			r.Use(deps.auth.RequireCSRF)
 			authhttp.MountProtected(r, deps.auth)
 			deps.overview.Mount(r)
+			deps.preferences.Mount(r)
 			deps.resources.Mount(r)
 			deps.clusterConfig.Mount(r)
 			deps.nodes.Mount(r)

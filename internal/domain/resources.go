@@ -116,6 +116,25 @@ type GenericResourceDetail struct {
 	Warnings        []string          `json:"warnings,omitempty"`
 }
 
+// ResourceRelation is one bounded, directly discoverable edge in the resource
+// topology. It intentionally represents only immediate relationships rather
+// than a full cluster graph, so RBAC checks and response sizes stay predictable.
+type ResourceRelation struct {
+	APIVersion   string `json:"apiVersion"`
+	Kind         string `json:"kind"`
+	Resource     string `json:"resource,omitempty"`
+	Name         string `json:"name"`
+	Namespace    string `json:"namespace,omitempty"`
+	Relationship string `json:"relationship"`
+	Direction    string `json:"direction"`
+	Status       string `json:"status,omitempty"`
+}
+
+type ResourceRelations struct {
+	Items    []ResourceRelation `json:"items"`
+	Warnings []string           `json:"warnings,omitempty"`
+}
+
 // GenericResourceMutation is the bounded input for creating or updating one
 // discovered resource through YAML. Namespace is the selected list scope and
 // must agree with metadata.namespace for namespaced resources.

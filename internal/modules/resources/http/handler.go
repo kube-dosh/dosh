@@ -91,6 +91,21 @@ func (h *Handler) Get(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	httpx.JSON(w, stdhttp.StatusOK, item)
 }
 
+func (h *Handler) Relations(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	ref, err := referenceFromRequest(r)
+	if err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	actor, _ := domain.ActorFromContext(r.Context())
+	item, err := h.service.Relations(r.Context(), actor, ref, httpx.Query(r, "namespace"), chi.URLParam(r, "name"))
+	if err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	httpx.JSON(w, stdhttp.StatusOK, item)
+}
+
 func (h *Handler) Capabilities(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	ref := domain.ResourceReference{
 		Group: httpx.Query(r, "group"), Version: httpx.Query(r, "version"), Resource: httpx.Query(r, "resource"),
@@ -209,6 +224,7 @@ func (h *Handler) Mount(r chi.Router) {
 	r.Get("/resources/schema", h.Schema)
 	r.Get("/resources/{group}/{version}/{resource}", h.List)
 	r.Get("/resources/{group}/{version}/{resource}/{name}", h.Get)
+	r.Get("/resources/{group}/{version}/{resource}/{name}/relations", h.Relations)
 	r.Post("/resources/{group}/{version}/{resource}", h.Create)
 	r.Put("/resources/{group}/{version}/{resource}/{name}", h.Update)
 	r.Delete("/resources/{group}/{version}/{resource}/{name}", h.Delete)

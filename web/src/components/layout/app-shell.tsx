@@ -17,6 +17,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
 import { useTheme } from "@/lib/theme";
+import { useResourcePreferencesSync } from "@/features/preferences/use-preferences-sync";
 
 const nav: Array<{ href: string; label: string; icon: LucideIcon; adminOnly?: boolean; match: (path: string) => boolean }> = [
   { href: "/", label: "总览", icon: LayoutDashboard, match: (path: string) => path === "/" },
@@ -101,6 +102,7 @@ export function AppShell() {
   const [otherOpen, setOtherOpen] = useState(false);
   const cluster = clusterPresentation(overview.data, overview.error);
   const { theme, toggleTheme } = useTheme();
+  useResourcePreferencesSync(Boolean(session.data));
 
   useEffect(() => {
     const handleShortcut = (event: KeyboardEvent) => {

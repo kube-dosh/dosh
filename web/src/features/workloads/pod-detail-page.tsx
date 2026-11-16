@@ -19,6 +19,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ResourceEvents } from "@/features/events/resource-events";
 import { useCapabilities } from "@/features/auth/use-session";
 import { LogViewer } from "@/features/workloads/log-viewer";
+import { ResourceRelationsPanel } from "@/features/resources/resource-relations-panel";
 import { PodTerminal } from "@/features/workloads/pod-terminal";
 import { resourceCapabilities } from "@/lib/capabilities";
 import { formatCPU, formatDate, formatMemory } from "@/lib/utils";
@@ -114,6 +115,7 @@ export function PodDetailPage() {
             </CardContent></Card>
             <Card className="xl:col-span-2"><CardHeader><CardTitle>Pod Conditions</CardTitle></CardHeader><CardContent className="space-y-2">{pod.conditions.length ? pod.conditions.map((condition) => <div key={condition.type} className="grid gap-2 rounded-md border px-3 py-2.5 text-sm sm:grid-cols-[180px_120px_1fr]"><span className="font-medium">{condition.type}</span><StatusBadge status={condition.status === "True" ? "Ready" : "Failed"} /><span className="text-muted-foreground">{condition.message || condition.reason || "—"}</span></div>) : <p className="py-6 text-center text-sm text-muted-foreground">暂无 Condition 数据</p>}</CardContent></Card>
           </div>
+          <div className="mt-4"><ResourceRelationsPanel reference={{ group: "", version: "v1", resource: "pods" }} name={pod.name} namespace={pod.namespace} title="故障拓扑与直接关系" /></div>
         </TabsContent>
         <TabsContent value="logs"><LogViewer namespace={pod.namespace} name={pod.name} containers={pod.containers} /></TabsContent>
         <TabsContent value="terminal">

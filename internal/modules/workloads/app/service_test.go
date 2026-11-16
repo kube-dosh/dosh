@@ -20,6 +20,8 @@ type fakeRepository struct {
 	previous       bool
 	sinceSeconds   int64
 	lastLogStream  io.ReadCloser
+	podLogCalls    []string
+	podLogErrors   map[string]error
 	createCalls    []bool
 	previewCalls   int
 	createErr      error
@@ -144,11 +146,16 @@ func (f *fakeRepository) DeletePod(_ context.Context, namespace, name string) er
 	f.lastNamespace, f.lastName = namespace, name
 	return nil
 }
-func (f *fakeRepository) StreamPodLogs(_ context.Context, _ string, _ string, _ string, _, previous bool, tailLines int64, _ bool, sinceSeconds int64, limitBytes int64) (io.ReadCloser, error) {
+func (f *fakeRepository) StreamPodLogs(_ context.Context, namespace, name, container string, _, previous bool, tailLines int64, _ bool, sinceSeconds int64, limitBytes int64) (io.ReadCloser, error) {
 	f.tailLines = tailLines
 	f.limitBytes = limitBytes
 	f.previous = previous
 	f.sinceSeconds = sinceSeconds
+	key := namespace + "/" + name + "/" + container
+	f.podLogCalls = append(f.podLogCalls, key)
+	if err := f.podLogErrors[key]; err != nil {
+		return nil, err
+	}
 	f.lastLogStream = io.NopCloser(strings.NewReader("log line"))
 	return f.lastLogStream, nil
 }
@@ -190,6 +197,17 @@ type fakeGuard struct {
 	allow  bool
 	err    error
 	access *domain.Access
+}
+
+type selectiveGuard struct {
+	deniedPods map[string]bool
+}
+
+func (g selectiveGuard) Require(_ context.Context, _ domain.Actor, access domain.Access) error {
+	if g.deniedPods[access.Name] {
+		return domain.ErrForbidden
+	}
+	return nil
 }
 
 func (g fakeGuard) Require(_ context.Context, _ domain.Actor, access domain.Access) error {
@@ -336,6 +354,109 @@ func TestStreamLogsAuthorizesPodsLogAndAudits(t *testing.T) {
 	}
 	if deniedRepo.lastLogStream != nil || len(deniedAuditor.results) != 1 || deniedAuditor.results[0] != "denied" {
 		t.Fatalf("denied stream reached repository or audit was wrong: %#v %#v", deniedRepo.lastLogStream, deniedAuditor.results)
+	}
+}
+
+func TestStreamWorkloadLogsAggregatesContainersAndPods(t *testing.T) {
+	t.Parallel()
+	repo := &fakeRepository{
+		workloadDetail: domain.WorkloadDetail{
+			Pods: []domain.PodSummary{
+				{Name: "api-0", Namespace: "prod"},
+				{Name: "api-1", Namespace: "prod"},
+			},
+			Containers: []domain.WorkloadContainer{{Name: "app"}, {Name: "sidecar"}},
+		},
+		podLogErrors: map[string]error{"prod/api-1/sidecar": domain.ErrUnavailable},
+	}
+	auditor := &fakeAuditor{}
+	service := New(repo, selectiveGuard{}, auditor)
+
+	result, err := service.StreamWorkloadLogs(context.Background(), domain.Actor{Username: "alice"}, "deployment", "prod", "api", "", false, false, 100, false, 0)
+	if err != nil {
+		t.Fatalf("StreamWorkloadLogs() error = %v", err)
+	}
+	defer func() {
+		for _, stream := range result.Streams {
+			_ = stream.Stream.Close()
+		}
+	}()
+	if len(result.Streams) != 3 {
+		t.Fatalf("streams = %#v, want 3", result.Streams)
+	}
+	if len(repo.podLogCalls) != 4 || len(result.Warnings) != 1 || !strings.Contains(result.Warnings[0], "api-1/sidecar") {
+		t.Fatalf("calls = %#v warnings = %#v", repo.podLogCalls, result.Warnings)
+	}
+	if result.Streams[0].Pod != "api-0" || result.Streams[0].Container != "app" || result.Streams[2].Pod != "api-1" || result.Streams[2].Container != "app" {
+		t.Fatalf("stream sources = %#v", result.Streams)
+	}
+	if len(auditor.actions) != 1 || auditor.actions[0] != "stream-workload-logs" || auditor.results[0] != "success" {
+		t.Fatalf("audit = %#v %#v", auditor.actions, auditor.results)
+	}
+}
+
+func TestStreamWorkloadLogsFiltersContainerAndBoundsStreams(t *testing.T) {
+	t.Parallel()
+	pods := make([]domain.PodSummary, 21)
+	for index := range pods {
+		pods[index] = domain.PodSummary{Name: "api-" + string(rune('a'+index)), Namespace: "prod"}
+	}
+	repo := &fakeRepository{workloadDetail: domain.WorkloadDetail{
+		Pods: pods, Containers: []domain.WorkloadContainer{{Name: "app"}, {Name: "sidecar"}},
+	}}
+	service := New(repo, selectiveGuard{}, &fakeAuditor{})
+	result, err := service.StreamWorkloadLogs(context.Background(), domain.Actor{Username: "alice"}, "deployment", "prod", "api", "sidecar", false, false, 100, false, 0)
+	if err != nil {
+		t.Fatalf("StreamWorkloadLogs() error = %v", err)
+	}
+	defer func() {
+		for _, stream := range result.Streams {
+			_ = stream.Stream.Close()
+		}
+	}()
+	if len(result.Streams) != maxWorkloadLogStreams || len(result.Warnings) != 1 || !strings.Contains(result.Warnings[0], "20") {
+		t.Fatalf("streams = %d warnings = %#v", len(result.Streams), result.Warnings)
+	}
+	for _, call := range repo.podLogCalls {
+		if !strings.HasSuffix(call, "/sidecar") {
+			t.Fatalf("container filter leaked into call %q", call)
+		}
+	}
+}
+
+func TestStreamWorkloadLogsRequiresPerPodPermission(t *testing.T) {
+	t.Parallel()
+	repo := &fakeRepository{workloadDetail: domain.WorkloadDetail{
+		Pods:       []domain.PodSummary{{Name: "api-0", Namespace: "prod"}, {Name: "api-1", Namespace: "prod"}},
+		Containers: []domain.WorkloadContainer{{Name: "app"}},
+	}}
+	service := New(repo, selectiveGuard{deniedPods: map[string]bool{"api-1": true}}, &fakeAuditor{})
+	result, err := service.StreamWorkloadLogs(context.Background(), domain.Actor{Username: "alice"}, "deployment", "prod", "api", "", false, false, 100, false, 0)
+	if err != nil {
+		t.Fatalf("StreamWorkloadLogs() error = %v", err)
+	}
+	defer func() {
+		for _, stream := range result.Streams {
+			_ = stream.Stream.Close()
+		}
+	}()
+	if len(result.Streams) != 1 || result.Streams[0].Pod != "api-0" {
+		t.Fatalf("streams = %#v", result.Streams)
+	}
+	if len(result.Warnings) != 1 || !strings.Contains(result.Warnings[0], "api-1") {
+		t.Fatalf("warnings = %#v", result.Warnings)
+	}
+
+	failedRepo := &fakeRepository{
+		workloadDetail: domain.WorkloadDetail{
+			Pods:       []domain.PodSummary{{Name: "api-0", Namespace: "prod"}},
+			Containers: []domain.WorkloadContainer{{Name: "app"}},
+		},
+		podLogErrors: map[string]error{"prod/api-0/app": domain.ErrUnavailable},
+	}
+	failed := New(failedRepo, selectiveGuard{}, &fakeAuditor{})
+	if _, err := failed.StreamWorkloadLogs(context.Background(), domain.Actor{Username: "alice"}, "deployment", "prod", "api", "", false, false, 100, false, 0); !errors.Is(err, domain.ErrUnavailable) {
+		t.Fatalf("all-stream failure error = %v, want ErrUnavailable", err)
 	}
 }
 

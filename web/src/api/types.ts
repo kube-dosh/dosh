@@ -558,6 +558,30 @@ export interface HelmReleaseSummary {
   updatedAt?: string;
 }
 
+export interface HelmReleaseDiff {
+  namespace: string;
+  name: string;
+  from: HelmReleaseSummary;
+  to: HelmReleaseSummary;
+  valuesDiff: string;
+  manifestDiff: string;
+  warnings?: string[];
+}
+
+export interface HelmReleaseRollbackInput {
+  targetRevision: number;
+  confirmation: string;
+}
+
+export interface HelmReleaseRollbackResult {
+  namespace: string;
+  name: string;
+  targetRevision: number;
+  revision: number;
+  appliedObjects: number;
+  warnings?: string[];
+}
+
 export interface HelmReleaseDetail extends HelmReleaseSummary {
   firstDeployed?: string;
   lastDeployed?: string;
@@ -901,6 +925,48 @@ export interface GenericResourceDetail extends GenericResourceSummary {
   yaml: string;
   redacted?: boolean;
   warnings?: string[];
+}
+
+export interface ResourceRelation {
+  apiVersion: string;
+  kind: string;
+  resource?: string;
+  name: string;
+  namespace?: string;
+  relationship: string;
+  direction: "upstream" | "downstream" | "related";
+  status?: string;
+}
+
+export interface ResourceRelations {
+  items: ResourceRelation[];
+  warnings?: string[];
+}
+
+export interface RecentResourcePreference {
+  path: string;
+  title: string;
+  subtitle: string;
+  kind?: string;
+  namespace?: string;
+  visitedAt: number;
+}
+
+export interface SavedResourceViewPreference {
+  id: string;
+  name: string;
+  q?: string;
+  namespace?: string;
+  hiddenColumns?: string[];
+  createdAt: number;
+}
+
+export interface UserPreferences {
+  favorites?: string[];
+  recent?: RecentResourcePreference[];
+  savedViews?: Record<string, SavedResourceViewPreference[]>;
+  hiddenColumns?: Record<string, string[]>;
+  updatedAt?: string;
 }
 
 export interface GenericResourceMutationInput {

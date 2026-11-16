@@ -10,18 +10,20 @@ import (
 )
 
 type fakeResourceRepository struct {
-	descriptors []domain.ResourceDescriptor
-	warnings    []string
-	discoverErr error
-	listResult  domain.GenericResourcePage
-	listErr     error
-	rules       domain.ResourceRules
-	rulesErr    error
-	object      map[string]any
-	getErr      error
-	schema      domain.ResourceSchema
-	schemaErr   error
-	schemaCalls int
+	descriptors  []domain.ResourceDescriptor
+	warnings     []string
+	discoverErr  error
+	listResult   domain.GenericResourcePage
+	listErr      error
+	rules        domain.ResourceRules
+	rulesErr     error
+	object       map[string]any
+	getErr       error
+	relations    domain.ResourceRelations
+	relationsErr error
+	schema       domain.ResourceSchema
+	schemaErr    error
+	schemaCalls  int
 
 	lastDescriptor domain.ResourceDescriptor
 	lastQuery      domain.ListQuery
@@ -41,6 +43,10 @@ type fakeResourceRepository struct {
 
 func (r *fakeResourceRepository) DiscoverResources(context.Context) ([]domain.ResourceDescriptor, []string, error) {
 	return r.descriptors, r.warnings, r.discoverErr
+}
+
+func (r *fakeResourceRepository) ListNamespaceNames(context.Context) ([]string, error) {
+	return []string{"prod", "dev"}, nil
 }
 
 func (r *fakeResourceRepository) GetResourceSchema(context.Context, domain.ResourceDescriptor) (domain.ResourceSchema, error) {
@@ -63,6 +69,11 @@ func (r *fakeResourceRepository) GetGenericResource(_ context.Context, descripto
 	r.getCalls++
 	r.lastDescriptor, r.lastNamespace, r.lastName = descriptor, namespace, name
 	return r.object, r.getErr
+}
+
+func (r *fakeResourceRepository) GetResourceRelations(_ context.Context, descriptor domain.ResourceDescriptor, namespace, name string) (domain.ResourceRelations, error) {
+	r.lastDescriptor, r.lastNamespace, r.lastName = descriptor, namespace, name
+	return r.relations, r.relationsErr
 }
 
 func (r *fakeResourceRepository) recordMutation(action string, descriptor domain.ResourceDescriptor, namespace string, dryRun bool) error {
@@ -210,6 +221,48 @@ func TestServiceSearchSearchesOnlyClusterResourcesWithoutNamespace(t *testing.T)
 	}
 	if len(repository.seenResources) != 1 || repository.seenResources[0] != "nodes" {
 		t.Fatalf("searched resources = %#v", repository.seenResources)
+	}
+}
+
+func TestServiceSearchAllNamespacesUsesBoundedAuthorizedScopes(t *testing.T) {
+	service, repository, _, _ := resourceServiceFixture()
+	repository.rules = domain.ResourceRules{
+		Namespaced: []domain.ResourceRule{{Verbs: []string{"list"}, APIGroups: []string{""}, Resources: []string{"pods"}}},
+		Cluster:    []domain.ResourceRule{{Verbs: []string{"list"}, APIGroups: []string{""}, Resources: []string{"nodes"}}},
+	}
+	repository.listResult = domain.GenericResourcePage{PageResult: domain.PageResult[domain.GenericResourceSummary]{
+		Items: []domain.GenericResourceSummary{{Kind: "Pod", Name: "api-0", APIVersion: "v1", Resource: "pods", Namespace: "prod"}}, Total: 1, TotalKnown: true,
+	}}
+	result, err := service.Search(context.Background(), domain.Actor{Username: "alice"}, "api", "all", 20)
+	if err != nil {
+		t.Fatalf("Search(all) error = %v", err)
+	}
+	if len(result.Items) != 1 || result.Items[0].Name != "api-0" {
+		t.Fatalf("Search(all) items = %#v", result.Items)
+	}
+	seen := make(map[string]int)
+	for _, resource := range repository.seenResources {
+		seen[resource]++
+	}
+	if len(repository.seenResources) != 3 || seen["pods"] != 2 || seen["nodes"] != 1 {
+		t.Fatalf("searched resources = %#v", repository.seenResources)
+	}
+}
+
+func TestServiceRelationsRequiresSourceGetAndReturnsBoundedEdges(t *testing.T) {
+	service, repository, authorizer, _ := resourceServiceFixture()
+	repository.relations = domain.ResourceRelations{Items: []domain.ResourceRelation{{Kind: "Pod", Name: "api-0", Relationship: "manages", Direction: "downstream"}}}
+	result, err := service.Relations(context.Background(), domain.Actor{Username: "alice"}, domain.ResourceReference{Group: "apps", Version: "v1", Resource: "deployments"}, "prod", "api")
+	if err == nil {
+		t.Fatalf("Relations() with undiscoverable type = %#v, want not found", result)
+	}
+	repository.descriptors = append(repository.descriptors, domain.ResourceDescriptor{Group: "apps", Version: "v1", Resource: "deployments", Kind: "Deployment", Namespaced: true, Verbs: []string{"get"}})
+	result, err = service.Relations(context.Background(), domain.Actor{Username: "alice"}, domain.ResourceReference{Group: "apps", Version: "v1", Resource: "deployments"}, "prod", "api")
+	if err != nil {
+		t.Fatalf("Relations() error = %v", err)
+	}
+	if len(result.Items) != 1 || len(authorizer.accesses) != 1 || authorizer.accesses[0] != (domain.Access{Verb: "get", APIGroup: "apps", Resource: "deployments", Namespace: "prod", Name: "api"}) {
+		t.Fatalf("relations/access = %#v %#v", result, authorizer.accesses)
 	}
 }
 

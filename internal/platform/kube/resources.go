@@ -132,6 +132,27 @@ func (c *Client) fetchResourceDiscovery(ctx context.Context) ([]domain.ResourceD
 	return items, warnings, nil
 }
 
+// ListNamespaceNames returns namespace names visible to the current actor. Global
+// search uses this as a bounded scope enumeration; the actual object reads are
+// still authorized independently for each namespace and resource type.
+func (c *Client) ListNamespaceNames(ctx context.Context) ([]string, error) {
+	if c.clientset == nil {
+		return nil, fmt.Errorf("%w: Kubernetes clientset is unavailable", domain.ErrUnavailable)
+	}
+	ctx, cancel := c.withTimeout(ctx)
+	defer cancel()
+	list, err := c.clientset.CoreV1().Namespaces().List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, mapKubeError(err)
+	}
+	names := make([]string, 0, len(list.Items))
+	for _, item := range list.Items {
+		names = append(names, item.Name)
+	}
+	sort.Strings(names)
+	return names, nil
+}
+
 func descriptorsFor(list *metav1.APIResourceList, group string, preferred bool) []domain.ResourceDescriptor {
 	if list == nil {
 		return nil

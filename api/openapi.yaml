@@ -23,6 +23,7 @@ tags:
   - name: storage
   - name: yaml
   - name: resources
+  - name: preferences
 security:
   - cookieAuth: []
 paths:
@@ -65,6 +66,41 @@ paths:
       responses:
         "204": { description: Session cleared }
         "401": { $ref: "#/components/responses/Unauthorized" }
+  /api/v1/preferences:
+    get:
+      tags: [preferences]
+      summary: Read bounded UI preferences synchronized for the current user
+      description: Contains only favorites, recent resources, saved views and hidden columns. No Secret values or command output are stored.
+      responses:
+        "200":
+          description: Current user preferences
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/UserPreferences" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
+    put:
+      tags: [preferences]
+      summary: Replace bounded UI preferences for the current user
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UserPreferences" }
+      responses:
+        "200":
+          description: Saved user preferences
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/UserPreferences" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "501": { $ref: "#/components/responses/NotSupported" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
   /api/v1/capabilities:
     get:
       tags: [auth]
@@ -895,6 +931,49 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/workloads/{kind}/{namespace}/{name}/logs:
+    get:
+      tags: [observability]
+      summary: Aggregate bounded Pod and container logs for one workload
+      description: |
+        Opens up to 20 Pod/container log streams after authorizing `pods/log`
+        for each Pod. Frames are newline-delimited JSON `log` entries carrying
+        `pod` and `container`, plus `warning` frames for skipped streams and a
+        terminal `end` frame. Supplying no container aggregates all regular
+        containers from the workload template.
+      parameters:
+        - { $ref: "#/components/parameters/KindPath" }
+        - { $ref: "#/components/parameters/NamespacePath" }
+        - { $ref: "#/components/parameters/Name" }
+        - name: container
+          in: query
+          schema: { type: string }
+        - name: follow
+          in: query
+          schema: { type: boolean, default: false }
+        - name: tailLines
+          in: query
+          schema: { type: integer, minimum: 0, maximum: 5000, default: 200 }
+        - name: timestamps
+          in: query
+          schema: { type: boolean, default: false }
+        - name: previous
+          in: query
+          schema: { type: boolean, default: false }
+        - name: sinceSeconds
+          in: query
+          schema: { type: integer, minimum: 0, maximum: 604800 }
+      responses:
+        "200":
+          description: NDJSON aggregate log stream
+          content:
+            application/x-ndjson:
+              schema: { type: string }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "501": { $ref: "#/components/responses/NotSupported" }
   /api/v1/events:
     get:
       tags: [observability]
@@ -1088,6 +1167,67 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
+  /api/v1/helm/releases/{namespace}/{name}/diff:
+    get:
+      tags: [releases]
+      summary: Compare two server-redacted Helm revisions
+      description: Both revisions are redacted before a bounded unified diff is generated. At most 6000 source lines per side are compared.
+      parameters:
+        - { $ref: "#/components/parameters/NamespacePath" }
+        - { $ref: "#/components/parameters/Name" }
+        - name: from
+          in: query
+          required: true
+          schema: { type: integer, minimum: 1 }
+        - name: to
+          in: query
+          required: true
+          schema: { type: integer, minimum: 1 }
+      responses:
+        "200":
+          description: Redacted values and manifest diff
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/HelmReleaseDiff" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
+  /api/v1/helm/releases/{namespace}/{name}/rollback:
+    post:
+      tags: [releases]
+      summary: Apply a previous Helm revision and record new Helm history
+      description: >-
+        Preflights every manifest object with server-side apply DryRun before
+        applying any object. Helm hooks are skipped and removed objects are not
+        deleted; both limitations are returned as warnings. Requires create and
+        update access to Secrets in the release namespace. The release name must
+        be supplied as confirmation.
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      parameters:
+        - { $ref: "#/components/parameters/NamespacePath" }
+        - { $ref: "#/components/parameters/Name" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/HelmReleaseRollbackRequest" }
+      responses:
+        "202":
+          description: Rollback completed and new Helm revision recorded
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/HelmReleaseRollbackResult" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "501": { $ref: "#/components/responses/NotSupported" }
         "503": { $ref: "#/components/responses/DependencyUnavailable" }
   /api/v1/services/{namespace}/{name}:
     get:
@@ -1794,10 +1934,12 @@ paths:
       tags: [resources]
       summary: Search a bounded set of authorized Kubernetes resource types
       description: >-
-        Searches up to 16 discovered resource types that the authenticated user
-        may list. Namespaced resources require an explicit namespace; when it is
-        omitted only cluster-scoped resources are searched. Results and type
-        coverage are bounded and include truncation warnings.
+        Searches up to 24 discovered resource types that the authenticated user
+        may list. A concrete namespace limits the search to that namespace.
+        `namespace=all` enumerates up to 8 visible namespaces and performs a
+        fail-closed SelfSubjectRulesReview for each namespace. An omitted
+        namespace searches cluster-scoped resources only. Results, namespaces
+        and type/scope combinations are bounded and emit truncation warnings.
       parameters:
         - $ref: "#/components/parameters/Search"
         - $ref: "#/components/parameters/Namespace"
@@ -2040,6 +2182,31 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
         "409": { $ref: "#/components/responses/Conflict" }
         "501": { $ref: "#/components/responses/NotSupported" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
+  /api/v1/resources/{group}/{version}/{resource}/{name}/relations:
+    get:
+      tags: [resources]
+      summary: Read bounded direct relationships for one discovered resource
+      description: >-
+        Returns immediate owners, managed Pods, Services, Ingresses, nodes and
+        storage relationships. Related-type list failures degrade to warnings.
+        At most 40 edges are returned.
+      parameters:
+        - { $ref: "#/components/parameters/ResourceGroupPath" }
+        - { $ref: "#/components/parameters/ResourceVersionPath" }
+        - { $ref: "#/components/parameters/ResourceNamePath" }
+        - { $ref: "#/components/parameters/Name" }
+        - { $ref: "#/components/parameters/Namespace" }
+      responses:
+        "200":
+          description: Direct resource relationships
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ResourceRelations" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
         "503": { $ref: "#/components/responses/DependencyUnavailable" }
 components:
   securitySchemes:
@@ -2973,6 +3140,43 @@ components:
             warnings:
               type: array
               items: { type: string }
+    HelmReleaseDiff:
+      type: object
+      required: [namespace, name, from, to, valuesDiff, manifestDiff]
+      properties:
+        namespace: { type: string }
+        name: { type: string }
+        from: { $ref: "#/components/schemas/HelmReleaseSummary" }
+        to: { $ref: "#/components/schemas/HelmReleaseSummary" }
+        valuesDiff:
+          type: string
+          description: Unified diff after sensitive values are redacted.
+        manifestDiff:
+          type: string
+          description: Unified diff after Secret data and sensitive manifest fields are redacted.
+        warnings:
+          type: array
+          items: { type: string }
+    HelmReleaseRollbackRequest:
+      type: object
+      required: [targetRevision, confirmation]
+      properties:
+        targetRevision: { type: integer, minimum: 1 }
+        confirmation:
+          type: string
+          description: Must exactly equal the Helm release name.
+    HelmReleaseRollbackResult:
+      type: object
+      required: [namespace, name, targetRevision, revision, appliedObjects]
+      properties:
+        namespace: { type: string }
+        name: { type: string }
+        targetRevision: { type: integer }
+        revision: { type: integer }
+        appliedObjects: { type: integer, minimum: 0 }
+        warnings:
+          type: array
+          items: { type: string }
     ServicePort:
       type: object
       required: [protocol, port, targetPort]
@@ -3450,6 +3654,52 @@ components:
         namespace: { type: string }
         name: { type: string }
         yaml: { type: string }
+    RecentResourcePreference:
+      type: object
+      required: [path, title, subtitle, visitedAt]
+      properties:
+        path: { type: string }
+        title: { type: string }
+        subtitle: { type: string }
+        kind: { type: string }
+        namespace: { type: string }
+        visitedAt: { type: integer, format: int64 }
+    SavedResourceViewPreference:
+      type: object
+      required: [id, name, createdAt]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        q: { type: string }
+        namespace: { type: string }
+        hiddenColumns:
+          type: array
+          items: { type: string }
+        createdAt: { type: integer, format: int64 }
+    UserPreferences:
+      type: object
+      properties:
+        favorites:
+          type: array
+          maxItems: 100
+          items: { type: string }
+        recent:
+          type: array
+          maxItems: 50
+          items: { $ref: "#/components/schemas/RecentResourcePreference" }
+        savedViews:
+          type: object
+          additionalProperties:
+            type: array
+            maxItems: 12
+            items: { $ref: "#/components/schemas/SavedResourceViewPreference" }
+        hiddenColumns:
+          type: object
+          additionalProperties:
+            type: array
+            maxItems: 64
+            items: { type: string }
+        updatedAt: { type: string, format: date-time }
     ResourceDescriptor:
       type: object
       required: [group, version, resource, kind, namespaced, verbs]
@@ -3581,6 +3831,28 @@ components:
         warnings:
           type: array
           items: { type: string }
+    ResourceRelations:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/ResourceRelation" }
+        warnings:
+          type: array
+          items: { type: string }
+    ResourceRelation:
+      type: object
+      required: [apiVersion, kind, name, relationship, direction]
+      properties:
+        apiVersion: { type: string }
+        kind: { type: string }
+        resource: { type: string }
+        name: { type: string }
+        namespace: { type: string }
+        relationship: { type: string }
+        direction: { type: string, enum: [upstream, downstream, related] }
+        status: { type: string }
     GenericResourceMutation:
       type: object
       required: [yaml]

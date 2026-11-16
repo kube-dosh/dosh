@@ -103,6 +103,34 @@ subjects:
   - kind: ServiceAccount
     name: {{ include "dosh.serviceAccountName" . }}
     namespace: {{ .Release.Namespace }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "dosh.fullname" . }}-preferences
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "dosh.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "create", "update"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "dosh.fullname" . }}-preferences
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "dosh.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "dosh.fullname" . }}-preferences
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "dosh.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
 {{- if or (eq $authMode "local") (eq $authMode "token") }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1

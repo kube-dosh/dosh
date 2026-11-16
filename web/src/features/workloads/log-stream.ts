@@ -1,5 +1,6 @@
 export type LogStreamFrame =
-  | { type: "log"; data: string }
+  | { type: "log"; data: string; pod?: string; container?: string }
+  | { type: "warning"; message: string; code?: string; pod?: string; container?: string }
   | { type: "end" }
   | { type: "error"; code: string; message: string; requestId?: string };
 
@@ -17,7 +18,21 @@ export function parseLogStreamFrame(line: string): LogStreamFrame {
   if (!value || typeof value !== "object") return frameError("日志流帧格式无效");
   const frame = value as Record<string, unknown>;
   if (frame.type === "log" && typeof frame.data === "string") {
-    return { type: "log", data: frame.data };
+    return {
+      type: "log",
+      data: frame.data,
+      ...(typeof frame.pod === "string" && frame.pod ? { pod: frame.pod } : {}),
+      ...(typeof frame.container === "string" && frame.container ? { container: frame.container } : {}),
+    };
+  }
+  if (frame.type === "warning" && typeof frame.message === "string") {
+    return {
+      type: "warning",
+      message: frame.message,
+      ...(typeof frame.code === "string" && frame.code ? { code: frame.code } : {}),
+      ...(typeof frame.pod === "string" && frame.pod ? { pod: frame.pod } : {}),
+      ...(typeof frame.container === "string" && frame.container ? { container: frame.container } : {}),
+    };
   }
   if (frame.type === "end") return { type: "end" };
   if (frame.type === "error" && typeof frame.message === "string") {

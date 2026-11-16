@@ -23,6 +23,8 @@ import (
 	networkhttp "dosh/internal/modules/network/http"
 	nodeshttp "dosh/internal/modules/nodes/http"
 	overviewhttp "dosh/internal/modules/overview/http"
+	preferencesapp "dosh/internal/modules/preferences/app"
+	preferenceshttp "dosh/internal/modules/preferences/http"
 	resourcesapp "dosh/internal/modules/resources/app"
 	resourceshttp "dosh/internal/modules/resources/http"
 	storagehttp "dosh/internal/modules/storage/http"
@@ -157,6 +159,7 @@ func newRouteTestDependencies(t *testing.T) routerDependencies {
 		cfg:           config.Config{},
 		auth:          authHandler,
 		overview:      overviewhttp.New(nil),
+		preferences:   preferenceshttp.New(preferencesapp.New(nil, audit.New(logger))),
 		resources:     resourceshttp.New(resourcesapp.New(nil, authz.NewLocal(false), audit.New(logger))),
 		clusterConfig: clusterconfighttp.New(nil),
 		nodes:         nodeshttp.New(nil),

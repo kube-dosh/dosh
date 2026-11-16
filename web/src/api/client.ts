@@ -22,6 +22,9 @@ import type {
   IngressSummary,
   IngressUpdateInput,
   HelmReleaseDetail,
+  HelmReleaseDiff,
+  HelmReleaseRollbackInput,
+  HelmReleaseRollbackResult,
   HelmReleaseSummary,
   ListParams,
   ListResponse,
@@ -50,6 +53,7 @@ import type {
   ResourceCapabilities,
   ResourceDiscovery,
   ResourceReference,
+  ResourceRelations,
   ResourceSchema,
   SecretReveal,
   SecretSummary,
@@ -62,6 +66,7 @@ import type {
   ServerCertificate,
   StorageClass,
   StorageClassDetail,
+  UserPreferences,
   WorkloadDetail,
   WorkloadContainerConfigUpdateInput,
   WorkloadImageUpdateInput,
@@ -443,6 +448,14 @@ export const api = {
     const value = await request<HelmReleaseDetail>(`/api/v1/helm/releases/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}`);
     return { ...value, history: list(value.history), warnings: list(value.warnings) };
   },
+  helmReleaseDiff: async (namespace: string, name: string, from: number, to: number) => {
+    const value = await request<HelmReleaseDiff>(`/api/v1/helm/releases/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}/diff?${new URLSearchParams({ from: String(from), to: String(to) })}`);
+    return { ...value, warnings: list(value.warnings) };
+  },
+  rollbackHelmRelease: async (namespace: string, name: string, input: HelmReleaseRollbackInput) => {
+    const value = await request<HelmReleaseRollbackResult>(`/api/v1/helm/releases/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}/rollback`, { method: "POST", body: JSON.stringify(input) });
+    return { ...value, warnings: list(value.warnings) };
+  },
   deletePod: (namespace: string, name: string) =>
     request<{ status: string }>(`/api/v1/pods/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}`, { method: "DELETE" }),
   events: (params?: ListParams) => listRequest<EventItem>(`/api/v1/events${query(params)}`),
@@ -527,6 +540,16 @@ export const api = {
     const value = await request<GenericResourceDetail>(`${resourceBasePath(reference)}/${encodeURIComponent(name)}${query({ namespace })}`);
     return { ...value, object: value.object ?? {}, yaml: value.yaml ?? "", warnings: list(value.warnings) };
   },
+  resourceRelations: async (reference: ResourceReference, name: string, namespace?: string) => {
+    const value = await request<ResourceRelations>(`${resourceBasePath(reference)}/${encodeURIComponent(name)}/relations${query({ namespace })}`);
+    return { ...value, items: list(value.items), warnings: list(value.warnings) };
+  },
+  preferences: async () => {
+    const value = await request<UserPreferences>("/api/v1/preferences");
+    return { ...value, favorites: list(value.favorites), recent: list(value.recent), savedViews: record(value.savedViews), hiddenColumns: record(value.hiddenColumns) };
+  },
+  savePreferences: (preferences: UserPreferences) =>
+    request<UserPreferences>("/api/v1/preferences", { method: "PUT", body: JSON.stringify(preferences) }),
   genericResourceCapabilities: (reference: ResourceReference, namespace?: string) =>
     request<ResourceCapabilities>(`/api/v1/resources/capabilities?${new URLSearchParams({
       group: reference.group, version: reference.version, resource: reference.resource, ...(namespace ? { namespace } : {}),
@@ -571,6 +594,32 @@ export async function streamLogs(
   if (options.timestamps) params.set("timestamps", "true");
   if (options.sinceSeconds) params.set("sinceSeconds", String(options.sinceSeconds));
   const response = await fetch(`/api/v1/pods/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}/logs?${params}`, {
+    credentials: "same-origin",
+    signal: options.signal,
+  });
+  if (!response.ok || !response.body) {
+    let problem: Partial<Problem> = {};
+    try { problem = (await response.json()) as Problem; } catch { /* noop */ }
+    if (response.status === 401) notifyUnauthorized();
+    throw new ApiError(response.status, problem);
+  }
+  return response.body.getReader();
+}
+
+export async function streamWorkloadLogs(
+  kind: string,
+  namespace: string,
+  name: string,
+  options: { container?: string; tailLines?: number; follow?: boolean; previous?: boolean; timestamps?: boolean; sinceSeconds?: number; signal?: AbortSignal } = {},
+): Promise<ReadableStreamDefaultReader<Uint8Array>> {
+  const params = new URLSearchParams();
+  if (options.container) params.set("container", options.container);
+  if (options.tailLines) params.set("tailLines", String(options.tailLines));
+  if (options.follow) params.set("follow", "true");
+  if (options.previous) params.set("previous", "true");
+  if (options.timestamps) params.set("timestamps", "true");
+  if (options.sinceSeconds) params.set("sinceSeconds", String(options.sinceSeconds));
+  const response = await fetch(`/api/v1/workloads/${encodeURIComponent(kind)}/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}/logs?${params}`, {
     credentials: "same-origin",
     signal: options.signal,
   });

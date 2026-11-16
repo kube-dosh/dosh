@@ -22,7 +22,7 @@ export function GlobalSearch({ open, onOpenChange }: { open: boolean; onOpenChan
   const nodes = useQuery({ queryKey: ["search", "nodes", deferred], queryFn: () => api.nodes({ q: deferred, pageSize: 50 }), enabled, staleTime: 10_000 });
   const workloads = useQuery({ queryKey: ["search", "workloads", deferred], queryFn: () => api.workloads({ q: deferred, pageSize: 50 }), enabled, staleTime: 10_000 });
   const pods = useQuery({ queryKey: ["search", "pods", deferred], queryFn: () => api.pods({ q: deferred, pageSize: 50 }), enabled, staleTime: 10_000 });
-  const resources = useQuery({ queryKey: ["search", "resources", deferred, namespace], queryFn: () => api.resourceSearch(deferred, namespace || undefined, 20), enabled, staleTime: 10_000 });
+  const resources = useQuery({ queryKey: ["search", "resources", deferred, namespace || "all"], queryFn: () => api.resourceSearch(deferred, namespace || "all", 20), enabled, staleTime: 10_000 });
   const loading = enabled && (nodes.isLoading || workloads.isLoading || pods.isLoading || resources.isLoading);
   const failedGroups = [
     nodes.isError ? "节点" : "",
@@ -57,7 +57,7 @@ export function GlobalSearch({ open, onOpenChange }: { open: boolean; onOpenChan
           </div>
           <div className="mt-2 flex items-center gap-2">
             <NamespaceSelect value={namespace} onChange={setNamespace} className="h-8 w-48" />
-            <span className="text-[11px] text-muted-foreground">通用资源搜索限定在所选命名空间；未选择时仅搜索集群级资源。</span>
+            <span className="text-[11px] text-muted-foreground">默认由服务端在最多 8 个可见命名空间中检索已授权资源；选择命名空间可缩小范围。</span>
           </div>
         </div>
         <div className="max-h-[60vh] overflow-y-auto px-3 pb-4 scrollbar-thin">

@@ -77,6 +77,7 @@ type workloadRepo struct {
 	suspendErr        error
 	deleteErr         error
 	logsErr           error
+	logsErrors        map[string]error
 	logsPayload       string
 	logsReader        io.ReadCloser
 	workloads         []domain.WorkloadSummary
@@ -210,6 +211,9 @@ func (r *workloadRepo) StreamPodLogs(_ context.Context, namespace, name, contain
 	r.lastNamespace, r.lastName = namespace, name
 	r.lastTailLines = tailLines
 	r.lastSinceSeconds = sinceSeconds
+	if err := r.logsErrors[namespace+"/"+name+"/"+container]; err != nil {
+		return nil, err
+	}
 	if r.logsErr != nil {
 		return nil, r.logsErr
 	}
@@ -261,6 +265,8 @@ type logFrame struct {
 	Code      string `json:"code"`
 	Message   string `json:"message"`
 	RequestID string `json:"requestId"`
+	Pod       string `json:"pod"`
+	Container string `json:"container"`
 }
 
 func decodeLogFrames(t *testing.T, body io.Reader) []logFrame {
@@ -527,6 +533,57 @@ func TestRestartDeleteAndLogs(t *testing.T) {
 	}
 	if server.repo.lastSinceSeconds != 900 {
 		t.Fatalf("sinceSeconds = %d", server.repo.lastSinceSeconds)
+	}
+}
+
+func TestWorkloadLogsEmitSourceIdentityAndPartialWarnings(t *testing.T) {
+	server := newWorkloadTestServer(t)
+	server.repo.workloadDetail = domain.WorkloadDetail{
+		Pods: []domain.PodSummary{
+			{Name: "api-0", Namespace: "prod"},
+			{Name: "api-1", Namespace: "prod"},
+		},
+		Containers: []domain.WorkloadContainer{{Name: "app"}, {Name: "sidecar"}},
+	}
+	server.repo.logsPayload = "aggregated line\n"
+	server.repo.logsErrors = map[string]error{"prod/api-1/sidecar": domain.ErrUnavailable}
+
+	response := performWorkloadJSON(server.router, http.MethodGet, "/api/v1/workloads/deployment/prod/api/logs", "", map[string]string{"Cookie": server.cookie.String()})
+	if response.Code != http.StatusOK {
+		t.Fatalf("workload logs status = %d, body = %s", response.Code, response.Body.String())
+	}
+	frames := decodeLogFrames(t, response.Body)
+	if len(frames) != 5 || frames[0].Type != "warning" || !strings.Contains(frames[0].Message, "api-1/sidecar") || frames[len(frames)-1].Type != "end" {
+		t.Fatalf("workload log frames = %#v", frames)
+	}
+	partialSources := make(map[string]bool)
+	for _, frame := range frames {
+		if frame.Type == "log" {
+			partialSources[frame.Pod+"/"+frame.Container] = true
+		}
+	}
+	if len(partialSources) != 3 || partialSources["api-1/sidecar"] {
+		t.Fatalf("partial stream sources = %#v", partialSources)
+	}
+
+	server.repo.logsErrors = nil
+	server.repo.workloadDetail.Containers = []domain.WorkloadContainer{{Name: "app"}, {Name: "sidecar"}}
+	response = performWorkloadJSON(server.router, http.MethodGet, "/api/v1/workloads/deployment/prod/api/logs", "", map[string]string{"Cookie": server.cookie.String()})
+	if response.Code != http.StatusOK {
+		t.Fatalf("workload all-container status = %d, body = %s", response.Code, response.Body.String())
+	}
+	frames = decodeLogFrames(t, response.Body)
+	if len(frames) < 5 || frames[len(frames)-1].Type != "end" {
+		t.Fatalf("all-container frames = %#v", frames)
+	}
+	seen := make(map[string]bool)
+	for _, frame := range frames {
+		if frame.Type == "log" {
+			seen[frame.Pod+"/"+frame.Container] = true
+		}
+	}
+	if !seen["api-0/app"] || !seen["api-0/sidecar"] || !seen["api-1/app"] || !seen["api-1/sidecar"] {
+		t.Fatalf("stream sources = %#v", seen)
 	}
 }
 

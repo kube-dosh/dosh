@@ -1,6 +1,8 @@
 package workloadshttp
 
 import (
+	"bufio"
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -446,6 +448,99 @@ func (h *Handler) Logs(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	}
 }
 
+// WorkloadLogs multiplexes a bounded set of Pod/container logs into NDJSON.
+// Each frame carries its source identity so the browser can present a stable
+// aggregate view without guessing which Pod produced a line.
+func (h *Handler) WorkloadLogs(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	actor, _ := domain.ActorFromContext(r.Context())
+	tailLines, err := strconv.ParseInt(httpx.Query(r, "tailLines"), 10, 64)
+	if err != nil {
+		tailLines = 200
+	}
+	streams, err := h.service.StreamWorkloadLogs(
+		r.Context(), actor,
+		chi.URLParam(r, "kind"), chi.URLParam(r, "namespace"), chi.URLParam(r, "name"),
+		httpx.Query(r, "container"),
+		httpx.BoolQuery(r, "follow", false), httpx.BoolQuery(r, "previous", false),
+		tailLines, httpx.BoolQuery(r, "timestamps", false), parseInt64Query(r, "sinceSeconds"),
+	)
+	if err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	defer func() {
+		for _, item := range streams.Streams {
+			_ = item.Stream.Close()
+		}
+	}()
+	w.Header().Set("Content-Type", "application/x-ndjson; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("X-Accel-Buffering", "no")
+	w.WriteHeader(stdhttp.StatusOK)
+	flusher, _ := w.(stdhttp.Flusher)
+	encoder := json.NewEncoder(w)
+	for _, warning := range streams.Warnings {
+		if err := encoder.Encode(logStreamFrame{Type: "warning", Message: warning, Code: "partial_stream"}); err != nil {
+			return
+		}
+		if flusher != nil {
+			flusher.Flush()
+		}
+	}
+	frames := make(chan logStreamFrame, 128)
+	var wait sync.WaitGroup
+	for _, item := range streams.Streams {
+		wait.Add(1)
+		go func(source domain.WorkloadLogStream) {
+			defer wait.Done()
+			readLogStream(r.Context(), source, frames)
+		}(item)
+	}
+	go func() {
+		wait.Wait()
+		close(frames)
+	}()
+	for frame := range frames {
+		if err := encoder.Encode(frame); err != nil {
+			return
+		}
+		if flusher != nil {
+			flusher.Flush()
+		}
+	}
+	_ = encoder.Encode(logStreamFrame{Type: "end"})
+}
+
+func readLogStream(ctx context.Context, source domain.WorkloadLogStream, frames chan<- logStreamFrame) {
+	send := func(frame logStreamFrame) bool {
+		select {
+		case frames <- frame:
+			return true
+		case <-ctx.Done():
+			return false
+		}
+	}
+	reader := bufio.NewReaderSize(source.Stream, 32*1024)
+	for {
+		line, err := reader.ReadString('\n')
+		if len(line) > 0 {
+			if len(line) > 256*1024 {
+				line = line[:256*1024] + "\n"
+			}
+			if !send(logStreamFrame{Type: "log", Data: line, Pod: source.Pod, Container: source.Container}) {
+				return
+			}
+		}
+		if err == nil {
+			continue
+		}
+		if err != io.EOF && ctx.Err() == nil {
+			send(logStreamFrame{Type: "error", Code: "log_stream_failed", Message: err.Error(), Pod: source.Pod, Container: source.Container})
+		}
+		return
+	}
+}
+
 func parseInt64Query(r *stdhttp.Request, key string) int64 {
 	value, err := strconv.ParseInt(httpx.Query(r, key), 10, 64)
 	if err != nil {
@@ -459,6 +554,8 @@ type logStreamFrame struct {
 	Data      string `json:"data,omitempty"`
 	Code      string `json:"code,omitempty"`
 	Message   string `json:"message,omitempty"`
+	Pod       string `json:"pod,omitempty"`
+	Container string `json:"container,omitempty"`
 	RequestID string `json:"requestId,omitempty"`
 }
 
@@ -498,6 +595,7 @@ func (h *Handler) Mount(r chi.Router) {
 	r.Get("/pods/{namespace}/{name}", h.GetPod)
 	r.Delete("/pods/{namespace}/{name}", h.DeletePod)
 	r.Get("/pods/{namespace}/{name}/logs", h.Logs)
+	r.Get("/workloads/{kind}/{namespace}/{name}/logs", h.WorkloadLogs)
 	r.Post("/pods/{namespace}/{name}/ephemeral-containers", h.CreateEphemeralContainer)
 	r.Get("/pods/{namespace}/{name}/terminal", h.Terminal)
 }
