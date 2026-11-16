@@ -39,15 +39,21 @@ type Repository interface {
 	StreamPodLogs(ctx context.Context, namespace, name, container string, follow, previous bool, tailLines int64, timestamps bool, sinceSeconds int64, limitBytes int64) (io.ReadCloser, error)
 	OpenPodTerminal(ctx context.Context, namespace, name string, options domain.PodTerminalOptions) (domain.PodTerminalSession, error)
 	AddPodEphemeralContainer(ctx context.Context, namespace, name string, request domain.PodEphemeralContainerRequest, containerName string) (string, error)
+	ResolvePortForwardTarget(ctx context.Context, target domain.PortForwardTarget) (domain.PortForwardPod, error)
+	OpenPodPortForward(ctx context.Context, namespace, name string, port int32) (string, io.Closer, error)
 }
 
 type Service struct {
-	repository Repository
-	authorizer domain.Authorizer
-	auditor    domain.Auditor
-	terminal   domain.TerminalLimits
-	terminalMu sync.Mutex
-	active     map[string]int
+	repository    Repository
+	authorizer    domain.Authorizer
+	auditor       domain.Auditor
+	terminal      domain.TerminalLimits
+	terminalMu    sync.Mutex
+	active        map[string]int
+	forward       domain.PortForwardLimits
+	forwardMu     sync.Mutex
+	forwards      map[string]*portForwardRecord
+	forwardCounts map[string]int
 }
 
 func New(repository Repository, authorizer domain.Authorizer, auditor domain.Auditor, limits ...domain.TerminalLimits) *Service {
@@ -58,7 +64,22 @@ func New(repository Repository, authorizer domain.Authorizer, auditor domain.Aud
 	return &Service{
 		repository: repository, authorizer: authorizer, auditor: auditor,
 		terminal: terminal, active: make(map[string]int),
+		forward: domain.DefaultPortForwardLimits(), forwards: make(map[string]*portForwardRecord), forwardCounts: make(map[string]int),
 	}
+}
+
+// SetPortForwardLimits applies startup configuration to the in-memory tunnel
+// registry. It must be called during composition before requests are served.
+func (s *Service) SetPortForwardLimits(limits domain.PortForwardLimits) {
+	if limits.MaxDuration <= 0 {
+		limits.MaxDuration = domain.DefaultPortForwardLimits().MaxDuration
+	}
+	if limits.MaxSessionsPerUser <= 0 {
+		limits.MaxSessionsPerUser = domain.DefaultPortForwardLimits().MaxSessionsPerUser
+	}
+	s.forwardMu.Lock()
+	s.forward = limits
+	s.forwardMu.Unlock()
 }
 
 var supportedKinds = map[string]bool{

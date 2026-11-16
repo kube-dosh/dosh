@@ -121,7 +121,7 @@ func podEphemeralContainerDetails(containers []corev1.EphemeralContainer, status
 	}
 	result := make([]domain.Container, 0, len(containers))
 	for _, container := range containers {
-		item := domain.Container{Name: container.Name, Image: container.Image, Ephemeral: true}
+		item := domain.Container{Name: container.Name, Image: container.Image, Ephemeral: true, Ports: containerPorts(container.Ports)}
 		if q, ok := container.Resources.Requests[corev1.ResourceCPU]; ok {
 			item.CPURequestMilli = q.MilliValue()
 		}
@@ -204,6 +204,18 @@ func podHasTargetContainer(pod *corev1.Pod, name string) bool {
 	return false
 }
 
+func containerPorts(ports []corev1.ContainerPort) []domain.ContainerPort {
+	result := make([]domain.ContainerPort, 0, len(ports))
+	for _, port := range ports {
+		protocol := string(port.Protocol)
+		if protocol == "" {
+			protocol = string(corev1.ProtocolTCP)
+		}
+		result = append(result, domain.ContainerPort{Name: port.Name, Protocol: protocol, Port: port.ContainerPort})
+	}
+	return result
+}
+
 func podContainerDetails(containers []corev1.Container, statuses []corev1.ContainerStatus, init bool) []domain.Container {
 	statusByName := make(map[string]corev1.ContainerStatus, len(statuses))
 	for _, status := range statuses {
@@ -211,7 +223,7 @@ func podContainerDetails(containers []corev1.Container, statuses []corev1.Contai
 	}
 	result := make([]domain.Container, 0, len(containers))
 	for _, container := range containers {
-		item := domain.Container{Name: container.Name, Image: container.Image, Init: init}
+		item := domain.Container{Name: container.Name, Image: container.Image, Init: init, Ports: containerPorts(container.Ports)}
 		if q, ok := container.Resources.Requests[corev1.ResourceCPU]; ok {
 			item.CPURequestMilli = q.MilliValue()
 		}

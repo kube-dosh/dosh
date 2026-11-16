@@ -12,11 +12,14 @@ import (
 	"testing"
 	"time"
 
+	"dosh/internal/domain"
+
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/version"
 	fakediscovery "k8s.io/client-go/discovery/fake"
 	dynamicfake "k8s.io/client-go/dynamic/fake"
 	k8sfake "k8s.io/client-go/kubernetes/fake"
@@ -173,5 +176,75 @@ func TestHelmRollbackStopsWhenDryRunFails(t *testing.T) {
 	}
 	if _, err := clientset.CoreV1().Secrets("apps").Get(context.Background(), "sh.helm.release.v1.web.v3", metav1.GetOptions{}); err == nil {
 		t.Fatal("Helm revision was recorded after a failed preflight")
+	}
+}
+
+func TestHelmUpgradeValuesMergeHandlesNilBase(t *testing.T) {
+	merged := mergeHelmValues(nil, map[string]any{"image": map[string]any{"tag": "v2"}})
+	image, ok := merged["image"].(map[string]any)
+	if !ok || image["tag"] != "v2" {
+		t.Fatalf("merged values = %#v", merged)
+	}
+	if empty := mergeHelmValues(nil, nil); empty == nil {
+		t.Fatal("mergeHelmValues returned nil map")
+	}
+}
+
+func TestHelmUpgradePreviewRendersStoredChart(t *testing.T) {
+	secret := helmSecretWithChart("web", 1, map[string]any{
+		"metadata": map[string]any{"name": "web", "version": "1.2.3", "apiVersion": "v2"},
+		"values":   map[string]any{"replicaCount": 1},
+		"templates": []any{map[string]any{
+			"name": "templates/configmap.yaml",
+			"data": []byte("apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: web-config\ndata:\n  replicas: {{ .Values.replicaCount | quote }}\n"),
+		}},
+	}, "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: web-config\n")
+	discovery := &fakediscovery.FakeDiscovery{Fake: &k8stesting.Fake{}, FakedServerVersion: &version.Info{GitVersion: "v1.36.5"}}
+	client := NewForClients(k8sfake.NewSimpleClientset(secret), nil, discovery, testConfig())
+	preview, err := client.PreviewHelmUpgrade(context.Background(), "apps", "web", "replicaCount: 3\n")
+	if err != nil {
+		t.Fatalf("PreviewHelmUpgrade() error = %v", err)
+	}
+	if preview.NextRevision != 2 || !strings.Contains(preview.NextManifest, "replicas: \"3\"") {
+		t.Fatalf("preview = %#v", preview)
+	}
+	if !strings.Contains(preview.NextValues, "replicaCount: 3") {
+		t.Fatalf("next values = %q", preview.NextValues)
+	}
+}
+
+func TestHelmUpgradeRejectsChartWithDependencies(t *testing.T) {
+	secret := helmSecretWithChart("web", 1, map[string]any{
+		"metadata": map[string]any{
+			"name": "web", "version": "1.2.3", "apiVersion": "v2",
+			"dependencies": []any{map[string]any{"name": "redis", "version": "1.0.0"}},
+		},
+		"templates": []any{map[string]any{"name": "templates/cm.yaml", "data": []byte("apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: web\n")}},
+	}, "")
+	discovery := &fakediscovery.FakeDiscovery{Fake: &k8stesting.Fake{}, FakedServerVersion: &version.Info{GitVersion: "v1.36.5"}}
+	client := NewForClients(k8sfake.NewSimpleClientset(secret), nil, discovery, testConfig())
+	_, err := client.PreviewHelmUpgrade(context.Background(), "apps", "web", "")
+	if err == nil || !errors.Is(err, domain.ErrUnsupported) || !strings.Contains(err.Error(), "sub-chart") {
+		t.Fatalf("PreviewHelmUpgrade() error = %v, want unsupported dependency error", err)
+	}
+}
+
+func helmSecretWithChart(name string, revision int, chart map[string]any, manifest string) *corev1.Secret {
+	payload := map[string]any{
+		"name": name, "namespace": "apps", "version": revision,
+		"info":     map[string]any{"status": "deployed", "last_deployed": time.Now().UTC()},
+		"chart":    chart,
+		"config":   map[string]any{"replicaCount": 1},
+		"manifest": manifest,
+	}
+	encoded, _ := json.Marshal(payload)
+	var compressed bytes.Buffer
+	writer := gzip.NewWriter(&compressed)
+	_, _ = writer.Write(encoded)
+	_ = writer.Close()
+	return &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: fmt.Sprintf("sh.helm.release.v1.%s.v%d", name, revision), Namespace: "apps", Labels: map[string]string{"owner": "helm"}},
+		Type:       corev1.SecretType(helmReleaseSecretType),
+		Data:       map[string][]byte{"release": []byte(base64.StdEncoding.EncodeToString(compressed.Bytes()))},
 	}
 }

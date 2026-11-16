@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link, useNavigate, useParams, useSearch } from "@tanstack/react-router";
 import { createColumnHelper } from "@tanstack/react-table";
-import { FileCode2, Network, Pencil, Trash2 } from "lucide-react";
+import { FileCode2, Network, Pencil, RadioTower, Trash2 } from "lucide-react";
 import { api } from "@/api/client";
 import type { ServiceEndpoint } from "@/api/types";
 import { DataTable } from "@/components/data/data-table";
@@ -21,12 +21,13 @@ import { ResourceRelationsPanel } from "@/features/resources/resource-relations-
 import { useCapabilities } from "@/features/auth/use-session";
 import { NetworkMetadataCard } from "@/features/network/network-detail-shared";
 import { ServiceFormDialog } from "@/features/workloads/service-form-dialog";
+import { PortForwardPanel } from "@/features/workloads/port-forward-panel";
 import { resourceCapabilities } from "@/lib/capabilities";
 import { formatDate } from "@/lib/utils";
 
 const endpointColumn = createColumnHelper<ServiceEndpoint>();
 const EMPTY_SELECTOR: Record<string, string> = {};
-const serviceTabs = ["overview", "endpoints", "events", "yaml"] as const;
+const serviceTabs = ["overview", "endpoints", "port-forward", "events", "yaml"] as const;
 type ServiceTab = (typeof serviceTabs)[number];
 
 function isServiceTab(value: string | undefined): value is ServiceTab {
@@ -55,6 +56,7 @@ export function ServiceDetailPage() {
     refetchInterval: 20_000,
   });
   const capabilities = useCapabilities(params.namespace).data;
+  const canPortForward = Boolean(capabilities?.podPortForward);
   const serviceCaps = resourceCapabilities(capabilities, "services");
   if (query.isLoading) return <LoadingState label="正在加载 Service 详情" className="min-h-[60vh]" />;
   if (query.isError) return <ErrorState error={query.error} onRetry={() => void query.refetch()} />;
@@ -67,6 +69,7 @@ export function ServiceDetailPage() {
         description={<span className="flex flex-wrap items-center gap-2"><Badge variant={service.headless ? "outline" : "secondary"}>{service.headless ? "Headless" : service.type}</Badge><StatusBadge status={service.endpointCount > 0 ? "Ready" : "NoReadyEndpoints"} /><span>{service.endpointCount} 个就绪 Endpoint</span><span>·</span><span>{service.namespace}</span></span>}
         actions={<div className="flex items-center gap-2">
           {serviceCaps.update ? <Button variant="outline" size="sm" onClick={() => setEditOpen(true)}><Pencil className="h-4 w-4" />编辑</Button> : null}
+          {canPortForward ? <Button variant="outline" size="sm" onClick={() => changeTab("port-forward")}><RadioTower className="h-4 w-4" />端口转发</Button> : null}
           {serviceCaps.delete ? <Button variant="destructive" size="sm" onClick={() => setDeleteOpen(true)}><Trash2 className="h-4 w-4" />删除</Button> : null}
         </div>}
       />
@@ -74,6 +77,7 @@ export function ServiceDetailPage() {
         <TabsList>
           <TabsTrigger value="overview">概览</TabsTrigger>
           <TabsTrigger value="endpoints">Endpoint ({service.endpoints.length})</TabsTrigger>
+          <TabsTrigger value="port-forward"><RadioTower className="h-3.5 w-3.5" />端口转发</TabsTrigger>
           <TabsTrigger value="events">事件</TabsTrigger>
           <TabsTrigger value="yaml"><FileCode2 className="h-3.5 w-3.5" />YAML</TabsTrigger>
         </TabsList>
@@ -136,6 +140,9 @@ export function ServiceDetailPage() {
             empty="当前 Service 没有 EndpointSlice 地址"
             pageSize={20}
           />
+        </TabsContent>
+        <TabsContent value="port-forward">
+          <PortForwardPanel namespace={service.namespace} name={service.name} kind="service" canPortForward={canPortForward} ports={service.ports.map((item) => ({ port: item.port, protocol: item.protocol, label: item.name || `Service 端口 ${item.port}` }))} />
         </TabsContent>
         <TabsContent value="events"><ResourceEvents namespace={service.namespace} objectKind="Service" objectName={service.name} /></TabsContent>
         <TabsContent value="yaml"><YamlPanel type="service" name={service.name} namespace={service.namespace} height="64vh" /></TabsContent>

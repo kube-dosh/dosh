@@ -22,7 +22,9 @@ export interface Capabilities {
   nodeDrain: boolean;
   podExec: boolean;
   podEphemeralDebug: boolean;
+  podPortForward: boolean;
   helmReleases: boolean;
+  helmUpgrade: boolean;
   reloadCertificate: boolean;
   resourceActions?: Record<string, ResourceCapabilities>;
 }
@@ -499,6 +501,7 @@ export interface DeploymentPreview {
 export interface ContainerInfo {
   name: string;
   image: string;
+  ports?: ContainerPort[];
   init?: boolean;
   ephemeral?: boolean;
   ready: boolean;
@@ -509,6 +512,22 @@ export interface ContainerInfo {
   cpuLimitMilli: number;
   memoryRequestBytes: number;
   memoryLimitBytes: number;
+}
+
+export interface ContainerPort {
+  name?: string;
+  protocol: string;
+  port: number;
+}
+
+export interface PortForwardSession {
+  id: string;
+  namespace: string;
+  pod: string;
+  service?: string;
+  port: number;
+  path: string;
+  expiresAt: string;
 }
 
 export interface PodSummary {
@@ -577,6 +596,30 @@ export interface HelmReleaseRollbackResult {
   namespace: string;
   name: string;
   targetRevision: number;
+  revision: number;
+  appliedObjects: number;
+  warnings?: string[];
+}
+
+export interface HelmReleaseUpgradeRequest {
+  values: string;
+  confirmation?: string;
+}
+
+export interface HelmReleaseUpgradePreview {
+  namespace: string;
+  name: string;
+  currentRevision: number;
+  nextRevision: number;
+  valuesDiff: string;
+  manifestDiff: string;
+  warnings?: string[];
+}
+
+export interface HelmReleaseUpgradeResult {
+  namespace: string;
+  name: string;
+  previousRevision: number;
   revision: number;
   appliedObjects: number;
   warnings?: string[];

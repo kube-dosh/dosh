@@ -126,6 +126,11 @@ terminal:
   # 每个终端会话每秒最多发送给浏览器的输出字节数，防止无界命令输出拖垮服务。
   maxOutputBytesPerSecond: 2097152
 
+portForward:
+  # 浏览器访问的临时 HTTP 隧道只监听容器回环地址，并自动过期。
+  ttl: 30m
+  maxSessionsPerUser: 4
+
 resources:
   requests:
     cpu: 100m

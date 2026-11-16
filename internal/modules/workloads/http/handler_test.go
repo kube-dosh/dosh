@@ -98,6 +98,11 @@ type workloadRepo struct {
 	ephemeralErr      error
 	lastEphemeral     domain.PodEphemeralContainerRequest
 	lastEphemeralName string
+	lastTunnel        domain.PortForwardTarget
+	forwardPod        domain.PortForwardPod
+	forwardErr        error
+	openForwardErr    error
+	forwardCalls      int
 }
 
 func (r *workloadRepo) ListWorkloads(_ context.Context, query domain.ListQuery) ([]domain.WorkloadSummary, error) {
@@ -225,6 +230,26 @@ func (r *workloadRepo) StreamPodLogs(_ context.Context, namespace, name, contain
 
 func (r *workloadRepo) OpenPodTerminal(context.Context, string, string, domain.PodTerminalOptions) (domain.PodTerminalSession, error) {
 	return nil, domain.ErrUnsupported
+}
+
+func (r *workloadRepo) ResolvePortForwardTarget(_ context.Context, target domain.PortForwardTarget) (domain.PortForwardPod, error) {
+	r.lastTunnel = target
+	if r.forwardErr != nil {
+		return domain.PortForwardPod{}, r.forwardErr
+	}
+	if r.forwardPod.Pod != "" {
+		return r.forwardPod, nil
+	}
+	return domain.PortForwardPod{Namespace: target.Namespace, Pod: target.Name, Port: target.Port}, nil
+}
+
+func (r *workloadRepo) OpenPodPortForward(_ context.Context, namespace, name string, port int32) (string, io.Closer, error) {
+	r.forwardCalls++
+	r.lastNamespace, r.lastName = namespace, name
+	if r.openForwardErr != nil {
+		return "", nil, r.openForwardErr
+	}
+	return "127.0.0.1:41000", io.NopCloser(strings.NewReader("")), nil
 }
 
 type failingLogReader struct {

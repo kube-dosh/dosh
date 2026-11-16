@@ -14,7 +14,10 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
-const maxResourceRelations = 40
+const (
+	maxResourceRelations = 40
+	relationScanLimit    = 200
+)
 
 type relationGraph struct {
 	items    []domain.ResourceRelation
@@ -65,6 +68,24 @@ func (g *relationGraph) warn(message string) {
 		}
 	}
 	g.warnings = append(g.warnings, message)
+}
+
+func relationListOptions(labelSelector string) metav1.ListOptions {
+	options := metav1.ListOptions{Limit: relationScanLimit}
+	if labelSelector != "" {
+		options.LabelSelector = labelSelector
+	}
+	return options
+}
+
+func (g *relationGraph) warnTruncated(kind, namespace, continueToken string) {
+	if continueToken == "" {
+		return
+	}
+	if namespace == "" {
+		namespace = "集群"
+	}
+	g.warn(fmt.Sprintf("%s %s 的关系扫描达到 %d 条上限，其余对象已省略", namespace, kind, relationScanLimit))
 }
 
 // GetResourceRelations returns bounded immediate edges for one object. It favors
@@ -133,10 +154,11 @@ func (c *Client) addServiceRelations(ctx context.Context, graph *relationGraph, 
 	namespace := service.GetNamespace()
 	selector, _, _ := unstructured.NestedStringMap(service.Object, "spec", "selector")
 	if len(selector) > 0 {
-		pods, err := c.clientset.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{LabelSelector: selectorString(selector)})
+		pods, err := c.clientset.CoreV1().Pods(namespace).List(ctx, relationListOptions(selectorString(selector)))
 		if err != nil {
 			graph.warn(fmt.Sprintf("无法读取 Service %s/%s 关联的 Pod", namespace, service.GetName()))
 		} else {
+			graph.warnTruncated("Pod", namespace, pods.Continue)
 			for _, pod := range pods.Items {
 				graph.add("v1", "Pod", pod.Name, pod.Namespace, "selects", "downstream", string(pod.Status.Phase))
 				if len(graph.items) >= maxResourceRelations {
@@ -145,11 +167,12 @@ func (c *Client) addServiceRelations(ctx context.Context, graph *relationGraph, 
 			}
 		}
 	}
-	ingresses, err := c.clientset.NetworkingV1().Ingresses(namespace).List(ctx, metav1.ListOptions{})
+	ingresses, err := c.clientset.NetworkingV1().Ingresses(namespace).List(ctx, relationListOptions(""))
 	if err != nil {
 		graph.warn(fmt.Sprintf("无法读取命名空间 %s 的 Ingress 关系", namespace))
 		return
 	}
+	graph.warnTruncated("Ingress", namespace, ingresses.Continue)
 	for _, ingress := range ingresses.Items {
 		if ingressReferencesService(ingress, service.GetName()) {
 			status := ""
@@ -170,11 +193,14 @@ func (c *Client) addIngressRelations(ctx context.Context, graph *relationGraph, 
 }
 
 func (c *Client) addNodeRelations(ctx context.Context, graph *relationGraph, node *unstructured.Unstructured) {
-	pods, err := c.clientset.CoreV1().Pods("").List(ctx, metav1.ListOptions{FieldSelector: "spec.nodeName=" + node.GetName()})
+	options := relationListOptions("")
+	options.FieldSelector = "spec.nodeName=" + node.GetName()
+	pods, err := c.clientset.CoreV1().Pods("").List(ctx, options)
 	if err != nil {
 		graph.warn("无法读取节点上的 Pod，可能缺少跨命名空间 list pods 权限")
 		return
 	}
+	graph.warnTruncated("Pod", "", pods.Continue)
 	for _, pod := range pods.Items {
 		graph.add("v1", "Pod", pod.Name, pod.Namespace, "runs on", "downstream", string(pod.Status.Phase))
 		if len(graph.items) >= maxResourceRelations {
@@ -188,11 +214,12 @@ func (c *Client) addClaimRelations(ctx context.Context, graph *relationGraph, cl
 	if volumeName, _, _ := unstructured.NestedString(claim.Object, "spec", "volumeName"); volumeName != "" {
 		graph.add("v1", "PersistentVolume", volumeName, "", "bound to", "upstream", "")
 	}
-	pods, err := c.clientset.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{})
+	pods, err := c.clientset.CoreV1().Pods(namespace).List(ctx, relationListOptions(""))
 	if err != nil {
 		graph.warn(fmt.Sprintf("无法读取 PVC %s/%s 关联的 Pod", namespace, claim.GetName()))
 		return
 	}
+	graph.warnTruncated("Pod", namespace, pods.Continue)
 	for _, pod := range pods.Items {
 		if podUsesClaim(pod, claim.GetName()) {
 			graph.add("v1", "Pod", pod.Name, pod.Namespace, "mounts", "downstream", string(pod.Status.Phase))
@@ -208,10 +235,12 @@ func (c *Client) addVolumeRelations(ctx context.Context, graph *relationGraph, v
 
 func (c *Client) addWorkloadRelations(ctx context.Context, graph *relationGraph, workload *unstructured.Unstructured, labels map[string]string) {
 	namespace := workload.GetNamespace()
-	pods, err := c.clientset.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{})
+	selector := workloadSelector(workload.Object)
+	pods, err := c.clientset.CoreV1().Pods(namespace).List(ctx, relationListOptions(selectorString(selector)))
 	if err != nil {
 		graph.warn(fmt.Sprintf("无法读取 %s 关联的 Pod", workload.GetKind()))
 	} else {
+		graph.warnTruncated("Pod", namespace, pods.Continue)
 		podLabels := make(map[string]string)
 		for key, value := range labels {
 			podLabels[key] = value
@@ -221,7 +250,6 @@ func (c *Client) addWorkloadRelations(ctx context.Context, graph *relationGraph,
 				podLabels[key] = value
 			}
 		}
-		selector := workloadSelector(workload.Object)
 		for _, pod := range pods.Items {
 			if !podOwnedBy(pod, workload) && !mapContainsAll(pod.Labels, selector) {
 				continue
@@ -237,11 +265,12 @@ func (c *Client) addWorkloadRelations(ctx context.Context, graph *relationGraph,
 		c.addMatchingServices(ctx, graph, namespace, podLabels)
 	}
 	if workload.GetKind() == "CronJob" {
-		jobs, err := c.clientset.BatchV1().Jobs(namespace).List(ctx, metav1.ListOptions{})
+		jobs, err := c.clientset.BatchV1().Jobs(namespace).List(ctx, relationListOptions(""))
 		if err != nil {
 			graph.warn(fmt.Sprintf("无法读取 CronJob %s/%s 关联的 Job", namespace, workload.GetName()))
 			return
 		}
+		graph.warnTruncated("Job", namespace, jobs.Continue)
 		for _, job := range jobs.Items {
 			if jobOwnedBy(job.OwnerReferences, workload) {
 				graph.add("batch/v1", "Job", job.Name, job.Namespace, "creates", "downstream", jobStatus(job))
@@ -254,11 +283,12 @@ func (c *Client) addMatchingServices(ctx context.Context, graph *relationGraph, 
 	if len(labels) == 0 {
 		return
 	}
-	services, err := c.clientset.CoreV1().Services(namespace).List(ctx, metav1.ListOptions{})
+	services, err := c.clientset.CoreV1().Services(namespace).List(ctx, relationListOptions(""))
 	if err != nil {
 		graph.warn(fmt.Sprintf("无法读取命名空间 %s 的 Service 关系", namespace))
 		return
 	}
+	graph.warnTruncated("Service", namespace, services.Continue)
 	for _, service := range services.Items {
 		if len(service.Spec.Selector) > 0 && mapContainsAll(labels, service.Spec.Selector) {
 			graph.add("v1", "Service", service.Name, service.Namespace, "exposes", "related", string(service.Spec.Type))

@@ -17,6 +17,8 @@ type Repository interface {
 	GetHelmRelease(ctx context.Context, namespace, name string) (domain.HelmReleaseDetail, error)
 	GetHelmReleaseRevision(ctx context.Context, namespace, name string, revision int) (domain.HelmReleaseDetail, error)
 	RollbackHelmRelease(ctx context.Context, namespace, name string, targetRevision int) (domain.HelmReleaseRollbackResult, error)
+	PreviewHelmUpgrade(ctx context.Context, namespace, name, values string) (domain.HelmReleaseUpgradeRender, error)
+	UpgradeHelmRelease(ctx context.Context, namespace, name, values string) (domain.HelmReleaseUpgradeResult, error)
 }
 
 type Service struct {
@@ -123,6 +125,74 @@ func (s *Service) Rollback(ctx context.Context, actor domain.Actor, namespace, n
 	}
 	result, err := s.repository.RollbackHelmRelease(ctx, namespace, name, targetRevision)
 	s.audit(ctx, actor, "rollback-helm-release", namespace, name, err)
+	return result, err
+}
+
+// PreviewUpgrade renders a candidate upgrade against the chart stored in the
+// current Helm revision. The current server-side values are used as the merge
+// base; the browser never has to round-trip redacted values back to the server.
+func (s *Service) PreviewUpgrade(ctx context.Context, actor domain.Actor, namespace, name, values string) (domain.HelmReleaseUpgradePreview, error) {
+	if strings.TrimSpace(namespace) == "" || strings.TrimSpace(name) == "" {
+		return domain.HelmReleaseUpgradePreview{}, fmt.Errorf("%w: namespace and Helm release name are required", domain.ErrInvalid)
+	}
+	if len(values) > 1<<20 {
+		return domain.HelmReleaseUpgradePreview{}, fmt.Errorf("%w: values must not exceed 1 MiB", domain.ErrInvalid)
+	}
+	if err := s.authorize(ctx, actor, namespace); err != nil {
+		s.audit(ctx, actor, "preview-helm-upgrade", namespace, name, err)
+		return domain.HelmReleaseUpgradePreview{}, err
+	}
+	render, err := s.repository.PreviewHelmUpgrade(ctx, namespace, name, values)
+	if err != nil {
+		s.audit(ctx, actor, "preview-helm-upgrade", namespace, name, err)
+		return domain.HelmReleaseUpgradePreview{}, err
+	}
+	currentValues := redactValues(render.CurrentValues)
+	nextValues := redactValues(render.NextValues)
+	currentManifest, currentErr := redactManifest(render.CurrentManifest)
+	nextManifest, nextErr := redactManifest(render.NextManifest)
+	warnings := append([]string(nil), render.Warnings...)
+	if currentErr != nil {
+		warnings = append(warnings, "当前版本 manifest 无法安全解析，Manifest Diff 已隐藏")
+		currentManifest = "# manifest 无法安全解析，内容已隐藏"
+	}
+	if nextErr != nil {
+		warnings = append(warnings, "升级后 manifest 无法安全解析，Manifest Diff 已隐藏")
+		nextManifest = "# manifest 无法安全解析，内容已隐藏"
+	}
+	warnings = append(warnings, "升级预览不会修改集群；Helm Hook 在正式升级时不会执行")
+	result := domain.HelmReleaseUpgradePreview{
+		Namespace: namespace, Name: name, CurrentRevision: render.CurrentRevision, NextRevision: render.NextRevision,
+		ValuesDiff:   unifiedDiff(currentValues, nextValues, fmt.Sprintf("values rev %d", render.CurrentRevision), "values 升级后"),
+		ManifestDiff: unifiedDiff(currentManifest, nextManifest, fmt.Sprintf("manifest rev %d", render.CurrentRevision), "manifest 升级后"),
+		Warnings:     warnings,
+	}
+	s.audit(ctx, actor, "preview-helm-upgrade", namespace, name, nil)
+	return result, nil
+}
+
+// Upgrade applies a server-rendered chart revision after confirming both the
+// release name and the ability to write Helm's Secret-backed history.
+func (s *Service) Upgrade(ctx context.Context, actor domain.Actor, namespace, name, values, confirmation string) (domain.HelmReleaseUpgradeResult, error) {
+	if strings.TrimSpace(namespace) == "" || strings.TrimSpace(name) == "" {
+		return domain.HelmReleaseUpgradeResult{}, fmt.Errorf("%w: namespace and Helm release name are required", domain.ErrInvalid)
+	}
+	if len(values) > 1<<20 {
+		return domain.HelmReleaseUpgradeResult{}, fmt.Errorf("%w: values must not exceed 1 MiB", domain.ErrInvalid)
+	}
+	if confirmation != name {
+		err := fmt.Errorf("%w: release name confirmation does not match", domain.ErrInvalid)
+		s.audit(ctx, actor, "upgrade-helm-release", namespace, name, err)
+		return domain.HelmReleaseUpgradeResult{}, err
+	}
+	for _, verb := range []string{"update", "create"} {
+		if err := s.authorizer.Require(ctx, actor, domain.Access{Verb: verb, Resource: "secrets", Namespace: namespace}); err != nil {
+			s.audit(ctx, actor, "upgrade-helm-release", namespace, name, err)
+			return domain.HelmReleaseUpgradeResult{}, err
+		}
+	}
+	result, err := s.repository.UpgradeHelmRelease(ctx, namespace, name, values)
+	s.audit(ctx, actor, "upgrade-helm-release", namespace, name, err)
 	return result, err
 }
 

@@ -1671,6 +1671,58 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/pods/{namespace}/{name}/tunnels": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Open a short-lived browser tunnel to one Pod port
+         * @description Requires `create pods/portforward`. The server opens a loopback-only SPDY port-forward and returns an unguessable same-origin tunnel path. The client never supplies an upstream address or Kubernetes port-forward URL. Sessions are user-bound and expire automatically.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    namespace: components["parameters"]["NamespacePath"];
+                    name: components["parameters"]["Name"];
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["PortForwardRequest"];
+                };
+            };
+            responses: {
+                /** @description Port-forward session created */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["PortForwardSession"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+                404: components["responses"]["NotFound"];
+                429: components["responses"]["RateLimited"];
+                503: components["responses"]["DependencyUnavailable"];
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/pods/{namespace}/{name}/ephemeral-containers": {
         parameters: {
             query?: never;
@@ -2136,6 +2188,227 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/tunnels/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Redirect a tunnel URL to its trailing-slash proxy path */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Redirect to the active tunnel proxy path */
+                307: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                401: components["responses"]["Unauthorized"];
+                404: components["responses"]["NotFound"];
+            };
+        };
+        put?: never;
+        post?: never;
+        /** Close and revoke a port-forward session */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Tunnel closed */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+                404: components["responses"]["NotFound"];
+            };
+        };
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/tunnels/{id}/{path}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Proxy GET requests through an active tunnel
+         * @description The tunnel session cookie is required. Dosh session and OIDC state cookies are filtered before forwarding.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                    path: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Upstream response */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                401: components["responses"]["Unauthorized"];
+                404: components["responses"]["NotFound"];
+                503: components["responses"]["DependencyUnavailable"];
+            };
+        };
+        /** Proxy PUT requests through an active tunnel */
+        put: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                    path: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Upstream response */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                401: components["responses"]["Unauthorized"];
+                404: components["responses"]["NotFound"];
+                /** @description Request body exceeds the 16 MiB tunnel limit */
+                413: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                503: components["responses"]["DependencyUnavailable"];
+            };
+        };
+        /** Proxy POST requests through an active tunnel */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                    path: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Upstream response */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                401: components["responses"]["Unauthorized"];
+                404: components["responses"]["NotFound"];
+                /** @description Request body exceeds the 16 MiB tunnel limit */
+                413: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                503: components["responses"]["DependencyUnavailable"];
+            };
+        };
+        /** Proxy DELETE requests through an active tunnel */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                    path: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Upstream response */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                401: components["responses"]["Unauthorized"];
+                404: components["responses"]["NotFound"];
+                503: components["responses"]["DependencyUnavailable"];
+            };
+        };
+        options?: never;
+        head?: never;
+        /** Proxy PATCH requests through an active tunnel */
+        patch: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                    path: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Upstream response */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                401: components["responses"]["Unauthorized"];
+                404: components["responses"]["NotFound"];
+                /** @description Request body exceeds the 16 MiB tunnel limit */
+                413: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                503: components["responses"]["DependencyUnavailable"];
+            };
+        };
+        trace?: never;
+    };
     "/api/v1/helm/releases": {
         parameters: {
             query?: never;
@@ -2327,6 +2600,111 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/helm/releases/{namespace}/{name}/upgrade/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Render a Helm upgrade preview using server-side current values
+         * @description Merges the supplied Values YAML as an override over the unredacted values stored in the current Helm revision, renders the stored chart, and returns server-redacted Values and Manifest diffs. This endpoint never mutates the cluster. Requires list Secrets permission in the release namespace.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    namespace: components["parameters"]["NamespacePath"];
+                    name: components["parameters"]["Name"];
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["HelmReleaseUpgradeRequest"];
+                };
+            };
+            responses: {
+                /** @description Redacted upgrade preview */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["HelmReleaseUpgradePreview"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+                404: components["responses"]["NotFound"];
+                501: components["responses"]["NotSupported"];
+                503: components["responses"]["DependencyUnavailable"];
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/helm/releases/{namespace}/{name}/upgrade": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Render and apply a Helm-compatible upgrade revision
+         * @description Renders the chart stored in the current revision with server-side values merged with the supplied override. Every object is server-side apply DryRun preflighted before any live write. Helm hooks are skipped and removed objects are not pruned; both are reported as warnings. Requires create and update access to Secrets and exact release-name confirmation.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    namespace: components["parameters"]["NamespacePath"];
+                    name: components["parameters"]["Name"];
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["HelmReleaseUpgradeRequest"];
+                };
+            };
+            responses: {
+                /** @description Upgrade completed and new Helm revision recorded */
+                202: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["HelmReleaseUpgradeResult"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+                404: components["responses"]["NotFound"];
+                409: components["responses"]["Conflict"];
+                501: components["responses"]["NotSupported"];
+                503: components["responses"]["DependencyUnavailable"];
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/services/{namespace}/{name}": {
         parameters: {
             query?: never;
@@ -2431,6 +2809,59 @@ export interface paths {
                 503: components["responses"]["DependencyUnavailable"];
             };
         };
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/services/{namespace}/{name}/tunnels": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Open a port-forward tunnel through one ready Service backend Pod
+         * @description Requires get Services and create pods/portforward. The Service selector must resolve to at least one Ready Pod. Named targetPort values are resolved against the selected Pod's TCP container ports.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    namespace: components["parameters"]["NamespacePath"];
+                    name: components["parameters"]["Name"];
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["PortForwardRequest"];
+                };
+            };
+            responses: {
+                /** @description Port-forward session created */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["PortForwardSession"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+                404: components["responses"]["NotFound"];
+                429: components["responses"]["RateLimited"];
+                501: components["responses"]["NotSupported"];
+                503: components["responses"]["DependencyUnavailable"];
+            };
+        };
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -4130,7 +4561,9 @@ export interface components {
             nodeDrain: boolean;
             podExec: boolean;
             podEphemeralDebug: boolean;
+            podPortForward: boolean;
             helmReleases: boolean;
+            helmUpgrade: boolean;
             reloadCertificate: boolean;
             resourceActions?: {
                 [key: string]: components["schemas"]["ResourceCapabilities"];
@@ -4628,6 +5061,7 @@ export interface components {
         Container: {
             name: string;
             image: string;
+            ports?: components["schemas"]["ContainerPort"][];
             init?: boolean;
             ephemeral?: boolean;
             ready: boolean;
@@ -4642,6 +5076,25 @@ export interface components {
             memoryRequestBytes: number;
             /** Format: int64 */
             memoryLimitBytes: number;
+        };
+        ContainerPort: {
+            name?: string;
+            /** @enum {string} */
+            protocol: "TCP" | "UDP" | "SCTP";
+            port: number;
+        };
+        PortForwardRequest: {
+            port: number;
+        };
+        PortForwardSession: {
+            id: string;
+            namespace: string;
+            pod: string;
+            service?: string;
+            port: number;
+            path: string;
+            /** Format: date-time */
+            expiresAt: string;
         };
         PodEphemeralContainerCreate: {
             /** @description Container image that contains the selected shell. */
@@ -4710,6 +5163,31 @@ export interface components {
             namespace: string;
             name: string;
             targetRevision: number;
+            revision: number;
+            appliedObjects: number;
+            warnings?: string[];
+        };
+        HelmReleaseUpgradeRequest: {
+            /** @description Optional YAML override merged over the server-side current values. */
+            values?: string;
+            /** @description Required for the apply endpoint; must exactly equal the release name. */
+            confirmation?: string;
+        };
+        HelmReleaseUpgradePreview: {
+            namespace: string;
+            name: string;
+            currentRevision: number;
+            nextRevision: number;
+            /** @description Unified diff after sensitive values are redacted. */
+            valuesDiff: string;
+            /** @description Unified diff after Secret data and sensitive manifest fields are redacted. */
+            manifestDiff: string;
+            warnings?: string[];
+        };
+        HelmReleaseUpgradeResult: {
+            namespace: string;
+            name: string;
+            previousRevision: number;
             revision: number;
             appliedObjects: number;
             warnings?: string[];

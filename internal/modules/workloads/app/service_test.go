@@ -6,6 +6,7 @@ import (
 	"io"
 	"strings"
 	"testing"
+	"time"
 
 	"dosh/internal/domain"
 )
@@ -64,6 +65,13 @@ type fakeRepository struct {
 	ephemeralName  string
 	lastRevision   int64
 	lastRV         string
+	forwardPod     domain.PortForwardPod
+	forwardErr     error
+	forwardAddress string
+	forwardErrOpen error
+	forwardCloser  io.Closer
+	forwardCalls   int
+	lastForward    domain.PortForwardTarget
 }
 
 func (f *fakeRepository) ListWorkloads(_ context.Context, query domain.ListQuery) ([]domain.WorkloadSummary, error) {
@@ -183,6 +191,33 @@ func (f *fakeRepository) AddPodEphemeralContainer(_ context.Context, _ string, _
 	return containerName, nil
 }
 
+func (f *fakeRepository) ResolvePortForwardTarget(_ context.Context, target domain.PortForwardTarget) (domain.PortForwardPod, error) {
+	f.lastForward = target
+	if f.forwardErr != nil {
+		return domain.PortForwardPod{}, f.forwardErr
+	}
+	if f.forwardPod.Pod != "" {
+		return f.forwardPod, nil
+	}
+	return domain.PortForwardPod{Namespace: target.Namespace, Pod: target.Name, Port: target.Port}, nil
+}
+
+func (f *fakeRepository) OpenPodPortForward(_ context.Context, namespace, name string, port int32) (string, io.Closer, error) {
+	f.forwardCalls++
+	f.lastNamespace, f.lastName = namespace, name
+	if f.forwardErrOpen != nil {
+		return "", nil, f.forwardErrOpen
+	}
+	if f.forwardCloser != nil {
+		return f.forwardAddress, f.forwardCloser, nil
+	}
+	return "127.0.0.1:41000", io.NopCloser(strings.NewReader("")), nil
+}
+
+type fakeCloser struct{ closed int }
+
+func (c *fakeCloser) Close() error { c.closed++; return nil }
+
 type fakeTerminalSession struct {
 	closed int
 }
@@ -228,6 +263,19 @@ type fakeAuditor struct {
 	results []string
 	actions []string
 	details []map[string]any
+}
+
+type recordingGuard struct {
+	accesses []domain.Access
+	denied   map[string]bool
+}
+
+func (g *recordingGuard) Require(_ context.Context, _ domain.Actor, access domain.Access) error {
+	g.accesses = append(g.accesses, access)
+	if g.denied[access.Resource+"/"+access.Subresource] {
+		return domain.ErrForbidden
+	}
+	return nil
 }
 
 func (a *fakeAuditor) Record(_ context.Context, _ domain.Actor, event domain.AuditEvent) {
@@ -277,6 +325,61 @@ func TestScaleEnforcesGuardAndKind(t *testing.T) {
 	}
 	if repo.scaleCalls != 0 || len(auditor.results) != 1 || auditor.results[0] != "failure" {
 		t.Fatalf("invalid scale calls = %d audit = %#v", repo.scaleCalls, auditor.results)
+	}
+}
+
+func TestOpenPortForwardAuthorizesPodSubresourceAndCloseRevokes(t *testing.T) {
+	closer := &fakeCloser{}
+	repo := &fakeRepository{forwardAddress: "127.0.0.1:41000", forwardCloser: closer}
+	auditor := &fakeAuditor{}
+	guard := &recordingGuard{}
+	service := New(repo, guard, auditor)
+	service.SetPortForwardLimits(domain.PortForwardLimits{MaxDuration: time.Minute, MaxSessionsPerUser: 2})
+	actor := domain.Actor{Username: "alice"}
+
+	session, err := service.OpenPortForward(context.Background(), actor, domain.PortForwardTarget{Kind: "pod", Namespace: "prod", Name: "api-0", Port: 8080})
+	if err != nil {
+		t.Fatalf("OpenPortForward() error = %v", err)
+	}
+	if session.Pod != "api-0" || session.Port != 8080 || !strings.HasPrefix(session.Path, "/api/v1/tunnels/") || session.LocalAddress != "127.0.0.1:41000" {
+		t.Fatalf("session = %#v", session)
+	}
+	if len(guard.accesses) != 1 || guard.accesses[0] != (domain.Access{Verb: "create", Resource: "pods", Subresource: "portforward", Namespace: "prod", Name: "api-0"}) {
+		t.Fatalf("authorization = %#v", guard.accesses)
+	}
+	if _, err := service.GetPortForward(context.Background(), domain.Actor{Username: "bob"}, session.ID); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("GetPortForward(other user) error = %v, want not found", err)
+	}
+	if err := service.ClosePortForward(context.Background(), actor, session.ID); err != nil {
+		t.Fatalf("ClosePortForward() error = %v", err)
+	}
+	if closer.closed != 1 {
+		t.Fatalf("closer calls = %d, want 1", closer.closed)
+	}
+	if _, err := service.GetPortForward(context.Background(), actor, session.ID); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("GetPortForward(closed) error = %v, want not found", err)
+	}
+	if len(auditor.actions) < 2 || auditor.actions[0] != "open-port-forward" || auditor.actions[1] != "close-port-forward" {
+		t.Fatalf("audit actions = %#v", auditor.actions)
+	}
+}
+
+func TestOpenPortForwardEnforcesPerUserSessionLimit(t *testing.T) {
+	repo := &fakeRepository{}
+	service := New(repo, fakeGuard{allow: true}, &fakeAuditor{})
+	service.SetPortForwardLimits(domain.PortForwardLimits{MaxDuration: time.Minute, MaxSessionsPerUser: 1})
+	actor := domain.Actor{Username: "alice"}
+	if _, err := service.OpenPortForward(context.Background(), actor, domain.PortForwardTarget{Kind: "pod", Namespace: "prod", Name: "api-0", Port: 80}); err != nil {
+		t.Fatalf("first OpenPortForward() error = %v", err)
+	}
+	if _, err := service.OpenPortForward(context.Background(), actor, domain.PortForwardTarget{Kind: "pod", Namespace: "prod", Name: "api-1", Port: 80}); !errors.Is(err, domain.ErrRateLimited) {
+		t.Fatalf("second OpenPortForward() error = %v, want rate limited", err)
+	}
+	if repo.forwardCalls != 1 {
+		t.Fatalf("port-forward opens = %d, want 1", repo.forwardCalls)
+	}
+	if _, err := service.OpenPortForward(context.Background(), domain.Actor{Username: "bob"}, domain.PortForwardTarget{Kind: "pod", Namespace: "prod", Name: "api-2", Port: 80}); err != nil {
+		t.Fatalf("OpenPortForward(other user) error = %v", err)
 	}
 }
 

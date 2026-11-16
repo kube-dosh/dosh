@@ -6,6 +6,8 @@ import type {
   HelmReleaseDiff,
   HelmReleaseRollbackResult,
   HelmReleaseSummary,
+  HelmReleaseUpgradePreview,
+  HelmReleaseUpgradeResult,
   ListResponse,
   ClusterConfiguration,
   IngressDetail,
@@ -16,6 +18,7 @@ import type {
   Overview,
   PodDetail,
   PodSummary,
+  PortForwardSession,
   PersistentVolumeClaimDetail,
   PersistentVolumeDetail,
   ResourceDescriptor,
@@ -63,7 +66,9 @@ const session: SessionResponse = {
     nodeDrain: true,
     podExec: true,
     podEphemeralDebug: true,
+    podPortForward: true,
     helmReleases: true,
+    helmUpgrade: true,
     reloadCertificate: true,
     resourceActions: {
       pods: { create: false, update: true, delete: true, scale: false },
@@ -211,6 +216,7 @@ const podDetail: PodDetail = {
     {
       name: "web",
       image: "nginx:alpine",
+      ports: [{ name: "http", protocol: "TCP", port: 80 }],
       ready: true,
       restartCount: 0,
       state: "Running",
@@ -267,10 +273,30 @@ const helmRollbackResult: HelmReleaseRollbackResult = {
   warnings: ["已跳过 1 个 Helm Hook"],
 };
 
+const helmUpgradePreview: HelmReleaseUpgradePreview = {
+  namespace: "default",
+  name: "web",
+  currentRevision: 2,
+  nextRevision: 3,
+  valuesDiff: "--- current values\n+++ next values\n@@\n-replicas: 2\n+replicaCount: 3\n",
+  manifestDiff: "--- current manifest\n+++ next manifest\n@@\n-  replicas: 2\n+  replicas: 3\n",
+  warnings: [],
+};
+
+const helmUpgradeResult: HelmReleaseUpgradeResult = {
+  namespace: "default",
+  name: "web",
+  previousRevision: 2,
+  revision: 3,
+  appliedObjects: 3,
+  warnings: [],
+};
+
 const resourceRelations: ResourceRelations = {
   items: [
     { apiVersion: "apps/v1", kind: "ReplicaSet", resource: "replicasets", name: "web-abcdef", namespace: "default", relationship: "owner", direction: "upstream" },
     { apiVersion: "v1", kind: "Service", resource: "services", name: "web", namespace: "default", relationship: "selects", direction: "downstream", status: "Running" },
+    { apiVersion: "v1", kind: "Pod", resource: "pods", name: "web-broken", namespace: "default", relationship: "selects", direction: "downstream", status: "CrashLoopBackOff" },
     { apiVersion: "v1", kind: "Node", resource: "nodes", name: "worker-0001", relationship: "scheduled on", direction: "upstream" },
   ],
   warnings: [],
@@ -481,6 +507,7 @@ async function installApiMocks(page: Page, options: { authenticated?: boolean; a
   let nodeTaints = [...nodeDetail.taints];
   let nodeResourceVersion = 1;
   let services: ServiceDetail[] = [{ ...serviceDetail }];
+  let tunnelSession: PortForwardSession | null = null;
   let widgetRevision = 1;
   let preferences = { ...emptyPreferences };
   const currentNodeDetail = () => ({
@@ -532,6 +559,7 @@ async function installApiMocks(page: Page, options: { authenticated?: boolean; a
         { group: "", version: "v1", resource: "pods", kind: "Pod", namespaced: true, preferred: true, verbs: ["get", "list", "watch", "create", "delete"], subresources: ["exec", "log", "status"] },
         { group: "", version: "v1", resource: "secrets", kind: "Secret", namespaced: true, preferred: true, verbs: ["get", "list"] },
         { group: "apps", version: "v1", resource: "deployments", kind: "Deployment", namespaced: true, preferred: true, verbs: ["get", "list", "update", "patch"], subresources: ["scale", "status"] },
+        { group: "apps", version: "v1", resource: "statefulsets", kind: "StatefulSet", namespaced: true, preferred: true, verbs: ["get", "list", "create", "update", "patch", "delete"] },
         { group: "", version: "v1", resource: "nodes", kind: "Node", namespaced: false, preferred: true, verbs: ["get", "list", "update", "patch"], subresources: ["proxy", "status"] },
         { group: "", version: "v1", resource: "serviceaccounts", kind: "ServiceAccount", namespaced: true, verbs: ["get", "list"] },
         { group: "rbac.authorization.k8s.io", version: "v1", resource: "roles", kind: "Role", namespaced: true, verbs: ["get", "list"] },
@@ -581,6 +609,16 @@ async function installApiMocks(page: Page, options: { authenticated?: boolean; a
     if (path === "/api/v1/resources/schema") {
       const params = new URL(request.url()).searchParams;
       const resource = params.get("resource") ?? "widgets";
+      if (resource === "statefulsets") {
+        return json(route, {
+          group: "apps", version: "v1", resource, kind: "StatefulSet", source: "openapi-v2",
+          schema: { type: "object", properties: { apiVersion: { type: "string" }, kind: { type: "string" }, metadata: { $ref: "#/definitions/meta" }, spec: { $ref: "#/definitions/spec" } } },
+          definitions: {
+            meta: { type: "object", required: ["name"], properties: { name: { type: "string" }, namespace: { type: "string" } } },
+            spec: { type: "object", properties: { serviceName: { type: "string" }, replicas: { type: "integer" }, selector: { type: "object" }, template: { type: "object" } } },
+          },
+        });
+      }
       const kind = resource === "clusterwidgets" ? "ClusterWidget" : "Widget";
       return json(route, {
         group: "example.io", version: params.get("version") ?? "v1", resource, kind, source: "openapi-v2",
@@ -616,6 +654,7 @@ async function installApiMocks(page: Page, options: { authenticated?: boolean; a
         resourceVersion: String(widgetRevision), createdAt: "2026-11-02T00:00:00Z",
       }]));
     }
+    if (path === "/api/v1/resources/apps/v1/statefulsets" && method === "GET") return json(route, list([]));
     if (/^\/api\/v1\/resources\/example\.io\/v1(?:beta1)?\/widgets\/sample-widget$/.test(path) && method === "GET") {
       const version = path.includes("v1beta1") ? "v1beta1" : "v1";
       return json(route, {
@@ -906,8 +945,24 @@ async function installApiMocks(page: Page, options: { authenticated?: boolean; a
     });
     if (path === "/api/v1/helm/releases" && method === "GET") return json(route, { items: [helmReleaseSummary], warnings: [] });
     if (path === "/api/v1/helm/releases/default/web/diff" && method === "GET") return json(route, helmReleaseDiff);
+    if (path === "/api/v1/helm/releases/default/web/upgrade/preview" && method === "POST") return json(route, helmUpgradePreview);
+    if (path === "/api/v1/helm/releases/default/web/upgrade" && method === "POST") return json(route, helmUpgradeResult, 202);
     if (path === "/api/v1/helm/releases/default/web/rollback" && method === "POST") return json(route, helmRollbackResult, 202);
     if (path === "/api/v1/helm/releases/default/web" && method === "GET") return json(route, helmReleaseDetail);
+    if (/^\/api\/v1\/(?:pods|services)\/[^/]+\/[^/]+\/tunnels$/.test(path) && method === "POST") {
+      const body = request.postDataJSON() as { port?: number };
+      const pod = path.startsWith("/api/v1/pods/") ? decodeURIComponent(path.split("/")[5]) : "web-abcdef-12345";
+      tunnelSession = {
+        id: "e2e-tunnel", namespace: "default", pod, port: body.port ?? 80,
+        path: "/api/v1/tunnels/e2e-tunnel/", expiresAt: "2099-01-01T00:00:00Z",
+        ...(path.startsWith("/api/v1/services/") ? { service: "web" } : {}),
+      };
+      return json(route, tunnelSession, 201);
+    }
+    if (path === "/api/v1/tunnels/e2e-tunnel" && method === "DELETE") {
+      tunnelSession = null;
+      return route.fulfill({ status: 204, body: "" });
+    }
     if (path.endsWith("/relations") && method === "GET") return json(route, resourceRelations);
     if (path === "/api/v1/certificate") return json(route, serverCertificate);
     if (path === "/api/v1/certificate/reload" && method === "POST") return json(route, serverCertificate);
@@ -1948,14 +2003,90 @@ test("资源详情展示直接关系与故障拓扑", async ({ page }) => {
   await installApiMocks(page);
   await page.goto("/resources/example.io/v1/widgets/sample-widget?namespace=default");
   await expect(page.getByRole("heading", { name: "故障拓扑与直接关系" })).toBeVisible();
-  await expect(page.getByText("上游依赖")).toBeVisible();
-  await expect(page.getByText("下游对象")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "上游依赖" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "下游对象" })).toBeVisible();
   await expect(page.getByText("worker-0001", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "web", exact: true }).click();
   await expect(page).toHaveURL(/\/network\/services\/default\/web/);
   await page.goto("/network/ingresses/default/web");
   await expect(page.getByRole("heading", { name: "流量拓扑与直接关系" })).toBeVisible();
   await expectNoPageOverflow(page, "resource relations");
+});
+
+test("资源关系支持摘要、方向和类型筛选", async ({ page }) => {
+  await installApiMocks(page);
+  await page.goto("/resources/example.io/v1/widgets/sample-widget?namespace=default");
+  const summary = page.getByLabel("关系摘要");
+  await expect(summary.getByText("异常关联")).toBeVisible();
+  await expect(summary.getByText("1", { exact: true })).toBeVisible();
+  await expect(page.getByText("显示 4 / 4 条直接关系")).toBeVisible();
+
+  await page.getByRole("combobox", { name: "关系方向" }).click();
+  await page.getByRole("option", { name: "下游对象" }).click();
+  await expect(page.getByText("显示 2 / 4 条直接关系")).toBeVisible();
+  await expect(page.getByText("web-broken", { exact: true })).toBeVisible();
+
+  await page.getByRole("combobox", { name: "资源类型" }).click();
+  await page.getByRole("option", { name: "Pod" }).click();
+  await expect(page.getByText("显示 1 / 4 条直接关系")).toBeVisible();
+  await expect(page.getByText("web", { exact: true })).toHaveCount(0);
+  await expectNoPageOverflow(page, "resource relation filters");
+});
+
+test("Pod 与 Service 端口转发在桌面和移动端可用且无横向溢出", async ({ page }) => {
+  await installApiMocks(page);
+  for (const viewport of [{ width: 1280, height: 900 }, { width: 390, height: 844 }, { width: 320, height: 720 }]) {
+    await page.setViewportSize(viewport);
+    await page.goto("/pods/default/web-abcdef-12345?tab=port-forward");
+    await expect(page.getByRole("heading", { name: "新建临时隧道" })).toBeVisible();
+    await expect(page.getByText("80", { exact: true }).first()).toBeVisible();
+    await page.getByRole("button", { name: "建立隧道" }).click();
+    await expect(page.getByText("临时访问地址")).toBeVisible();
+    await expect(page.getByText("web-abcdef-12345", { exact: true }).last()).toBeVisible();
+    await expectNoPageOverflow(page, `${viewport.width}px pod port-forward`);
+    await page.screenshot({ path: `test-results/mobile-interactions/pod-port-forward-${viewport.width}.png`, fullPage: true });
+    await page.getByRole("button", { name: "关闭隧道" }).click();
+    await expect(page.getByText("尚未创建端口转发。创建后会显示临时访问地址、后端 Pod 和到期时间。")).toBeVisible();
+
+    await page.goto("/network/services/default/web?tab=port-forward");
+    await expect(page.getByRole("heading", { name: "新建临时隧道" })).toBeVisible();
+    await page.getByRole("button", { name: "建立隧道" }).click();
+    await expect(page.getByText("临时访问地址")).toBeVisible();
+    await expectNoPageOverflow(page, `${viewport.width}px service port-forward`);
+  }
+});
+
+test("Helm 升级预览与执行在桌面和移动端无横向溢出", async ({ page }) => {
+  await installApiMocks(page);
+  for (const viewport of [{ width: 1280, height: 900 }, { width: 390, height: 844 }, { width: 320, height: 720 }]) {
+    await page.setViewportSize(viewport);
+    await page.goto("/helm/releases/default/web?namespace=default&tab=upgrade");
+    await page.getByLabel("升级 Values（YAML）").fill("replicaCount: 3\n");
+    await page.getByRole("button", { name: "生成升级预览" }).click();
+    await expect(page.getByRole("heading", { name: "升级后 Values Diff" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "升级后 Manifest Diff" })).toBeVisible();
+    await expectNoPageOverflow(page, `${viewport.width}px helm upgrade preview`);
+
+    await page.getByRole("button", { name: "执行升级" }).click();
+    const dialog = page.getByRole("dialog", { name: "执行 Helm 升级" });
+    await expect(dialog).toBeVisible();
+    await dialog.getByLabel(/输入 Release 名称/).fill("web");
+    await dialog.getByRole("button", { name: "确认升级" }).click();
+    await expect(page.getByText(/已创建 Helm revision #3/)).toBeVisible();
+    await expectNoPageOverflow(page, `${viewport.width}px helm upgrade result`);
+  }
+});
+
+test("StatefulSet 推荐模板可直接进入结构化表单", async ({ page }) => {
+  await installApiMocks(page);
+  await page.goto("/resources/apps/v1/statefulsets?namespace=default");
+  await page.getByRole("button", { name: "创建 YAML" }).click();
+  const dialog = page.getByRole("dialog", { name: "创建 StatefulSet" });
+  await expect(dialog.locator(".cm-content")).toContainText("statefulset-example");
+  await dialog.getByRole("tab", { name: "表单" }).click();
+  await expect(dialog.getByLabel("名称")).toHaveValue("statefulset-example");
+  await expect(dialog.getByText("资源字段")).toBeVisible();
+  await expectNoPageOverflow(page, "statefulset starter template form");
 });
 
 test("全局搜索默认跨命名空间检索并记录最近资源偏好", async ({ page }) => {

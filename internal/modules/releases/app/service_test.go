@@ -23,6 +23,10 @@ type fakeReleaseRepository struct {
 	lastName           string
 	lastRevision       int
 	lastTargetRevision int
+	upgradeRender      domain.HelmReleaseUpgradeRender
+	upgradeResult      domain.HelmReleaseUpgradeResult
+	upgradeErr         error
+	lastValues         string
 }
 
 func (f *fakeReleaseRepository) ListHelmReleases(_ context.Context, namespace string) ([]domain.HelmReleaseSummary, []string, error) {
@@ -49,6 +53,16 @@ func (f *fakeReleaseRepository) GetHelmReleaseRevision(_ context.Context, namesp
 func (f *fakeReleaseRepository) RollbackHelmRelease(_ context.Context, namespace, name string, targetRevision int) (domain.HelmReleaseRollbackResult, error) {
 	f.lastNS, f.lastName, f.lastTargetRevision = namespace, name, targetRevision
 	return f.rollbackResult, f.rollbackErr
+}
+
+func (f *fakeReleaseRepository) PreviewHelmUpgrade(_ context.Context, namespace, name, values string) (domain.HelmReleaseUpgradeRender, error) {
+	f.lastNS, f.lastName, f.lastValues = namespace, name, values
+	return f.upgradeRender, f.upgradeErr
+}
+
+func (f *fakeReleaseRepository) UpgradeHelmRelease(_ context.Context, namespace, name, values string) (domain.HelmReleaseUpgradeResult, error) {
+	f.lastNS, f.lastName, f.lastValues = namespace, name, values
+	return f.upgradeResult, f.upgradeErr
 }
 
 type releaseGuard struct {

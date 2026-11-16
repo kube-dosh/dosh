@@ -36,6 +36,8 @@ type Config struct {
 	TerminalMaxDuration     time.Duration
 	TerminalMaxSessions     int
 	TerminalMaxOutputRate   int64
+	PortForwardTTL          time.Duration
+	PortForwardMaxSessions  int
 	LogLevel                string
 	ClusterName             string
 	InsecureSkipVerify      bool
@@ -85,6 +87,8 @@ func Load() (Config, error) {
 		TerminalMaxDuration:     durationEnv("DOSH_TERMINAL_MAX_DURATION", 2*time.Hour, &loadErrs),
 		TerminalMaxSessions:     intEnv("DOSH_TERMINAL_MAX_SESSIONS_PER_USER", 4, &loadErrs),
 		TerminalMaxOutputRate:   int64(intEnv("DOSH_TERMINAL_MAX_OUTPUT_BYTES_PER_SECOND", 2*1024*1024, &loadErrs)),
+		PortForwardTTL:          durationEnv("DOSH_PORT_FORWARD_TTL", 30*time.Minute, &loadErrs),
+		PortForwardMaxSessions:  intEnv("DOSH_PORT_FORWARD_MAX_SESSIONS_PER_USER", 4, &loadErrs),
 		LogLevel:                strings.ToLower(env("DOSH_LOG_LEVEL", "info")),
 		ClusterName:             env("DOSH_CLUSTER_NAME", "kubernetes"),
 		InsecureSkipVerify:      boolEnv("DOSH_INSECURE_SKIP_VERIFY", false, &loadErrs),
@@ -140,6 +144,12 @@ func (c Config) Validate() error {
 	}
 	if c.TerminalMaxOutputRate < 4096 || c.TerminalMaxOutputRate > 64*1024*1024 {
 		errs = append(errs, errors.New("DOSH_TERMINAL_MAX_OUTPUT_BYTES_PER_SECOND must be between 4KiB and 64MiB"))
+	}
+	if c.PortForwardTTL < time.Minute || c.PortForwardTTL > 8*time.Hour {
+		errs = append(errs, errors.New("DOSH_PORT_FORWARD_TTL must be between 1m and 8h"))
+	}
+	if c.PortForwardMaxSessions < 1 || c.PortForwardMaxSessions > 20 {
+		errs = append(errs, errors.New("DOSH_PORT_FORWARD_MAX_SESSIONS_PER_USER must be between 1 and 20"))
 	}
 	if strings.TrimSpace(c.ClusterName) == "" {
 		errs = append(errs, errors.New("DOSH_CLUSTER_NAME must not be empty"))

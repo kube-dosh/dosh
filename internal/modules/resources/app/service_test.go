@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync"
 	"testing"
 
 	"dosh/internal/domain"
@@ -31,6 +32,7 @@ type fakeResourceRepository struct {
 	lastNamespace  string
 	lastName       string
 	seenResources  []string
+	seenMu         sync.Mutex
 	listCalls      int
 	getCalls       int
 	mutation       map[string]any
@@ -59,6 +61,8 @@ func (r *fakeResourceRepository) ListResourceRules(context.Context, domain.Actor
 }
 
 func (r *fakeResourceRepository) ListGenericResources(_ context.Context, descriptor domain.ResourceDescriptor, query domain.ListQuery, page domain.PageRequest) (domain.GenericResourcePage, error) {
+	r.seenMu.Lock()
+	defer r.seenMu.Unlock()
 	r.listCalls++
 	r.lastDescriptor, r.lastQuery, r.lastPage = descriptor, query, page
 	r.seenResources = append(r.seenResources, descriptor.Resource)
@@ -246,6 +250,36 @@ func TestServiceSearchAllNamespacesUsesBoundedAuthorizedScopes(t *testing.T) {
 	}
 	if len(repository.seenResources) != 3 || seen["pods"] != 2 || seen["nodes"] != 1 {
 		t.Fatalf("searched resources = %#v", repository.seenResources)
+	}
+}
+
+func TestServiceSearchCachesOnlyTheSameActorScope(t *testing.T) {
+	service, repository, _, _ := resourceServiceFixture()
+	repository.rules = domain.ResourceRules{
+		Namespaced: []domain.ResourceRule{{Verbs: []string{"list"}, APIGroups: []string{""}, Resources: []string{"pods"}}},
+	}
+	repository.listResult = domain.GenericResourcePage{PageResult: domain.PageResult[domain.GenericResourceSummary]{
+		Items: []domain.GenericResourceSummary{{Kind: "Pod", Name: "api-0", APIVersion: "v1", Resource: "pods", Namespace: "prod"}}, Total: 1, TotalKnown: true,
+	}}
+
+	actor := domain.Actor{Username: "alice", Groups: []string{"dev"}}
+	first, err := service.Search(context.Background(), actor, "api", "prod", 20)
+	if err != nil {
+		t.Fatalf("Search() error = %v", err)
+	}
+	calls := repository.listCalls
+	second, err := service.Search(context.Background(), actor, "api", "prod", 20)
+	if err != nil || repository.listCalls != calls {
+		t.Fatalf("cached Search() error = %v, extra list calls = %d", err, repository.listCalls-calls)
+	}
+	if len(first.Items) != 1 || len(second.Items) != 1 {
+		t.Fatalf("cached results = %#v %#v", first, second)
+	}
+	if _, err := service.Search(context.Background(), domain.Actor{Username: "bob", Groups: []string{"dev"}}, "api", "prod", 20); err != nil {
+		t.Fatalf("Search() for another actor error = %v", err)
+	}
+	if repository.listCalls <= calls {
+		t.Fatal("another actor reused the first actor's search cache")
 	}
 }
 

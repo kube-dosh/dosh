@@ -71,6 +71,13 @@ func buildRouter(deps routerDependencies) (stdhttp.Handler, error) {
 
 	router.Route("/api/v1", func(r chi.Router) {
 		authhttp.MountPublic(r, deps.auth)
+		// Tunnel requests may use arbitrary upstream HTTP methods, so they cannot
+		// require Dosh's CSRF header. The session cookie and unguessable tunnel id
+		// remain mandatory, and SameOrigin still rejects cross-site browser use.
+		r.Group(func(r chi.Router) {
+			r.Use(deps.auth.RequireSession)
+			deps.workloads.MountTunnels(r)
+		})
 		r.Group(func(r chi.Router) {
 			r.Use(deps.auth.RequireSession)
 			r.Use(deps.auth.RequireCSRF)

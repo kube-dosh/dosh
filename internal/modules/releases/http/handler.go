@@ -78,9 +78,44 @@ func (h *Handler) Rollback(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	httpx.JSON(w, stdhttp.StatusAccepted, result)
 }
 
+type upgradeRequest struct {
+	Values       string `json:"values"`
+	Confirmation string `json:"confirmation"`
+}
+
+func (h *Handler) PreviewUpgrade(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	var request upgradeRequest
+	if !httpx.DecodeJSON(w, r, &request) {
+		return
+	}
+	actor, _ := domain.ActorFromContext(r.Context())
+	result, err := h.service.PreviewUpgrade(r.Context(), actor, chi.URLParam(r, "namespace"), chi.URLParam(r, "name"), request.Values)
+	if err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	httpx.JSON(w, stdhttp.StatusOK, result)
+}
+
+func (h *Handler) Upgrade(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	var request upgradeRequest
+	if !httpx.DecodeJSON(w, r, &request) {
+		return
+	}
+	actor, _ := domain.ActorFromContext(r.Context())
+	result, err := h.service.Upgrade(r.Context(), actor, chi.URLParam(r, "namespace"), chi.URLParam(r, "name"), request.Values, request.Confirmation)
+	if err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	httpx.JSON(w, stdhttp.StatusAccepted, result)
+}
+
 func (h *Handler) Mount(r chi.Router) {
 	r.Get("/helm/releases", h.List)
 	r.Get("/helm/releases/{namespace}/{name}", h.Get)
 	r.Get("/helm/releases/{namespace}/{name}/diff", h.Diff)
 	r.Post("/helm/releases/{namespace}/{name}/rollback", h.Rollback)
+	r.Post("/helm/releases/{namespace}/{name}/upgrade/preview", h.PreviewUpgrade)
+	r.Post("/helm/releases/{namespace}/{name}/upgrade", h.Upgrade)
 }

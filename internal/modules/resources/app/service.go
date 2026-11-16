@@ -6,8 +6,10 @@ import (
 	"fmt"
 	"io"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"dosh/internal/domain"
@@ -41,9 +43,12 @@ type Service struct {
 
 	clusterAuthMu sync.Mutex
 	clusterAuth   map[string]cachedClusterListAccess
+	searchMu      sync.Mutex
+	searchCache   map[string]cachedResourceSearch
 }
 
 const clusterListAccessTTL = 30 * time.Second
+const resourceSearchTTL = 10 * time.Second
 const maxGenericManifestBytes = 1 << 20
 
 type cachedClusterListAccess struct {
@@ -51,8 +56,17 @@ type cachedClusterListAccess struct {
 	fetchedAt time.Time
 }
 
+type cachedResourceSearch struct {
+	result    domain.GenericResourceSearch
+	fetchedAt time.Time
+}
+
 func New(repository Repository, authorizer domain.Authorizer, auditor domain.Auditor) *Service {
-	return &Service{repository: repository, authorizer: authorizer, auditor: auditor, clusterAuth: make(map[string]cachedClusterListAccess)}
+	return &Service{
+		repository: repository, authorizer: authorizer, auditor: auditor,
+		clusterAuth: make(map[string]cachedClusterListAccess),
+		searchCache: make(map[string]cachedResourceSearch),
+	}
 }
 
 func (s *Service) Discovery(ctx context.Context, actor domain.Actor, namespace string) ([]domain.ResourceDescriptor, []string, error) {
@@ -559,6 +573,10 @@ func (s *Service) Search(ctx context.Context, actor domain.Actor, query, namespa
 	if limit > 50 {
 		limit = 50
 	}
+	cacheKey := searchCacheKey(actor, query, namespace, limit)
+	if cached, ok := s.cachedSearch(cacheKey); ok {
+		return cached, nil
+	}
 	items, warnings, err := s.repository.DiscoverResources(ctx)
 	if err != nil {
 		return domain.GenericResourceSearch{}, err
@@ -663,21 +681,35 @@ func (s *Service) Search(ctx context.Context, actor domain.Actor, query, namespa
 		warnings = append(warnings, fmt.Sprintf("搜索范围达到 %d 个资源类型/命名空间组合上限，其余范围已省略", maxSearchScopes))
 	}
 	result := domain.GenericResourceSearch{Items: make([]domain.GenericResourceSummary, 0, limit), Warnings: warnings, Truncated: truncated}
+	searchCtx, cancelSearch := context.WithCancel(ctx)
+	defer cancelSearch()
 	type scopeResult struct {
-		items []domain.GenericResourceSummary
-		err   error
+		items   []domain.GenericResourceSummary
+		err     error
+		skipped bool
 	}
 	results := make([]scopeResult, len(scopes))
 	sem := make(chan struct{}, 4)
 	var wait sync.WaitGroup
+	var collected atomic.Int64
+	var limitReached atomic.Bool
 	for i, scope := range scopes {
 		wait.Add(1)
 		go func(index int, scope searchScope) {
 			defer wait.Done()
-			sem <- struct{}{}
+			select {
+			case sem <- struct{}{}:
+			case <-searchCtx.Done():
+				results[index] = scopeResult{skipped: true}
+				return
+			}
 			defer func() { <-sem }()
-			page, listErr := s.repository.ListGenericResources(ctx, scope.descriptor, domain.ListQuery{Namespace: scope.namespace, Search: query}, domain.PageRequest{Number: 1, Size: min(4, limit)})
+			page, listErr := s.repository.ListGenericResources(searchCtx, scope.descriptor, domain.ListQuery{Namespace: scope.namespace, Search: query}, domain.PageRequest{Number: 1, Size: min(4, limit)})
 			if listErr != nil {
+				if limitReached.Load() && errors.Is(listErr, context.Canceled) {
+					results[index] = scopeResult{skipped: true}
+					return
+				}
 				results[index] = scopeResult{err: listErr}
 				return
 			}
@@ -688,13 +720,27 @@ func (s *Service) Search(ctx context.Context, actor domain.Actor, query, namespa
 				}
 			}
 			results[index] = scopeResult{items: items}
+			if int(collected.Add(int64(len(items)))) >= limit {
+				limitReached.Store(true)
+				cancelSearch()
+			}
 		}(i, scope)
 	}
 	wait.Wait()
+	if err := ctx.Err(); err != nil {
+		return domain.GenericResourceSearch{}, err
+	}
+	if limitReached.Load() && !result.Truncated {
+		result.Truncated = true
+		result.Warnings = append(result.Warnings, "搜索已达到结果上限，未完成的查询已取消")
+	}
 	seen := make(map[string]struct{})
 	for index, scope := range scopes {
 		if results[index].err != nil {
 			result.Warnings = append(result.Warnings, fmt.Sprintf("%s/%s%s 搜索失败", scope.descriptor.Group, scope.descriptor.Resource, namespaceSuffix(scope.namespace)))
+			continue
+		}
+		if results[index].skipped {
 			continue
 		}
 		for _, item := range results[index].items {
@@ -713,7 +759,43 @@ func (s *Service) Search(ctx context.Context, actor domain.Actor, query, namespa
 			result.Items = append(result.Items, item)
 		}
 	}
+	s.storeSearch(cacheKey, result)
 	return result, nil
+}
+
+func searchCacheKey(actor domain.Actor, query, namespace string, limit int) string {
+	return actor.Username + "\x00" + strings.Join(actor.Groups, "\x00") + "\x00" + query + "\x00" + namespace + "\x00" + strconv.Itoa(limit)
+}
+
+func (s *Service) cachedSearch(key string) (domain.GenericResourceSearch, bool) {
+	s.searchMu.Lock()
+	defer s.searchMu.Unlock()
+	cached, ok := s.searchCache[key]
+	if !ok || time.Since(cached.fetchedAt) >= resourceSearchTTL {
+		if ok {
+			delete(s.searchCache, key)
+		}
+		return domain.GenericResourceSearch{}, false
+	}
+	return cloneResourceSearch(cached.result), true
+}
+
+func (s *Service) storeSearch(key string, result domain.GenericResourceSearch) {
+	s.searchMu.Lock()
+	defer s.searchMu.Unlock()
+	now := time.Now()
+	for cachedKey, cached := range s.searchCache {
+		if now.Sub(cached.fetchedAt) >= resourceSearchTTL {
+			delete(s.searchCache, cachedKey)
+		}
+	}
+	s.searchCache[key] = cachedResourceSearch{result: cloneResourceSearch(result), fetchedAt: now}
+}
+
+func cloneResourceSearch(result domain.GenericResourceSearch) domain.GenericResourceSearch {
+	result.Items = append([]domain.GenericResourceSummary(nil), result.Items...)
+	result.Warnings = append([]string(nil), result.Warnings...)
+	return result
 }
 
 func namespaceSuffix(namespace string) string {

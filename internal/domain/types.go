@@ -52,7 +52,9 @@ type Capabilities struct {
 	NodeDrain         bool                            `json:"nodeDrain"`
 	PodExec           bool                            `json:"podExec"`
 	PodEphemeralDebug bool                            `json:"podEphemeralDebug"`
+	PodPortForward    bool                            `json:"podPortForward"`
 	HelmReleases      bool                            `json:"helmReleases"`
+	HelmUpgrade       bool                            `json:"helmUpgrade"`
 	ReloadCertificate bool                            `json:"reloadCertificate"`
 	ResourceActions   map[string]ResourceCapabilities `json:"resourceActions,omitempty"`
 }
@@ -547,18 +549,25 @@ type CronJobSuspendUpdate struct {
 }
 
 type Container struct {
-	Name               string `json:"name"`
-	Image              string `json:"image"`
-	Init               bool   `json:"init,omitempty"`
-	Ephemeral          bool   `json:"ephemeral,omitempty"`
-	Ready              bool   `json:"ready"`
-	RestartCount       int32  `json:"restartCount"`
-	State              string `json:"state"`
-	Reason             string `json:"reason,omitempty"`
-	CPURequestMilli    int64  `json:"cpuRequestMilli"`
-	CPULimitMilli      int64  `json:"cpuLimitMilli"`
-	MemoryRequestBytes int64  `json:"memoryRequestBytes"`
-	MemoryLimitBytes   int64  `json:"memoryLimitBytes"`
+	Name               string          `json:"name"`
+	Image              string          `json:"image"`
+	Ports              []ContainerPort `json:"ports,omitempty"`
+	Init               bool            `json:"init,omitempty"`
+	Ephemeral          bool            `json:"ephemeral,omitempty"`
+	Ready              bool            `json:"ready"`
+	RestartCount       int32           `json:"restartCount"`
+	State              string          `json:"state"`
+	Reason             string          `json:"reason,omitempty"`
+	CPURequestMilli    int64           `json:"cpuRequestMilli"`
+	CPULimitMilli      int64           `json:"cpuLimitMilli"`
+	MemoryRequestBytes int64           `json:"memoryRequestBytes"`
+	MemoryLimitBytes   int64           `json:"memoryLimitBytes"`
+}
+
+type ContainerPort struct {
+	Name     string `json:"name,omitempty"`
+	Protocol string `json:"protocol"`
+	Port     int32  `json:"port"`
 }
 
 type PodSummary struct {
@@ -630,6 +639,49 @@ func DefaultTerminalLimits() TerminalLimits {
 	}
 }
 
+// PortForwardLimits bounds browser-accessible, session-scoped HTTP tunnels to
+// Pod ports. A tunnel never accepts a client-supplied upstream address.
+type PortForwardLimits struct {
+	MaxDuration        time.Duration
+	MaxSessionsPerUser int
+}
+
+func DefaultPortForwardLimits() PortForwardLimits {
+	return PortForwardLimits{MaxDuration: 30 * time.Minute, MaxSessionsPerUser: 4}
+}
+
+// PortForwardTarget identifies the Pod or Service port selected by the user.
+// Service targets are resolved to one ready backing Pod before authorization.
+type PortForwardTarget struct {
+	Kind      string `json:"kind"`
+	Namespace string `json:"namespace"`
+	Name      string `json:"name"`
+	Port      int32  `json:"port"`
+}
+
+// PortForwardPod is the resolved Pod and container port behind a direct Pod or
+// Service port-forward request.
+type PortForwardPod struct {
+	Namespace string `json:"namespace"`
+	Pod       string `json:"pod"`
+	Service   string `json:"service,omitempty"`
+	Port      int32  `json:"port"`
+}
+
+// PortForwardSession is a short-lived, user-bound HTTP tunnel to one Pod port.
+// LocalAddress is intentionally omitted from JSON because it is a loopback
+// implementation detail consumed only by the HTTP tunnel adapter.
+type PortForwardSession struct {
+	ID           string    `json:"id"`
+	Namespace    string    `json:"namespace"`
+	Pod          string    `json:"pod"`
+	Service      string    `json:"service,omitempty"`
+	Port         int32     `json:"port"`
+	Path         string    `json:"path"`
+	ExpiresAt    time.Time `json:"expiresAt"`
+	LocalAddress string    `json:"-"`
+}
+
 // PodEphemeralContainerRequest creates a short-lived debug container. The
 // server generates the container name and restricts the command to a shell
 // allow-list; the workload image, target and RBAC remain the source of truth.
@@ -694,6 +746,43 @@ type HelmReleaseRollbackResult struct {
 	Revision       int      `json:"revision"`
 	AppliedObjects int      `json:"appliedObjects"`
 	Warnings       []string `json:"warnings,omitempty"`
+}
+
+// HelmReleaseUpgradePreview is a redacted, non-mutating render of merged
+// values against the Chart stored in the current Helm revision.
+type HelmReleaseUpgradePreview struct {
+	Namespace       string   `json:"namespace"`
+	Name            string   `json:"name"`
+	CurrentRevision int      `json:"currentRevision"`
+	NextRevision    int      `json:"nextRevision"`
+	ValuesDiff      string   `json:"valuesDiff"`
+	ManifestDiff    string   `json:"manifestDiff"`
+	Warnings        []string `json:"warnings,omitempty"`
+}
+
+// HelmReleaseUpgradeRender is the platform-layer rendering result before the
+// application layer applies redaction and diff generation. It must never be
+// returned directly by an HTTP adapter because it contains live template values.
+type HelmReleaseUpgradeRender struct {
+	Namespace       string   `json:"-"`
+	Name            string   `json:"-"`
+	CurrentRevision int      `json:"-"`
+	NextRevision    int      `json:"-"`
+	CurrentValues   string   `json:"-"`
+	NextValues      string   `json:"-"`
+	CurrentManifest string   `json:"-"`
+	NextManifest    string   `json:"-"`
+	Warnings        []string `json:"-"`
+}
+
+// HelmReleaseUpgradeResult reports the new revision and applied object count.
+type HelmReleaseUpgradeResult struct {
+	Namespace        string   `json:"namespace"`
+	Name             string   `json:"name"`
+	PreviousRevision int      `json:"previousRevision"`
+	Revision         int      `json:"revision"`
+	AppliedObjects   int      `json:"appliedObjects"`
+	Warnings         []string `json:"warnings,omitempty"`
 }
 
 // WorkloadLogStream is one opened pod/container log stream. The HTTP adapter

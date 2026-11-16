@@ -151,6 +151,9 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 		MaxSessionsPerUser: cfg.TerminalMaxSessions, MaxOutputBytesPerSecond: cfg.TerminalMaxOutputRate,
 	}
 	workloadsService := workloadsapp.New(kubeClient, authorizer, auditLogger, terminalLimits)
+	workloadsService.SetPortForwardLimits(domain.PortForwardLimits{
+		MaxDuration: cfg.PortForwardTTL, MaxSessionsPerUser: cfg.PortForwardMaxSessions,
+	})
 	releasesService := releasesapp.New(kubeClient, authorizer, auditLogger)
 	eventsService := eventsapp.New(kubeClient)
 	networkService := networkapp.New(kubeClient, authorizer, auditLogger)

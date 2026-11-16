@@ -598,6 +598,24 @@ func (h *Handler) Mount(r chi.Router) {
 	r.Get("/workloads/{kind}/{namespace}/{name}/logs", h.WorkloadLogs)
 	r.Post("/pods/{namespace}/{name}/ephemeral-containers", h.CreateEphemeralContainer)
 	r.Get("/pods/{namespace}/{name}/terminal", h.Terminal)
+	r.Post("/pods/{namespace}/{name}/tunnels", h.CreatePodTunnel)
+	r.Post("/services/{namespace}/{name}/tunnels", h.CreateServiceTunnel)
+	r.Delete("/tunnels/{id}", h.CloseTunnel)
+}
+
+// MountTunnels registers session-scoped HTTP tunnel requests outside the CSRF
+// middleware because an upstream application cannot obtain Dosh's CSRF token.
+// The unguessable session id, authenticated browser session, same-origin
+// checks, loopback-only target, and fixed backend-selected upstream port form
+// the security boundary.
+func (h *Handler) MountTunnels(r chi.Router) {
+	r.Get("/tunnels/{id}", h.RedirectTunnel)
+	for _, method := range []string{
+		stdhttp.MethodGet, stdhttp.MethodPost, stdhttp.MethodPut,
+		stdhttp.MethodPatch, stdhttp.MethodDelete,
+	} {
+		r.MethodFunc(method, "/tunnels/{id}/*", h.Tunnel)
+	}
 }
 
 type terminalMessage struct {

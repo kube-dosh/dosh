@@ -197,6 +197,10 @@ spec:
               value: {{ .Values.terminal.maxSessionsPerUser | quote }}
             - name: DOSH_TERMINAL_MAX_OUTPUT_BYTES_PER_SECOND
               value: {{ .Values.terminal.maxOutputBytesPerSecond | int64 | quote }}
+            - name: DOSH_PORT_FORWARD_TTL
+              value: {{ .Values.portForward.ttl | quote }}
+            - name: DOSH_PORT_FORWARD_MAX_SESSIONS_PER_USER
+              value: {{ .Values.portForward.maxSessionsPerUser | quote }}
             {{- if .Values.audit.webhook.enabled }}
             {{- if and (not .Values.audit.webhook.tokenKey) (not .Values.audit.webhook.hmacKeyKey) }}
             {{- fail "audit.webhook.tokenKey or audit.webhook.hmacKeyKey is required" }}

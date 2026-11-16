@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useParams, useSearch } from "@tanstack/react-router";
 import { createColumnHelper } from "@tanstack/react-table";
-import { Box, FileCode2, LockKeyhole, ScrollText, Server, TerminalSquare, Trash2 } from "lucide-react";
+import { Box, FileCode2, LockKeyhole, RadioTower, ScrollText, Server, TerminalSquare, Trash2 } from "lucide-react";
 import { api } from "@/api/client";
 import type { ContainerInfo } from "@/api/types";
 import { DataTable } from "@/components/data/data-table";
@@ -21,11 +21,12 @@ import { useCapabilities } from "@/features/auth/use-session";
 import { LogViewer } from "@/features/workloads/log-viewer";
 import { ResourceRelationsPanel } from "@/features/resources/resource-relations-panel";
 import { PodTerminal } from "@/features/workloads/pod-terminal";
+import { PortForwardPanel } from "@/features/workloads/port-forward-panel";
 import { resourceCapabilities } from "@/lib/capabilities";
 import { formatCPU, formatDate, formatMemory } from "@/lib/utils";
 
 const column = createColumnHelper<ContainerInfo>();
-const podTabs = ["overview", "containers", "events", "logs", "terminal", "yaml"] as const;
+const podTabs = ["overview", "containers", "events", "logs", "terminal", "port-forward", "yaml"] as const;
 const workloadKinds = new Set(["deployment", "statefulset", "daemonset", "job", "cronjob"]);
 type PodTab = (typeof podTabs)[number];
 
@@ -68,6 +69,7 @@ export function PodDetailPage() {
   const capabilityQuery = useCapabilities(params.namespace);
   const capabilities = capabilityQuery.data;
   const canExec = Boolean(capabilities?.podExec);
+  const canPortForward = Boolean(capabilities?.podPortForward);
   const canEphemeralDebug = Boolean(capabilities?.podEphemeralDebug);
   const podCaps = resourceCapabilities(capabilities, "pods");
   const query = useQuery({
@@ -86,12 +88,13 @@ export function PodDetailPage() {
         description={<span className="flex flex-wrap items-center gap-2"><StatusBadge status={pod.status} /><span>{pod.ready} 就绪</span><span>·</span><span>{pod.node}</span></span>}
         actions={<div className="flex items-center gap-2">
           <Button variant="outline" size="sm" onClick={() => changeTab("terminal")}><TerminalSquare className="h-4 w-4" />进入终端</Button>
+          {canPortForward ? <Button variant="outline" size="sm" onClick={() => changeTab("port-forward")}><RadioTower className="h-4 w-4" />端口转发</Button> : null}
           <Button variant="outline" size="sm" onClick={() => setYamlOpen(true)}><FileCode2 className="h-4 w-4" />YAML</Button>
           {podCaps.delete ? <Button variant="destructive" size="sm" onClick={() => setDeleteOpen(true)}><Trash2 className="h-4 w-4" />删除</Button> : null}
         </div>}
       />
       <Tabs value={tab} onValueChange={changeTab}>
-        <TabsList><TabsTrigger value="overview">概览</TabsTrigger><TabsTrigger value="containers">实例 ({pod.containers.length})</TabsTrigger><TabsTrigger value="events">事件</TabsTrigger><TabsTrigger value="logs"><ScrollText className="h-3.5 w-3.5" />日志</TabsTrigger><TabsTrigger value="terminal"><TerminalSquare className="h-3.5 w-3.5" />终端</TabsTrigger><TabsTrigger value="yaml"><FileCode2 className="h-3.5 w-3.5" />YAML</TabsTrigger></TabsList>
+        <TabsList><TabsTrigger value="overview">概览</TabsTrigger><TabsTrigger value="containers">实例 ({pod.containers.length})</TabsTrigger><TabsTrigger value="events">事件</TabsTrigger><TabsTrigger value="logs"><ScrollText className="h-3.5 w-3.5" />日志</TabsTrigger><TabsTrigger value="terminal"><TerminalSquare className="h-3.5 w-3.5" />终端</TabsTrigger><TabsTrigger value="port-forward"><RadioTower className="h-3.5 w-3.5" />端口转发</TabsTrigger><TabsTrigger value="yaml"><FileCode2 className="h-3.5 w-3.5" />YAML</TabsTrigger></TabsList>
         <TabsContent value="overview">
           <div className="grid gap-4 xl:grid-cols-2">
             <Card><CardHeader><CardTitle>Pod 信息</CardTitle></CardHeader><CardContent><dl className="grid gap-5 sm:grid-cols-2">
@@ -120,6 +123,9 @@ export function PodDetailPage() {
         <TabsContent value="logs"><LogViewer namespace={pod.namespace} name={pod.name} containers={pod.containers} /></TabsContent>
         <TabsContent value="terminal">
           {capabilityQuery.isLoading ? <LoadingState label="正在检查终端权限" /> : capabilityQuery.isError ? <ErrorState error={capabilityQuery.error} onRetry={() => void capabilityQuery.refetch()} /> : canExec ? <PodTerminal namespace={pod.namespace} name={pod.name} containers={pod.containers} canDebugContainer={canEphemeralDebug} onContainerCreated={() => query.refetch()} /> : <TerminalPermissionState namespace={pod.namespace} />}
+        </TabsContent>
+        <TabsContent value="port-forward">
+          {capabilityQuery.isLoading ? <LoadingState label="正在检查端口转发权限" /> : capabilityQuery.isError ? <ErrorState error={capabilityQuery.error} onRetry={() => void capabilityQuery.refetch()} /> : <PortForwardPanel namespace={pod.namespace} name={pod.name} kind="pod" canPortForward={canPortForward} ports={pod.containers.flatMap((container) => (container.ports ?? []).map((item) => ({ port: item.port, protocol: item.protocol, label: `${container.name}${item.name ? ` · ${item.name}` : ""}` })))} />}
         </TabsContent>
         <TabsContent value="containers">
           <DataTable columns={[

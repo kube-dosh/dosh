@@ -59,7 +59,7 @@ func TestRouteInventoryMatchesOpenAPI(t *testing.T) {
 
 	actual := make(map[routeKey]struct{})
 	if err := chi.Walk(routes, func(method, route string, _ http.Handler, _ ...func(http.Handler) http.Handler) error {
-		key := routeKey{method: strings.ToUpper(method), pattern: route}
+		key := routeKey{method: strings.ToUpper(method), pattern: canonicalRoutePattern(route)}
 		if _, exists := actual[key]; exists {
 			t.Errorf("duplicate route registration: %s", key)
 		}
@@ -105,7 +105,7 @@ func TestModuleRoutesAreScoped(t *testing.T) {
 		{name: "resources", mount: deps.resources.Mount, prefixes: []string{"/resources"}},
 		{name: "cluster-config", mount: deps.clusterConfig.Mount, prefixes: []string{"/cluster"}},
 		{name: "nodes", mount: deps.nodes.Mount, prefixes: []string{"/nodes", "/namespaces"}},
-		{name: "workloads", mount: deps.workloads.Mount, prefixes: []string{"/workloads", "/pods"}},
+		{name: "workloads", mount: deps.workloads.Mount, prefixes: []string{"/workloads", "/pods", "/services", "/tunnels"}},
 		{name: "events", mount: deps.events.Mount, prefixes: []string{"/events"}},
 		{name: "network", mount: deps.network.Mount, prefixes: []string{"/services", "/ingresses", "/ingressclasses"}},
 		{name: "configuration", mount: deps.configuration.Mount, prefixes: []string{"/configmaps", "/secrets"}},
@@ -213,4 +213,11 @@ func hasAnyPrefix(route string, prefixes []string) bool {
 		}
 	}
 	return false
+}
+
+func canonicalRoutePattern(pattern string) string {
+	if strings.HasSuffix(pattern, "/*") {
+		return strings.TrimSuffix(pattern, "/*") + "/{path}"
+	}
+	return pattern
 }

@@ -26,6 +26,9 @@ import type {
   HelmReleaseRollbackInput,
   HelmReleaseRollbackResult,
   HelmReleaseSummary,
+  HelmReleaseUpgradePreview,
+  HelmReleaseUpgradeRequest,
+  HelmReleaseUpgradeResult,
   ListParams,
   ListResponse,
   NamespaceItem,
@@ -49,6 +52,7 @@ import type {
   PodEphemeralContainerInput,
   PodEphemeralContainerResult,
   PodSummary,
+  PortForwardSession,
   Problem,
   ResourceCapabilities,
   ResourceDiscovery,
@@ -435,6 +439,17 @@ export const api = {
     }),
   pods: (params?: ListParams) => listRequest<PodSummary>(`/api/v1/pods${query(params)}`),
   pod: async (namespace: string, name: string) => normalizePodDetail(await request<PodDetail>(`/api/v1/pods/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}`)),
+  createPodTunnel: (namespace: string, name: string, port: number) =>
+    request<PortForwardSession>(`/api/v1/pods/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}/tunnels`, {
+      method: "POST",
+      body: JSON.stringify({ port }),
+    }),
+  createServiceTunnel: (namespace: string, name: string, port: number) =>
+    request<PortForwardSession>(`/api/v1/services/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}/tunnels`, {
+      method: "POST",
+      body: JSON.stringify({ port }),
+    }),
+  closeTunnel: (id: string) => request<void>(`/api/v1/tunnels/${encodeURIComponent(id)}`, { method: "DELETE" }),
   createPodEphemeralContainer: (namespace: string, name: string, input: PodEphemeralContainerInput) =>
     request<PodEphemeralContainerResult>(`/api/v1/pods/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}/ephemeral-containers`, {
       method: "POST",
@@ -454,6 +469,14 @@ export const api = {
   },
   rollbackHelmRelease: async (namespace: string, name: string, input: HelmReleaseRollbackInput) => {
     const value = await request<HelmReleaseRollbackResult>(`/api/v1/helm/releases/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}/rollback`, { method: "POST", body: JSON.stringify(input) });
+    return { ...value, warnings: list(value.warnings) };
+  },
+  previewHelmReleaseUpgrade: async (namespace: string, name: string, input: HelmReleaseUpgradeRequest) => {
+    const value = await request<HelmReleaseUpgradePreview>(`/api/v1/helm/releases/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}/upgrade/preview`, { method: "POST", body: JSON.stringify(input) });
+    return { ...value, warnings: list(value.warnings) };
+  },
+  upgradeHelmRelease: async (namespace: string, name: string, input: HelmReleaseUpgradeRequest) => {
+    const value = await request<HelmReleaseUpgradeResult>(`/api/v1/helm/releases/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}/upgrade`, { method: "POST", body: JSON.stringify(input) });
     return { ...value, warnings: list(value.warnings) };
   },
   deletePod: (namespace: string, name: string) =>

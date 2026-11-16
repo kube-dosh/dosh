@@ -856,6 +856,38 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
         "409": { $ref: "#/components/responses/Conflict" }
         "503": { $ref: "#/components/responses/DependencyUnavailable" }
+  /api/v1/pods/{namespace}/{name}/tunnels:
+    post:
+      tags: [workloads]
+      summary: Open a short-lived browser tunnel to one Pod port
+      description: >-
+        Requires `create pods/portforward`. The server opens a loopback-only
+        SPDY port-forward and returns an unguessable same-origin tunnel path.
+        The client never supplies an upstream address or Kubernetes port-forward
+        URL. Sessions are user-bound and expire automatically.
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      parameters:
+        - { $ref: "#/components/parameters/NamespacePath" }
+        - { $ref: "#/components/parameters/Name" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PortForwardRequest" }
+      responses:
+        "201":
+          description: Port-forward session created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PortForwardSession" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
   /api/v1/pods/{namespace}/{name}/ephemeral-containers:
     post:
       tags: [workloads]
@@ -1126,6 +1158,100 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "503": { $ref: "#/components/responses/DependencyUnavailable" }
+  /api/v1/tunnels/{id}:
+    get:
+      tags: [workloads]
+      summary: Redirect a tunnel URL to its trailing-slash proxy path
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "307": { description: Redirect to the active tunnel proxy path }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      tags: [workloads]
+      summary: Close and revoke a port-forward session
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "204": { description: Tunnel closed }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/tunnels/{id}/{path}:
+    get:
+      tags: [workloads]
+      summary: Proxy GET requests through an active tunnel
+      description: The tunnel session cookie is required. Dosh session and OIDC state cookies are filtered before forwarding.
+      security: [{ cookieAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+        - { name: path, in: path, required: true, schema: { type: string } }
+      responses:
+        "200": { description: Upstream response }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
+    post:
+      tags: [workloads]
+      summary: Proxy POST requests through an active tunnel
+      security: [{ cookieAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+        - { name: path, in: path, required: true, schema: { type: string } }
+      responses:
+        "200": { description: Upstream response }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "413": { description: Request body exceeds the 16 MiB tunnel limit }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
+    put:
+      tags: [workloads]
+      summary: Proxy PUT requests through an active tunnel
+      security: [{ cookieAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+        - { name: path, in: path, required: true, schema: { type: string } }
+      responses:
+        "200": { description: Upstream response }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "413": { description: Request body exceeds the 16 MiB tunnel limit }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
+    patch:
+      tags: [workloads]
+      summary: Proxy PATCH requests through an active tunnel
+      security: [{ cookieAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+        - { name: path, in: path, required: true, schema: { type: string } }
+      responses:
+        "200": { description: Upstream response }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "413": { description: Request body exceeds the 16 MiB tunnel limit }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
+    delete:
+      tags: [workloads]
+      summary: Proxy DELETE requests through an active tunnel
+      security: [{ cookieAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+        - { name: path, in: path, required: true, schema: { type: string } }
+      responses:
+        "200": { description: Upstream response }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
   /api/v1/helm/releases:
     get:
       tags: [releases]
@@ -1229,6 +1355,72 @@ paths:
         "409": { $ref: "#/components/responses/Conflict" }
         "501": { $ref: "#/components/responses/NotSupported" }
         "503": { $ref: "#/components/responses/DependencyUnavailable" }
+  /api/v1/helm/releases/{namespace}/{name}/upgrade/preview:
+    post:
+      tags: [releases]
+      summary: Render a Helm upgrade preview using server-side current values
+      description: >-
+        Merges the supplied Values YAML as an override over the unredacted values
+        stored in the current Helm revision, renders the stored chart, and returns
+        server-redacted Values and Manifest diffs. This endpoint never mutates the
+        cluster. Requires list Secrets permission in the release namespace.
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      parameters:
+        - { $ref: "#/components/parameters/NamespacePath" }
+        - { $ref: "#/components/parameters/Name" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/HelmReleaseUpgradeRequest" }
+      responses:
+        "200":
+          description: Redacted upgrade preview
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/HelmReleaseUpgradePreview" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "501": { $ref: "#/components/responses/NotSupported" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
+  /api/v1/helm/releases/{namespace}/{name}/upgrade:
+    post:
+      tags: [releases]
+      summary: Render and apply a Helm-compatible upgrade revision
+      description: >-
+        Renders the chart stored in the current revision with server-side values
+        merged with the supplied override. Every object is server-side apply
+        DryRun preflighted before any live write. Helm hooks are skipped and
+        removed objects are not pruned; both are reported as warnings. Requires
+        create and update access to Secrets and exact release-name confirmation.
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      parameters:
+        - { $ref: "#/components/parameters/NamespacePath" }
+        - { $ref: "#/components/parameters/Name" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/HelmReleaseUpgradeRequest" }
+      responses:
+        "202":
+          description: Upgrade completed and new Helm revision recorded
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/HelmReleaseUpgradeResult" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "501": { $ref: "#/components/responses/NotSupported" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
   /api/v1/services/{namespace}/{name}:
     get:
       tags: [network]
@@ -1290,6 +1482,38 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "409": { $ref: "#/components/responses/Conflict" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
+  /api/v1/services/{namespace}/{name}/tunnels:
+    post:
+      tags: [network]
+      summary: Open a port-forward tunnel through one ready Service backend Pod
+      description: >-
+        Requires get Services and create pods/portforward. The Service selector
+        must resolve to at least one Ready Pod. Named targetPort values are
+        resolved against the selected Pod's TCP container ports.
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      parameters:
+        - { $ref: "#/components/parameters/NamespacePath" }
+        - { $ref: "#/components/parameters/Name" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PortForwardRequest" }
+      responses:
+        "201":
+          description: Port-forward session created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PortForwardSession" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "501": { $ref: "#/components/responses/NotSupported" }
         "503": { $ref: "#/components/responses/DependencyUnavailable" }
   /api/v1/ingresses:
     get:
@@ -2408,7 +2632,7 @@ components:
         admin: { type: boolean }
     Capabilities:
       type: object
-      required: [read, scale, restart, updateImage, suspendCronJob, delete, create, createService, updateService, deleteService, deleteNamespace, revealSecrets, editYAML, nodeCordon, nodeDrain, podExec, podEphemeralDebug, helmReleases, reloadCertificate]
+      required: [read, scale, restart, updateImage, suspendCronJob, delete, create, createService, updateService, deleteService, deleteNamespace, revealSecrets, editYAML, nodeCordon, nodeDrain, podExec, podEphemeralDebug, podPortForward, helmReleases, helmUpgrade, reloadCertificate]
       properties:
         read: { type: boolean }
         scale: { type: boolean }
@@ -2427,7 +2651,9 @@ components:
         nodeDrain: { type: boolean }
         podExec: { type: boolean }
         podEphemeralDebug: { type: boolean }
+        podPortForward: { type: boolean }
         helmReleases: { type: boolean }
+        helmUpgrade: { type: boolean }
         reloadCertificate: { type: boolean }
         resourceActions:
           type: object
@@ -3060,6 +3286,9 @@ components:
       properties:
         name: { type: string }
         image: { type: string }
+        ports:
+          type: array
+          items: { $ref: "#/components/schemas/ContainerPort" }
         init: { type: boolean }
         ephemeral: { type: boolean }
         ready: { type: boolean }
@@ -3070,6 +3299,29 @@ components:
         cpuLimitMilli: { type: integer, format: int64 }
         memoryRequestBytes: { type: integer, format: int64 }
         memoryLimitBytes: { type: integer, format: int64 }
+    ContainerPort:
+      type: object
+      required: [protocol, port]
+      properties:
+        name: { type: string }
+        protocol: { type: string, enum: [TCP, UDP, SCTP] }
+        port: { type: integer, minimum: 1, maximum: 65535 }
+    PortForwardRequest:
+      type: object
+      required: [port]
+      properties:
+        port: { type: integer, minimum: 1, maximum: 65535 }
+    PortForwardSession:
+      type: object
+      required: [id, namespace, pod, port, path, expiresAt]
+      properties:
+        id: { type: string }
+        namespace: { type: string }
+        pod: { type: string }
+        service: { type: string }
+        port: { type: integer, minimum: 1, maximum: 65535 }
+        path: { type: string }
+        expiresAt: { type: string, format: date-time }
     PodEphemeralContainerCreate:
       type: object
       required: [image]
@@ -3173,6 +3425,45 @@ components:
         name: { type: string }
         targetRevision: { type: integer }
         revision: { type: integer }
+        appliedObjects: { type: integer, minimum: 0 }
+        warnings:
+          type: array
+          items: { type: string }
+    HelmReleaseUpgradeRequest:
+      type: object
+      properties:
+        values:
+          type: string
+          maxLength: 1048576
+          description: Optional YAML override merged over the server-side current values.
+        confirmation:
+          type: string
+          description: Required for the apply endpoint; must exactly equal the release name.
+    HelmReleaseUpgradePreview:
+      type: object
+      required: [namespace, name, currentRevision, nextRevision, valuesDiff, manifestDiff]
+      properties:
+        namespace: { type: string }
+        name: { type: string }
+        currentRevision: { type: integer, minimum: 1 }
+        nextRevision: { type: integer, minimum: 2 }
+        valuesDiff:
+          type: string
+          description: Unified diff after sensitive values are redacted.
+        manifestDiff:
+          type: string
+          description: Unified diff after Secret data and sensitive manifest fields are redacted.
+        warnings:
+          type: array
+          items: { type: string }
+    HelmReleaseUpgradeResult:
+      type: object
+      required: [namespace, name, previousRevision, revision, appliedObjects]
+      properties:
+        namespace: { type: string }
+        name: { type: string }
+        previousRevision: { type: integer, minimum: 1 }
+        revision: { type: integer, minimum: 2 }
         appliedObjects: { type: integer, minimum: 0 }
         warnings:
           type: array

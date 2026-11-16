@@ -16,6 +16,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { SchemaResourceForm, schemaIssueSummary } from "@/features/resources/schema-resource-form";
 import { isRecord, validateResourceObject, type ResourceObject } from "@/features/resources/resource-schema";
+import { hasStarterTemplate, starterTemplate } from "@/features/resources/resource-starter-templates";
 import { diffStats, diffYAML } from "@/features/resources/yaml-diff";
 import { useTheme } from "@/lib/theme";
 import { cn } from "@/lib/utils";
@@ -29,9 +30,7 @@ function expectedAPIVersion(descriptor: ResourceDescriptor): string {
 }
 
 export function genericManifestTemplate(descriptor: ResourceDescriptor, namespace: string): string {
-  const metadata = [`  name: example`];
-  if (descriptor.namespaced) metadata.push(`  namespace: ${namespace || "default"}`);
-  return `apiVersion: ${expectedAPIVersion(descriptor)}\nkind: ${descriptor.kind}\nmetadata:\n${metadata.join("\n")}\nspec: {}\n`;
+  return starterTemplate(descriptor, namespace);
 }
 
 export function GenericResourceEditorDialog({ open, onOpenChange, descriptor, reference, namespace, mode, detail, capabilities, onSaved }: {
@@ -175,6 +174,7 @@ export function GenericResourceEditorDialog({ open, onOpenChange, descriptor, re
               ))}
               <DropdownMenuSeparator />
               <DropdownMenuItem onSelect={saveCurrentTemplate}><BookmarkPlus className="h-4 w-4" />从当前 YAML 另存模板</DropdownMenuItem>
+              {mode === "create" && hasStarterTemplate(descriptor) ? <DropdownMenuItem onSelect={() => { setValue(starterTemplate(descriptor, namespace)); setView("form"); }}><FileCode2 className="h-4 w-4" />恢复推荐模板</DropdownMenuItem> : null}
             </DropdownMenuContent>
           </DropdownMenu>
           <Button variant="outline" size="sm" onClick={() => setExpanded((current) => !current)}>{expanded ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}{expanded ? "退出全屏" : "全屏编辑"}</Button>

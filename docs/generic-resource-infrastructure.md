@@ -2,7 +2,7 @@
 
 | 项目 | 内容 |
 |---|---|
-| 状态 | 第六阶段已实现：在第五阶段通用资源读写与排障能力之上，补齐工作负载级多 Pod 日志聚合、Helm revision Diff 与受控回滚、跨资源关系拓扑、跨命名空间授权搜索和跨设备资源偏好；固定资源页面继续保留并强化 |
+| 状态 | 第七阶段已实现：在第六阶段通用资源读写与排障能力之上，补齐 Pod/Service 临时端口转发、Helm 受控升级、搜索短缓存与提前取消、关系拓扑筛选和常用工作负载推荐模板；固定资源页面继续保留并强化 |
 | 目标 | 从固定资源控制台走向通用 Kubernetes 控制台，为 CRD、Operator 资源和后续动态表单提供统一底座 |
 | 边界 | 不开放任意 API 代理、客户端指定上游 URL、跨资源批量原子写入或绕过 SubjectAccessReview 的读写路径；通用 Secret 创建/更新仍由专用页面承担 |
 
@@ -168,6 +168,26 @@
 
 当用户执行全局资源搜索时，系统应默认使用 `namespace=all` 的受控跨命名空间模式，并遵守 GR-017 的扫描上限。系统应提供当前用户偏好的 `GET` 与 `PUT` 接口，只接受收藏、最近资源、保存视图和隐藏列的规范化数据，拒绝非法 URL、超长键值和未绑定 GVR 的视图；服务端使用控制面身份读写按用户哈希命名的 ConfigMap，不得信任客户端指定的资源名称。登录后前端应合并服务端与本地偏好并防抖保存；仅浏览页面不得产生空偏好写请求。
 
+### GR-041 Pod 与 Service 临时端口转发
+
+当用户具备目标 Pod 的 `create pods/portforward` 权限时，系统应在 Dosh 容器回环地址创建随机本地端口，并仅通过高熵会话路径代理 HTTP 请求。Service 转发必须先校验 `get services`，再解析到同一命名空间内 Ready 且 Running 的后端 Pod；命名端口缺失时继续尝试其他候选 Pod，最多扫描 100 个。会话必须有明确的过期时间和每用户并发上限，禁止浏览器指定上游地址；关闭、到期和拒绝均须审计。代理不得向目标应用转发 Dosh 会话 Cookie，也不得允许目标应用覆盖 Dosh Cookie，但应保留目标应用自身的 Cookie。
+
+### GR-042 Helm 受控升级
+
+当 Release 状态为 deployed 且用户同时具备目标命名空间 Secrets 的 `create` 与 `update` 权限时，系统应允许提交增量 Values。服务端必须使用当前 Release Secret 中保存的原始 Chart 与原始 Values 渲染新 revision，不得依赖浏览器回传的遮蔽值；预览和正式升级均须在结果中展示 values/manifest Diff 与 warning。正式升级必须再次校验 Release 名称确认，先对全部非 Hook 对象执行 Server-Side Apply Dry Run，任一预检失败时不得写入；全部通过后才可逐个应用并创建 Helm 兼容 revision。Helm Hook 不执行，目标清单中不存在的旧对象不删除，包含子 Chart 依赖的 Release 因 Secret 不保留依赖模板而必须明确拒绝升级。
+
+### GR-043 搜索性能与取消
+
+当相同用户以相同 API Groups、查询词、命名空间和结果上限在 10 秒内重复搜索时，系统应复用最近一次成功结果；缓存键必须隔离身份、授权范围和查询参数。达到结果上限后，系统应取消尚未完成的并发查询，返回已收集结果、截断标记和取消 warning，不得继续无界扫描。
+
+### GR-044 关系拓扑筛选与有界读取
+
+当读取资源关系时，系统应对每类 Kubernetes 查询使用 200 条上限，并优先使用 Label Selector 和 Field Selector 缩小范围；达到上限时必须返回截断 warning。前端应展示上游、下游、关联和异常关联摘要，允许按方向、资源类型和关系类型筛选，并按 Kind 分组；桌面使用多列卡片，移动端使用单列流式布局且不得产生页面级横向溢出。
+
+### GR-045 常用资源推荐模板
+
+当用户通过资源浏览器创建 StatefulSet、DaemonSet、Job、CronJob、PersistentVolume 或 StorageClass 时，系统应提供可编辑的推荐模板，并可随时恢复推荐内容；模板仍通过现有 Schema 动态表单和 YAML 双模式编辑，复杂字段或 Schema 不可用时必须可回退到 YAML。
+
 ## 2. 实现落点
 
 | 层 | 文件 | 职责 |
@@ -177,12 +197,12 @@
 | http | `internal/modules/resources/http/handler.go` | Discovery、Schema、列表、详情、能力、创建/更新/删除路由与稳定错误映射 |
 | kube | `internal/platform/kube/resources.go`、`resource_relations.go`、`resource_schema.go`、`preferences.go` | API Discovery、OpenAPI v2 读取与缓存、动态客户端读写、分页和搜索、关系拓扑、偏好 ConfigMap 存储 |
 | nodes | `internal/modules/nodes/**`、`internal/platform/kube/node_drain.go` | 排空计划、PDB/DaemonSet/mirror/bare Pod 分类、Eviction API 执行和部分失败结果 |
-| workloads | `internal/modules/workloads/**`、`internal/platform/kube/workloads.go`、`pod_exec.go`、`pods.go` | 发布历史/模板快照、回滚 Diff、日志时间范围、Init/Ephemeral Container、SPDY Exec、会话限额、Ephemeral Debug 与审计详情 |
-| releases | `internal/modules/releases/**`、`internal/platform/kube/helm_releases.go` | Helm v3 Secret 解码、最新 revision/历史、values/manifest 脱敏、revision Diff、Dry Run 回滚、Hook 跳过和 Helm 兼容 revision 写入 |
+| workloads | `internal/modules/workloads/**`、`internal/platform/kube/workloads.go`、`pod_exec.go`、`pods.go`、`pod_port_forward.go` | 发布历史/模板快照、回滚 Diff、日志时间范围、Init/Ephemeral Container、SPDY Exec、会话限额、Ephemeral Debug、Pod/Service 端口转发与审计详情 |
+| releases | `internal/modules/releases/**`、`internal/platform/kube/helm_releases.go`、`helm_upgrade.go` | Helm v3 Secret 解码、最新 revision/历史、values/manifest 脱敏、revision Diff、Dry Run 回滚与升级、Hook 跳过和 Helm 兼容 revision 写入 |
 | auth | `internal/modules/auth/**` | 当前身份 SubjectAccessReview 解释、reason/guidance 与 `kubectl auth can-i` 复现命令 |
 | bootstrap | `internal/bootstrap/app.go`、`router.go` | 依赖装配和受保护路由挂载 |
-| frontend | `web/src/features/resources/`、`workloads/`、`nodes/`、`helm/`、`access/`、`preferences/`、`web/src/lib/` | 通用资源、排空、终端、聚合日志、Helm Diff/回滚、关系拓扑、权限检查、跨设备偏好、本地模板与草稿 |
-| contract | `api/openapi.yaml`、`web/src/api/schema.d.ts` | Discovery、Schema、通用读写、关系拓扑、用户偏好、排空、Exec、聚合日志、Helm Diff/回滚、权限检查和发布历史 REST 契约 |
+| frontend | `web/src/features/resources/`、`workloads/`、`nodes/`、`helm/`、`access/`、`preferences/`、`web/src/lib/` | 通用资源、排空、终端、端口转发、聚合日志、Helm Diff/回滚/升级、关系拓扑筛选、权限检查、跨设备偏好、推荐模板与草稿 |
+| contract | `api/openapi.yaml`、`web/src/api/schema.d.ts` | Discovery、Schema、通用读写、关系拓扑、用户偏好、排空、Exec、聚合日志、Helm Diff/回滚/升级、端口转发、权限检查和发布历史 REST 契约 |
 
 ## 3. 验证矩阵
 
@@ -202,13 +222,16 @@
   - 排空计划分类、PDB 检测、mirror/已结束 Pod 跳过、PDB 拒绝中止和部分结果计数。
   - 终端 shell/尺寸白名单、`pods/exec` 授权、会话并发/空闲/时长/输出限额、打开/关闭审计、Ephemeral Container 创建授权与 `sinceSeconds` 透传。
   - Helm gzip/base64 解码、最新 revision/历史、损坏 Secret warning、values/manifest/环境变量敏感值遮蔽、双 revision Diff、Dry Run 先于 live apply、Hook 跳过和 superseded revision。
-  - Pod/Service/Ingress/Node/PVC/PV/Workload/CronJob 关系拓扑、关系数量上限和读取失败降级。
+  - Helm 升级原始 Chart/Values 合并、真实 Chart payload 渲染、子 Chart 拒绝、无基础 Values 合并和权限/确认边界。
+  - Pod/Service 端口转换、Ready 后端筛选、命名 targetPort 回退、会话归属/TTL/并发上限、Cookie 隔离和任意 HTTP 方法代理。
+  - Pod/Service/Ingress/Node/PVC/PV/Workload/CronJob 关系拓扑、查询上限、截断 warning、筛选计数和读取失败降级。
   - 全局搜索 `namespace=all` 上限、逐命名空间规则失败跳过、结果去重和 warning 聚合；用户偏好规范化、用户隔离、服务端 ConfigMap 存储和本地/服务端合并。
+  - 资源搜索短 TTL 缓存的身份/授权/查询隔离、并发取消和达到上限 warning；常用工作负载推荐模板与恢复到 Schema 表单。
   - 权限解释 allowed/read_only/rbac_denied/unavailable、匿名身份提示和 HTTP 参数校验。
   - 本地收藏、保存视图、列偏好、最近资源、模板和草稿的持久化与损坏数据降级。
 - `cd web && npm run api:check && npm run typecheck`
 - `cd web && npm test -- --run`
-- Playwright Chromium/Firefox：多版本切换、动态表单、Diff、风险确认、排空、终端、Ephemeral Container 创建与移动端弹窗、聚合日志、Helm Diff/回滚、关系拓扑、跨命名空间搜索、偏好同步、权限检查、本地模板、390px/320px/大字体/Android 和弹窗后代边界。
+- Playwright Chromium/Firefox：多版本切换、动态表单、Diff、风险确认、排空、终端、Ephemeral Container 创建与移动端弹窗、聚合日志、Helm Diff/回滚/升级、端口转发、关系拓扑筛选、跨命名空间搜索、偏好同步、权限检查、本地模板、390px/320px/大字体/Android 和弹窗后代边界。
 - axe：资源浏览器、Helm、权限检查、列表、详情在亮暗主题下无 serious/critical 问题。
 - `make arch`
 
@@ -216,5 +239,5 @@
 
 1. 为 CRD Schema 增加字段级文档、更多组合类型提示和从已有对象一键另存模板。
 2. 增加可配置日志后端和 Loki 等外部数据源，保留当前按需 Pod 流作为无外部依赖的降级路径。
-3. 评估 Port-forward，以及 Helm upgrade 的受控生命周期；写操作必须保持显式权限、二次确认、Dry Run 和审计。
+3. 为端口转发增加可选的独立代理源、目标应用 Cookie 路径隔离和 WebSocket 真实应用验收。
 4. 增强超大集群搜索索引、资源关系深度和节点/工作负载故障拓扑的分批排空策略。
