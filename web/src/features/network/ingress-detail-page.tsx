@@ -17,6 +17,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ResourceEvents } from "@/features/events/resource-events";
+import { DiagnoseButton } from "@/features/diagnostics/diagnose-button";
 import { ResourceRelationsPanel } from "@/features/resources/resource-relations-panel";
 import { useCapabilities } from "@/features/auth/use-session";
 import { IngressFormDialog } from "@/features/network/ingress-form-dialog";
@@ -66,7 +67,8 @@ export function IngressDetailPage() {
         breadcrumb={<><Link to="/network" search={{ q: search.q, namespace: search.namespace, tab: "ingresses" }} className="text-primary underline underline-offset-2">服务与路由</Link> / {ingress.namespace} / {ingress.name}</>}
         title={<span className="flex items-center gap-3"><RouteIcon className="h-5 w-5 text-muted-foreground" />{ingress.name}</span>}
         description={<span className="flex flex-wrap items-center gap-2"><Badge variant="secondary">Class {ingress.class || "未指定"}</Badge><StatusBadge status={readyRoutes === ingress.paths.length && readyRoutes > 0 ? "Ready" : "NoReadyEndpoints"} /><span>{readyRoutes}/{ingress.paths.length} 条路由后端就绪</span><span>·</span><span>{ingress.namespace}</span></span>}
-        actions={<div className="flex items-center gap-2">
+        actions={<div className="flex flex-wrap items-center gap-2">
+          <DiagnoseButton kind="ingress" namespace={ingress.namespace} name={ingress.name} />
           {ingressCaps.update ? <Button variant="outline" size="sm" onClick={() => setEditOpen(true)}><Pencil className="h-4 w-4" />编辑</Button> : null}
           {ingressCaps.delete ? <Button variant="destructive" size="sm" onClick={() => setDeleteOpen(true)}><Trash2 className="h-4 w-4" />删除</Button> : null}
         </div>}

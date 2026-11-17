@@ -19,6 +19,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ResourceEvents } from "@/features/events/resource-events";
 import { ResourceRelationsPanel } from "@/features/resources/resource-relations-panel";
 import { useCapabilities } from "@/features/auth/use-session";
+import { DiagnoseButton } from "@/features/diagnostics/diagnose-button";
 import { NetworkMetadataCard } from "@/features/network/network-detail-shared";
 import { ServiceFormDialog } from "@/features/workloads/service-form-dialog";
 import { PortForwardPanel } from "@/features/workloads/port-forward-panel";
@@ -67,7 +68,8 @@ export function ServiceDetailPage() {
         breadcrumb={<><Link to="/network" search={{ q: search.q, namespace: search.namespace, tab: "services" }} className="text-primary underline underline-offset-2">服务与路由</Link> / {service.namespace} / {service.name}</>}
         title={<span className="flex items-center gap-3"><Network className="h-5 w-5 text-muted-foreground" />{service.name}</span>}
         description={<span className="flex flex-wrap items-center gap-2"><Badge variant={service.headless ? "outline" : "secondary"}>{service.headless ? "Headless" : service.type}</Badge><StatusBadge status={service.endpointCount > 0 ? "Ready" : "NoReadyEndpoints"} /><span>{service.endpointCount} 个就绪 Endpoint</span><span>·</span><span>{service.namespace}</span></span>}
-        actions={<div className="flex items-center gap-2">
+        actions={<div className="flex flex-wrap items-center gap-2">
+          <DiagnoseButton kind="service" namespace={service.namespace} name={service.name} />
           {serviceCaps.update ? <Button variant="outline" size="sm" onClick={() => setEditOpen(true)}><Pencil className="h-4 w-4" />编辑</Button> : null}
           {canPortForward ? <Button variant="outline" size="sm" onClick={() => changeTab("port-forward")}><RadioTower className="h-4 w-4" />端口转发</Button> : null}
           {serviceCaps.delete ? <Button variant="destructive" size="sm" onClick={() => setDeleteOpen(true)}><Trash2 className="h-4 w-4" />删除</Button> : null}

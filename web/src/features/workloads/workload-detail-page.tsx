@@ -24,6 +24,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useCapabilities } from "@/features/auth/use-session";
+import { DiagnoseButton } from "@/features/diagnostics/diagnose-button";
 import { workloadCapabilities } from "@/lib/capabilities";
 import { ResourceEvents } from "@/features/events/resource-events";
 import { PodTerminal } from "@/features/workloads/pod-terminal";
@@ -198,6 +199,7 @@ export function WorkloadDetailPage() {
         description={<span className="flex flex-wrap items-center gap-2"><StatusBadge status={workload.status} /><span>{workload.ready} 就绪</span><span>·</span><span>{workload.namespace}</span></span>}
         actions={
           <>
+            <DiagnoseButton kind={kind} namespace={workload.namespace} name={workload.name} />
             <Button variant="outline" size="sm" onClick={() => setYamlOpen(true)}><FileCode2 className="h-4 w-4" />YAML</Button>
             {canSuspend ? <Button variant="outline" size="sm" onClick={() => setSuspendOpen(true)}>{suspended ? <Play className="h-4 w-4" /> : <Pause className="h-4 w-4" />}{suspended ? "恢复调度" : "暂停调度"}</Button> : null}
             {canUpdateImage && workload.containers.length ? <Button variant="outline" size="sm" onClick={openImageDialog}><Pencil className="h-4 w-4" />更新镜像</Button> : null}

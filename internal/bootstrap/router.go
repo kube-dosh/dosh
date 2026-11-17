@@ -11,6 +11,7 @@ import (
 	certificateshttp "dosh/internal/modules/certificates/http"
 	clusterconfighttp "dosh/internal/modules/clusterconfig/http"
 	configurationhttp "dosh/internal/modules/configuration/http"
+	diagnosticshttp "dosh/internal/modules/diagnostics/http"
 	eventshttp "dosh/internal/modules/events/http"
 	networkhttp "dosh/internal/modules/network/http"
 	nodeshttp "dosh/internal/modules/nodes/http"
@@ -46,6 +47,7 @@ type routerDependencies struct {
 	events        *eventshttp.Handler
 	network       *networkhttp.Handler
 	configuration *configurationhttp.Handler
+	diagnostics   *diagnosticshttp.Handler
 	certificates  *certificateshttp.Handler
 	storage       *storagehttp.Handler
 	yaml          *yamlhttp.Handler
@@ -95,6 +97,7 @@ func buildRouter(deps routerDependencies) (stdhttp.Handler, error) {
 			deps.events.Mount(r)
 			deps.network.Mount(r)
 			deps.configuration.Mount(r)
+			deps.diagnostics.Mount(r)
 			deps.certificates.Mount(r)
 			deps.storage.Mount(r)
 			deps.yaml.Mount(r)

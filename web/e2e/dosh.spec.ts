@@ -4,6 +4,7 @@ import type {
   AccessReview,
   ContainerRegistry,
   ContainerRegistryUpsertInput,
+  Diagnosis,
   HelmReleaseDetail,
   HelmReleaseDiff,
   HelmReleaseRollbackResult,
@@ -318,6 +319,45 @@ const podDetail: PodDetail = {
   ],
 };
 
+const diagnosisFixture: Diagnosis = {
+  target: { kind: "Pod", namespace: "default", name: "web-abcdef-12345", status: "CrashLoopBackOff" },
+  severity: "critical",
+  summary: "发现 1 个需要立即处理的问题",
+  generatedAt: "2026-11-17T08:00:00Z",
+  checks: [
+    { id: "phase", label: "Pod 阶段", status: "critical", message: "当前状态为 Running" },
+    { id: "containers", label: "容器状态", status: "critical", message: "1 个容器尚未就绪" },
+    { id: "events", label: "相关事件", status: "warning", message: "发现 2 条 Warning 事件" },
+    { id: "logs", label: "容器日志", status: "warning", message: "日志中发现值得关注的错误模式" },
+  ],
+  findings: [
+    {
+      id: "web.crashloop", severity: "critical", title: "容器处于 CrashLoopBackOff",
+      cause: "容器启动后反复退出，Kubernetes 正在指数退避重启。应结合上次退出码和容器日志定位启动失败原因。",
+      evidence: [
+        { label: "容器", value: "web" },
+        { label: "镜像", value: "nginx:alpine" },
+        { label: "上次终止", value: "OOMKilled（退出码 137）" },
+      ],
+      recommendations: [
+        { label: "查看容器日志", path: "/pods/default/web-abcdef-12345?tab=logs" },
+        { label: "复制排查命令", command: "kubectl describe pod web-abcdef-12345 -n default" },
+      ],
+    },
+    {
+      id: "logs.out-of-memory", severity: "warning", title: "日志显示内存耗尽",
+      cause: "进程可能超过了容器内存限制，或被运行时终止。",
+      evidence: [{ label: "web", value: "fatal: out of memory while serving request" }],
+      recommendations: [{ label: "建议", description: "结合 OOMKilled 状态提高内存 Limit，或排查内存泄漏。" }],
+    },
+  ],
+  related: [
+    { kind: "Pod", namespace: "default", name: "web-abcdef-12345", status: "CrashLoopBackOff", relationship: "当前对象", path: "/pods/default/web-abcdef-12345" },
+    { kind: "Node", name: "worker-0001", relationship: "运行于节点", path: "/nodes/worker-0001" },
+  ],
+  warnings: ["当前身份缺少部分日志权限，日志检查已跳过"],
+};
+
 const helmReleaseSummary: HelmReleaseSummary = {
   name: "web",
   namespace: "default",
@@ -587,7 +627,7 @@ type NodeMetadataRequest = { method: string; path: string; csrf: string | null; 
 type PreferenceRequest = { method: string; body: UserPreferences };
 type RegistryRequest = { method: string; path: string; body?: ContainerRegistryUpsertInput };
 
-async function installApiMocks(page: Page, options: { authenticated?: boolean; authMode?: "local" | "token"; overview?: Overview; overviewStatus?: number; nodeSchedulingRequests?: NodeSchedulingRequest[]; nodeMetadataRequests?: NodeMetadataRequest[]; preferenceRequests?: PreferenceRequest[]; registryRequests?: RegistryRequest[]; containerRegistries?: ContainerRegistry[]; registryFailures?: { repositories?: boolean; tags?: boolean }; expireSessionOnNodes?: boolean; noIngressController?: boolean; podName?: string; podExec?: boolean; podEphemeralDebug?: boolean; emptyDiscovery?: boolean; ephemeralRequests?: Array<{ image: string; targetContainerName?: string; shell?: string }> } = {}) {
+async function installApiMocks(page: Page, options: { authenticated?: boolean; authMode?: "local" | "token"; overview?: Overview; overviewStatus?: number; nodeSchedulingRequests?: NodeSchedulingRequest[]; nodeMetadataRequests?: NodeMetadataRequest[]; preferenceRequests?: PreferenceRequest[]; registryRequests?: RegistryRequest[]; containerRegistries?: ContainerRegistry[]; registryFailures?: { repositories?: boolean; tags?: boolean }; expireSessionOnNodes?: boolean; noIngressController?: boolean; podName?: string; podExec?: boolean; podEphemeralDebug?: boolean; emptyDiscovery?: boolean; ephemeralRequests?: Array<{ image: string; targetContainerName?: string; shell?: string }>; diagnosis?: Diagnosis } = {}) {
   const authenticated = options.authenticated ?? true;
   const authMode = options.authMode ?? "local";
   const sessionResponse: SessionResponse = { ...session, authMode, capabilities: { ...session.capabilities, podExec: options.podExec ?? session.capabilities.podExec, podEphemeralDebug: options.podEphemeralDebug ?? session.capabilities.podEphemeralDebug } };
@@ -637,6 +677,16 @@ async function installApiMocks(page: Page, options: { authenticated?: boolean; a
     if (options.expireSessionOnNodes && path === "/api/v1/nodes") {
       signedIn = false;
       return json(route, { code: "unauthorized", message: "authentication required" }, 401);
+    }
+    if (path.startsWith("/api/v1/diagnostics/") && method === "GET") {
+      const parts = path.split("/").filter(Boolean).slice(3);
+      const kind = decodeURIComponent(parts[0] ?? "pod");
+      const name = decodeURIComponent(parts.at(-1) ?? "unknown");
+      const namespace = parts.length >= 3 ? decodeURIComponent(parts[1]) : undefined;
+      return json(route, options.diagnosis ? structuredClone(options.diagnosis) : {
+        ...diagnosisFixture,
+        target: { ...diagnosisFixture.target, kind, namespace, name },
+      });
     }
     if (path === "/api/v1/preferences" && method === "GET") return json(route, preferences);
     if (path === "/api/v1/preferences" && method === "PUT") {
@@ -1732,6 +1782,52 @@ test("Pod 日志支持时间范围和 Init Container，终端可通过同源 Web
   await expect(page.locator(".xterm-accessibility")).toContainText("hello from terminal");
   await page.setViewportSize({ width: 390, height: 844 });
   await expectNoPageOverflow(page, "pod terminal");
+});
+
+test("一键诊断入口覆盖 Pod、工作负载、Service、Ingress、PVC 与 Node", async ({ page }) => {
+  await installApiMocks(page);
+  const targets = [
+    "/pods/default/web-abcdef-12345",
+    "/workloads/deployment/default/web",
+    "/network/services/default/web",
+    "/network/ingresses/default/web",
+    "/storage/claims/production/data-claim",
+    "/nodes/worker-0001",
+  ];
+  for (const target of targets) {
+    await page.goto(target);
+    await page.getByRole("button", { name: "一键诊断" }).click();
+    const dialog = page.getByRole("dialog");
+    await expect(dialog).toBeVisible();
+    await expect(dialog.getByText("容器处于 CrashLoopBackOff")).toBeVisible();
+    await expectNoPageOverflow(page, `diagnosis entry ${target}`);
+    await page.keyboard.press("Escape");
+    await expect(dialog).toHaveCount(0);
+  }
+});
+
+test("一键诊断展示检查、证据与建议，并适配桌面及移动端", async ({ page }) => {
+  test.setTimeout(120_000);
+  await installApiMocks(page);
+  for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 }, { width: 320, height: 720 }]) {
+    await page.setViewportSize(viewport);
+    await page.goto("/pods/default/web-abcdef-12345");
+    await page.getByRole("button", { name: "一键诊断" }).click();
+    const dialog = page.getByRole("dialog", { name: "诊断 pod web-abcdef-12345" });
+    await expect(dialog).toBeVisible();
+    await expect(dialog.getByText("发现 1 个需要立即处理的问题")).toBeVisible();
+    await expect(dialog.getByText("容器处于 CrashLoopBackOff")).toBeVisible();
+    await expect(dialog.getByText("上次终止")).toBeVisible();
+    await expect(dialog.getByText("OOMKilled（退出码 137）")).toBeVisible();
+    await expect(dialog.getByText("kubectl describe pod web-abcdef-12345 -n default")).toBeVisible();
+    await expect(dialog.getByRole("button", { name: /复制排查命令/ })).toBeVisible();
+    await expect(dialog.getByRole("link", { name: /worker-0001/ })).toBeVisible();
+    await expect(dialog.getByText("当前身份缺少部分日志权限，日志检查已跳过")).toBeVisible();
+    await expectElementInsideViewport(page, dialog, `${viewport.width}px diagnosis dialog`);
+    await expectNoPageOverflow(page, `${viewport.width}px diagnosis dialog`);
+    await page.screenshot({ path: `test-results/mobile-interactions/diagnosis-${viewport.width}.png`, fullPage: true });
+    await page.keyboard.press("Escape");
+  }
 });
 
 test("Pod 终端在无 pods/exec 权限时保留入口并解释原因", async ({ page }) => {

@@ -25,6 +25,7 @@ tags:
   - name: resources
   - name: preferences
   - name: registries
+  - name: diagnostics
 security:
   - cookieAuth: []
 paths:
@@ -2595,6 +2596,59 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "503": { $ref: "#/components/responses/DependencyUnavailable" }
+  /api/v1/diagnostics/{kind}/{namespace}/{name}:
+    get:
+      tags: [diagnostics]
+      summary: Run a deterministic read-only diagnosis for one namespaced Kubernetes object
+      description: >-
+        Inspects one Pod, workload, Service, Ingress or PVC using bounded reads.
+        The response is evidence-backed and never mutates or remediates resources.
+      parameters:
+        - name: kind
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [pod, deployment, statefulset, daemonset, job, cronjob, service, ingress, pvc, persistentvolumeclaim]
+        - { $ref: "#/components/parameters/NamespacePath" }
+        - { $ref: "#/components/parameters/Name" }
+      responses:
+        "200":
+          description: Diagnosis report
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Diagnosis" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "501": { $ref: "#/components/responses/NotSupported" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
+  /api/v1/diagnostics/{kind}/{name}:
+    get:
+      tags: [diagnostics]
+      summary: Run a deterministic read-only diagnosis for one cluster-scoped Kubernetes object
+      description: Currently supports Node. Namespaced objects must use the three-segment route.
+      parameters:
+        - name: kind
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [node]
+        - { $ref: "#/components/parameters/Name" }
+      responses:
+        "200":
+          description: Diagnosis report
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Diagnosis" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "501": { $ref: "#/components/responses/NotSupported" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
 components:
   securitySchemes:
     cookieAuth:
@@ -4430,3 +4484,87 @@ components:
         confirmation:
           type: string
           description: Required for critical/high-risk real writes; must equal metadata.name.
+    Diagnosis:
+      type: object
+      required: [target, severity, summary, generatedAt, checks, findings, related, warnings]
+      properties:
+        target: { $ref: "#/components/schemas/DiagnosisTarget" }
+        severity:
+          type: string
+          enum: [healthy, info, warning, critical]
+        summary: { type: string }
+        generatedAt: { type: string, format: date-time }
+        checks:
+          type: array
+          items: { $ref: "#/components/schemas/DiagnosisCheck" }
+        findings:
+          type: array
+          items: { $ref: "#/components/schemas/DiagnosisFinding" }
+        related:
+          type: array
+          items: { $ref: "#/components/schemas/DiagnosisRelated" }
+        warnings:
+          type: array
+          items: { type: string }
+    DiagnosisTarget:
+      type: object
+      required: [kind, name]
+      properties:
+        kind: { type: string }
+        namespace: { type: string }
+        name: { type: string }
+        status: { type: string }
+    DiagnosisCheck:
+      type: object
+      required: [id, label, status, message]
+      properties:
+        id: { type: string }
+        label: { type: string }
+        status:
+          type: string
+          enum: [pass, info, warning, critical, skipped]
+        message: { type: string }
+    DiagnosisFinding:
+      type: object
+      required: [id, severity, title, cause, evidence, recommendations]
+      properties:
+        id: { type: string }
+        severity:
+          type: string
+          enum: [healthy, info, warning, critical]
+        title: { type: string }
+        cause: { type: string }
+        evidence:
+          type: array
+          items: { $ref: "#/components/schemas/DiagnosisEvidence" }
+        recommendations:
+          type: array
+          items: { $ref: "#/components/schemas/DiagnosisRecommendation" }
+    DiagnosisEvidence:
+      type: object
+      required: [label, value]
+      properties:
+        label: { type: string }
+        value: { type: string }
+    DiagnosisRecommendation:
+      type: object
+      required: [label]
+      properties:
+        label: { type: string }
+        description: { type: string }
+        path:
+          type: string
+          description: Same-origin Dosh route or Kubernetes command shown to the user; never executed automatically.
+        command:
+          type: string
+          description: Read-only command for the user to copy and run manually.
+    DiagnosisRelated:
+      type: object
+      required: [kind, name, relationship]
+      properties:
+        kind: { type: string }
+        namespace: { type: string }
+        name: { type: string }
+        status: { type: string }
+        relationship: { type: string }
+        path: { type: string }

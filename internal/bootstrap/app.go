@@ -22,6 +22,8 @@ import (
 	clusterconfighttp "dosh/internal/modules/clusterconfig/http"
 	configurationapp "dosh/internal/modules/configuration/app"
 	configurationhttp "dosh/internal/modules/configuration/http"
+	diagnosticsapp "dosh/internal/modules/diagnostics/app"
+	diagnosticshttp "dosh/internal/modules/diagnostics/http"
 	eventsapp "dosh/internal/modules/events/app"
 	eventshttp "dosh/internal/modules/events/http"
 	networkapp "dosh/internal/modules/network/app"
@@ -163,6 +165,7 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 	eventsService := eventsapp.New(kubeClient)
 	networkService := networkapp.New(kubeClient, authorizer, auditLogger)
 	configurationService := configurationapp.New(kubeClient, authorizer, auditLogger)
+	diagnosticsService := diagnosticsapp.New(kubeClient, authorizer, auditLogger)
 	certificatesService := certificatesapp.New(certificateStore, authorizer, auditLogger)
 	storageService := storageapp.New(kubeClient, authorizer, auditLogger)
 	yamlService := yamlapp.New(kubeClient, authorizer, auditLogger)
@@ -184,6 +187,7 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 		events:        eventshttp.New(eventsService),
 		network:       networkhttp.New(networkService),
 		configuration: configurationhttp.New(configurationService),
+		diagnostics:   diagnosticshttp.New(diagnosticsService),
 		certificates:  certificateshttp.New(certificatesService),
 		storage:       storagehttp.New(storageService),
 		yaml:          yamlhttp.New(yamlService),

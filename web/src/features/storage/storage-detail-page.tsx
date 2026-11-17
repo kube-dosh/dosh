@@ -18,6 +18,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ResourceEvents } from "@/features/events/resource-events";
 import { useCapabilities } from "@/features/auth/use-session";
+import { DiagnoseButton } from "@/features/diagnostics/diagnose-button";
 import { PersistentVolumeClaimFormDialog } from "@/features/storage/persistent-volume-claim-form-dialog";
 import { resourceCapabilities } from "@/lib/capabilities";
 import { formatDate, formatMemory } from "@/lib/utils";
@@ -248,7 +249,8 @@ export function PersistentVolumeClaimDetailPage() {
         breadcrumb={<><Link to="/storage" search={{ ...search, tab: "claims" }} className="text-primary underline underline-offset-2">存储</Link> / PersistentVolumeClaim / {item.namespace} / {item.name}</>}
         title={<span className="flex items-center gap-3"><Database className="h-5 w-5 text-muted-foreground" />{item.name}</span>}
         description={<span className="flex flex-wrap items-center gap-2"><StatusBadge status={item.status} /><span>{formatMemory(item.requestedCapacityBytes)}</span><span>·</span><span>{item.storageClass || "无 StorageClass"}</span></span>}
-        actions={<div className="flex items-center gap-2">
+        actions={<div className="flex flex-wrap items-center gap-2">
+          <DiagnoseButton kind="pvc" namespace={item.namespace} name={item.name} />
           {claimCaps.update ? <Button variant="outline" size="sm" onClick={() => setResizeOpen(true)}><Pencil className="h-4 w-4" />扩容</Button> : null}
           {claimCaps.delete ? <Button variant="destructive" size="sm" onClick={() => setDeleteOpen(true)}><Trash2 className="h-4 w-4" />删除</Button> : null}
         </div>}

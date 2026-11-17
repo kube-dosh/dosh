@@ -118,6 +118,64 @@ export interface Problem {
   fieldErrors?: Record<string, string>;
 }
 
+export type DiagnosisSeverity = "healthy" | "info" | "warning" | "critical";
+export type DiagnosisCheckStatus = "pass" | "info" | "warning" | "critical" | "skipped";
+
+export interface DiagnosisTarget {
+  kind: string;
+  namespace?: string;
+  name: string;
+  status?: string;
+}
+
+export interface DiagnosisCheck {
+  id: string;
+  label: string;
+  status: DiagnosisCheckStatus;
+  message: string;
+}
+
+export interface DiagnosisEvidence {
+  label: string;
+  value: string;
+}
+
+export interface DiagnosisRecommendation {
+  label: string;
+  description?: string;
+  path?: string;
+  command?: string;
+}
+
+export interface DiagnosisFinding {
+  id: string;
+  severity: DiagnosisSeverity;
+  title: string;
+  cause: string;
+  evidence: DiagnosisEvidence[];
+  recommendations: DiagnosisRecommendation[];
+}
+
+export interface DiagnosisRelated {
+  kind: string;
+  namespace?: string;
+  name: string;
+  status?: string;
+  relationship: string;
+  path?: string;
+}
+
+export interface Diagnosis {
+  target: DiagnosisTarget;
+  severity: DiagnosisSeverity;
+  summary: string;
+  generatedAt: string;
+  checks: DiagnosisCheck[];
+  findings: DiagnosisFinding[];
+  related: DiagnosisRelated[];
+  warnings: string[];
+}
+
 export interface Condition {
   type: string;
   status: string;

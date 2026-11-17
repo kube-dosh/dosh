@@ -560,6 +560,12 @@ type Container struct {
 	RestartCount       int32           `json:"restartCount"`
 	State              string          `json:"state"`
 	Reason             string          `json:"reason,omitempty"`
+	Message            string          `json:"message,omitempty"`
+	ExitCode           int32           `json:"exitCode,omitempty"`
+	LastState          string          `json:"lastState,omitempty"`
+	LastReason         string          `json:"lastReason,omitempty"`
+	LastMessage        string          `json:"lastMessage,omitempty"`
+	LastExitCode       int32           `json:"lastExitCode,omitempty"`
 	CPURequestMilli    int64           `json:"cpuRequestMilli"`
 	CPULimitMilli      int64           `json:"cpuLimitMilli"`
 	MemoryRequestBytes int64           `json:"memoryRequestBytes"`

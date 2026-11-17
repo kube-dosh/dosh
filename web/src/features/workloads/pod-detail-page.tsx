@@ -18,6 +18,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ResourceEvents } from "@/features/events/resource-events";
 import { useCapabilities } from "@/features/auth/use-session";
+import { DiagnoseButton } from "@/features/diagnostics/diagnose-button";
 import { LogViewer } from "@/features/workloads/log-viewer";
 import { ResourceRelationsPanel } from "@/features/resources/resource-relations-panel";
 import { PodTerminal } from "@/features/workloads/pod-terminal";
@@ -86,7 +87,8 @@ export function PodDetailPage() {
         title={pod.name}
         breadcrumb={<span>工作负载 / Pod / {pod.namespace}</span>}
         description={<span className="flex flex-wrap items-center gap-2"><StatusBadge status={pod.status} /><span>{pod.ready} 就绪</span><span>·</span><span>{pod.node}</span></span>}
-        actions={<div className="flex items-center gap-2">
+        actions={<div className="flex flex-wrap items-center gap-2">
+          <DiagnoseButton kind="pod" namespace={pod.namespace} name={pod.name} />
           <Button variant="outline" size="sm" onClick={() => changeTab("terminal")}><TerminalSquare className="h-4 w-4" />进入终端</Button>
           {canPortForward ? <Button variant="outline" size="sm" onClick={() => changeTab("port-forward")}><RadioTower className="h-4 w-4" />端口转发</Button> : null}
           <Button variant="outline" size="sm" onClick={() => setYamlOpen(true)}><FileCode2 className="h-4 w-4" />YAML</Button>

@@ -19,6 +19,7 @@ import (
 	certificateshttp "dosh/internal/modules/certificates/http"
 	clusterconfighttp "dosh/internal/modules/clusterconfig/http"
 	configurationhttp "dosh/internal/modules/configuration/http"
+	diagnosticshttp "dosh/internal/modules/diagnostics/http"
 	eventshttp "dosh/internal/modules/events/http"
 	networkhttp "dosh/internal/modules/network/http"
 	nodeshttp "dosh/internal/modules/nodes/http"
@@ -111,6 +112,7 @@ func TestModuleRoutesAreScoped(t *testing.T) {
 		{name: "events", mount: deps.events.Mount, prefixes: []string{"/events"}},
 		{name: "network", mount: deps.network.Mount, prefixes: []string{"/services", "/ingresses", "/ingressclasses"}},
 		{name: "configuration", mount: deps.configuration.Mount, prefixes: []string{"/configmaps", "/secrets"}},
+		{name: "diagnostics", mount: deps.diagnostics.Mount, prefixes: []string{"/diagnostics"}},
 		{name: "certificates", mount: deps.certificates.Mount, prefixes: []string{"/certificate"}},
 		{name: "storage", mount: deps.storage.Mount, prefixes: []string{"/storageclasses", "/persistentvolumes", "/persistentvolumeclaims"}},
 		{name: "yaml", mount: deps.yaml.Mount, prefixes: []string{"/yaml"}},
@@ -170,6 +172,7 @@ func newRouteTestDependencies(t *testing.T) routerDependencies {
 		events:        eventshttp.New(nil),
 		network:       networkhttp.New(nil),
 		configuration: configurationhttp.New(nil),
+		diagnostics:   diagnosticshttp.New(nil),
 		certificates:  certificateshttp.New(certificatesapp.New(nil, authz.NewLocal(false), audit.New(logger))),
 		storage:       storagehttp.New(nil),
 		yaml:          yamlhttp.New(nil),

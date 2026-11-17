@@ -5,7 +5,7 @@
 
   <p><strong>A lightweight Kubernetes operations console for everyday cluster work</strong></p>
 
-  <p>One binary for cluster overview, curated and generic resource views, Pod diagnostics, aggregated logs, Helm diagnostics and guarded rollback, access review, networking, configuration, storage, events, YAML creation, and audit trails.</p>
+  <p>One binary for cluster overview, curated and generic resource views, one-click diagnostics, aggregated logs, Helm diagnostics and guarded rollback, access review, networking, configuration, storage, events, YAML creation, and audit trails.</p>
 
   <p><a href="#quick-start">Quick start</a> · <a href="#screenshots">Screenshots</a> · <a href="#features">Features</a> · <a href="#deployment-and-configuration">Deployment</a> · <a href="#authentication-and-permissions">Authentication</a> · <a href="#local-development">Development</a> · <a href="docs/operations-runbook.md">Runbook</a></p>
 
@@ -50,6 +50,7 @@ Dosh does not replace Kubernetes or bypass it. Authentication, authorization, an
 | Workloads | Deployments, StatefulSets, DaemonSets, Jobs, and CronJobs; details, Pods, container configuration, related Services, events, logs, and YAML |
 | Workload actions | Create Deployments, scale, rolling restart, update images, suspend/resume CronJobs, delete resources, inspect Deployment/StatefulSet revision history with a rollback Pod-template diff, roll back revisions, and edit YAML within resource-level permissions |
 | Pods | Status, regular, Init, and Ephemeral Containers, restart counts, resources, owner and node deep links, events, logs, YAML, and an audited interactive shell through WebSocket when `pods/exec` is allowed; authorized users can add a bounded Ephemeral debug container when the target image has no shell, and create loopback-only, expiring Pod/Service HTTP tunnels when `pods/portforward` is allowed |
+| Diagnostics | Read-only, evidence-backed one-click diagnosis for Pods, Deployments, StatefulSets, DaemonSets, Jobs, CronJobs, Services, Ingresses, PVCs, and Nodes. Produces severity-ranked findings, explicit checks, related-resource links, and copyable `kubectl` commands without automatic remediation. Event collection and bounded recent logs obey Kubernetes RBAC and degrade to visible skipped checks when access is unavailable |
 | Logs | Live single-Pod logs and bounded workload-level aggregation across up to 20 Pod/container streams, with container, previous instance, tail, timestamps, time range, source prefix, keyword filtering, and per-stream permission warnings |
 | Helm | Release list, values, rendered manifest, notes, warnings, revision history, revision-to-revision values/manifest diff, guarded rollback, and incremental Values upgrades from Helm Secrets; common sensitive keys and Secret payloads are redacted server-side. Rollback and upgrade require release-name confirmation plus `secrets/create` and `secrets/update`; upgrades dry-run every object first, both skip Helm hooks, and neither deletes objects absent from the target manifest. |
 | Access review | Explain the current identity's SubjectAccessReview decision, distinguish Dosh read-only mode from RBAC denial, and generate the matching `kubectl auth can-i` command |

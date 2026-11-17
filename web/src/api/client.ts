@@ -15,6 +15,7 @@ import type {
   CronJobSuspendInput,
   DeploymentCreateInput,
   DeploymentPreview,
+  Diagnosis,
   EventItem,
   GenericResourceDetail,
   GenericResourceMutationInput,
@@ -381,6 +382,9 @@ export const api = {
   auditEvents: (params?: ListParams) => listRequest<AuditRecord>(`/api/v1/audit-events${query(params)}`),
   nodes: (params?: ListParams) => listRequest<NodeSummary>(`/api/v1/nodes${query(params)}`),
   node: async (name: string) => normalizeNodeDetail(await request<NodeDetail>(`/api/v1/nodes/${encodeURIComponent(name)}`)),
+  diagnose: (kind: string, name: string, namespace?: string) => request<Diagnosis>(
+    `/api/v1/diagnostics/${encodeURIComponent(kind)}${namespace ? `/${encodeURIComponent(namespace)}` : ""}/${encodeURIComponent(name)}`,
+  ),
   cordonNode: (name: string) => request<NodeSummary>(`/api/v1/nodes/${encodeURIComponent(name)}/cordon`, { method: "POST" }),
   uncordonNode: (name: string) => request<NodeSummary>(`/api/v1/nodes/${encodeURIComponent(name)}/uncordon`, { method: "POST" }),
   nodeDrainPlan: (name: string, options: { ignoreDaemonSets: boolean; force: boolean }) =>

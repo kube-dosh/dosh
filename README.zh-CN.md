@@ -5,7 +5,7 @@
 
   <p><strong>面向 Kubernetes 日常运维的轻量级可视化控制台</strong></p>
 
-  <p>一个二进制，提供集群总览、固定与通用资源视图、Pod 排障、工作负载日志聚合、Helm 诊断与受控回滚、权限检查、网络、配置、存储、事件、YAML 创建与审计能力。</p>
+  <p>一个二进制，提供集群总览、固定与通用资源视图、一键故障诊断、工作负载日志聚合、Helm 诊断与受控回滚、权限检查、网络、配置、存储、事件、YAML 创建与审计能力。</p>
 
   <p><a href="#快速开始">快速开始</a> · <a href="#产品截图">产品截图</a> · <a href="#功能一览">功能一览</a> · <a href="#部署与配置">部署与配置</a> · <a href="#认证与权限">认证与权限</a> · <a href="#本地开发">本地开发</a> · <a href="docs/operations-runbook.md">运维手册</a></p>
 
@@ -50,6 +50,7 @@ Dosh 不替代 Kubernetes，也不绕过 Kubernetes。所有身份、权限和�
 | 工作负载 | Deployment、StatefulSet、DaemonSet、Job、CronJob；详情、实例、容器配置、关联 Service、事件、日志和 YAML |
 | 工作负载操作 | 创建 Deployment、扩缩容、滚动重启、更新镜像、暂停/恢复 CronJob、删除、查看 Deployment/StatefulSet 发布历史及回滚前 Pod 模板 Diff 并回滚，以及按资源级权限编辑 YAML |
 | Pod | 状态、普通/Init/Ephemeral Container、重启次数、资源、归属控制器与节点深链、事件、日志和 YAML；在具备 `pods/exec` 权限时提供经审计的浏览器交互终端，并允许有权限的用户为无 Shell 镜像创建受控的 Ephemeral 调试容器；具备 `pods/portforward` 权限时可创建回环、限时、自动回收的 Pod/Service 临时 HTTP 隧道 |
+| 一键故障诊断 | 对 Pod、Deployment、StatefulSet、DaemonSet、Job、CronJob、Service、Ingress、PVC 和 Node 提供只读、确定性、证据驱动的诊断；按严重程度展示检查项、原因、证据、相关资源与可复制的 `kubectl` 命令，不自动执行修复。事件和有界近期日志受 Kubernetes RBAC 约束，权限不足时会明确降级为“跳过”，不会中断其余检查 |
 | 日志 | 单 Pod 实时日志，以及最多 20 条 Pod/容器流的受控工作负载级聚合；支持容器、上一实例、行数、时间戳、时间范围、来源前缀、关键词过滤和逐流权限 warning |
 | Helm | 从 Helm Secret 查看 Release、values、渲染清单、Notes、warning、revision 历史、任意两个 revision 间的 values/清单 Diff，以及受控回滚和增量 Values 升级；常见敏感键与 Secret 载荷在服务端遮蔽。回滚和升级需要输入 Release 名称确认并具备 `secrets/create`、`secrets/update`，升级会先 Dry Run 全部对象，二者都会跳过 Helm Hook，且不会删除目标清单中不存在的旧对象。 |
 | 权限检查 | 解释当前身份的 SubjectAccessReview 结果，区分 Dosh 只读模式与 RBAC 拒绝，并生成对应的 `kubectl auth can-i` 命令 |

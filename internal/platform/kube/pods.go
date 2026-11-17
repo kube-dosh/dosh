@@ -105,7 +105,8 @@ func (c *Client) GetPod(ctx context.Context, namespace, name string) (domain.Pod
 	}
 	for _, condition := range pod.Status.Conditions {
 		detail.Conditions = append(detail.Conditions, domain.Condition{
-			Type: string(condition.Type), Status: string(condition.Status), LastTransitionTime: condition.LastTransitionTime.Time,
+			Type: string(condition.Type), Status: string(condition.Status), Reason: condition.Reason,
+			Message: condition.Message, LastTransitionTime: condition.LastTransitionTime.Time,
 		})
 	}
 	detail.Containers = append(detail.Containers, podContainerDetails(pod.Spec.InitContainers, pod.Status.InitContainerStatuses, true)...)
@@ -143,11 +144,27 @@ func podEphemeralContainerDetails(containers []corev1.EphemeralContainer, status
 			case status.State.Waiting != nil:
 				item.State = "Waiting"
 				item.Reason = status.State.Waiting.Reason
+				item.Message = status.State.Waiting.Message
 			case status.State.Terminated != nil:
 				item.State = "Terminated"
 				item.Reason = status.State.Terminated.Reason
+				item.Message = status.State.Terminated.Message
+				item.ExitCode = status.State.Terminated.ExitCode
 			default:
 				item.State = "Unknown"
+			}
+			switch {
+			case status.LastTerminationState.Terminated != nil:
+				item.LastState = "Terminated"
+				item.LastReason = status.LastTerminationState.Terminated.Reason
+				item.LastMessage = status.LastTerminationState.Terminated.Message
+				item.LastExitCode = status.LastTerminationState.Terminated.ExitCode
+			case status.LastTerminationState.Waiting != nil:
+				item.LastState = "Waiting"
+				item.LastReason = status.LastTerminationState.Waiting.Reason
+				item.LastMessage = status.LastTerminationState.Waiting.Message
+			case status.LastTerminationState.Running != nil:
+				item.LastState = "Running"
 			}
 		}
 		result = append(result, item)
