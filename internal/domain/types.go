@@ -536,9 +536,11 @@ type WorkloadContainerConfigUpdate struct {
 // container image in an application workload. ResourceVersion enables
 // optimistic concurrency when the caller has loaded a previous representation.
 type WorkloadImageUpdate struct {
-	ContainerName   string `json:"containerName"`
-	Image           string `json:"image"`
-	ResourceVersion string `json:"resourceVersion,omitempty"`
+	ContainerName    string   `json:"containerName"`
+	Image            string   `json:"image"`
+	RegistryID       string   `json:"registryId,omitempty"`
+	ImagePullSecrets []string `json:"-"`
+	ResourceVersion  string   `json:"resourceVersion,omitempty"`
 }
 
 // CronJobSuspendUpdate controls whether a CronJob pauses new Job creation.

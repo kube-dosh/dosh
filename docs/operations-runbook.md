@@ -838,6 +838,24 @@ kubectl -n dosh describe pod -l app.kubernetes.io/name=dosh
 
 预期：`dosh-api-server` 的 `VALID` 为 `True`，出口仅包含 `toEntities: [kube-apiserver]`；标准 NetworkPolicy 在 Cilium 模式下不应再包含 `0.0.0.0/0` API 出口。Chart 会在检测到 `cilium.io/v2` 时自动创建 CNP；若自动探测失败，可显式设置 `networkPolicy.ciliumApiServer.enabled=true` 后重新执行 `helm upgrade --wait`。
 
+### 镜像仓仓库或 Tag 列表不可用
+
+症状：镜像仓保存成功，但镜像选择器提示“仓库列表不可用”或“Tag 列表不可用”，连接测试也超时。
+
+镜像仓探测由 Dosh Pod 发起，不经过浏览器。先确认 `/etc` 中的 Registry 地址使用 `https://`，并为自签证书配置 CA 或显式 `insecureSkipTlsVerify`。随后检查
+NetworkPolicy/CNP 是否允许 Pod 访问 Registry 的 CIDR 与端口：
+
+```yaml
+networkPolicy:
+  containerRegistries:
+    ipBlocks:
+      - 192.168.122.10/32
+    ports:
+      - 5000
+```
+
+执行 `helm upgrade --reuse-values ... --set 'networkPolicy.containerRegistries.ipBlocks[0]=192.168.122.10/32' --set 'networkPolicy.containerRegistries.ports[0]=5000'` 后，确认标准 NetworkPolicy 和 CiliumNetworkPolicy 都包含该 CIDR。未配置 CIDR 时 Chart 故意不放行镜像仓出口，避免默认开放任意第三方地址。
+
 ## 9. 安全事件响应
 
 1. 立即轮换 `dosh-auth` 中的 Session Key，使全部会话失效。

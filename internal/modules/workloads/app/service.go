@@ -47,6 +47,7 @@ type Service struct {
 	repository    Repository
 	authorizer    domain.Authorizer
 	auditor       domain.Auditor
+	registry      ImageRegistryResolver
 	terminal      domain.TerminalLimits
 	terminalMu    sync.Mutex
 	active        map[string]int
@@ -66,6 +67,43 @@ func New(repository Repository, authorizer domain.Authorizer, auditor domain.Aud
 		terminal: terminal, active: make(map[string]int),
 		forward: domain.DefaultPortForwardLimits(), forwards: make(map[string]*portForwardRecord), forwardCounts: make(map[string]int),
 	}
+}
+
+// ImageRegistryResolver validates that an image belongs to a configured
+// registry and returns the optional Pod-level imagePullSecrets name.
+type ImageRegistryResolver interface {
+	ResolvePullSecret(ctx context.Context, actor domain.Actor, registryID, image string) (string, error)
+}
+
+// SetImageRegistryResolver wires the registry module during composition. It is
+// optional so focused tests and installations without registries still work.
+func (s *Service) SetImageRegistryResolver(resolver ImageRegistryResolver) {
+	s.registry = resolver
+}
+
+func (s *Service) applyImagePullSecret(ctx context.Context, actor domain.Actor, registryID, image string, secrets *[]string) error {
+	registryID = strings.TrimSpace(registryID)
+	if registryID == "" {
+		return nil
+	}
+	if s.registry == nil {
+		return fmt.Errorf("%w: container registry module is unavailable", domain.ErrUnsupported)
+	}
+	secret, err := s.registry.ResolvePullSecret(ctx, actor, registryID, image)
+	if err != nil {
+		return err
+	}
+	secret = strings.TrimSpace(secret)
+	if secret == "" {
+		return nil
+	}
+	for _, existing := range *secrets {
+		if existing == secret {
+			return nil
+		}
+	}
+	*secrets = append(*secrets, secret)
+	return nil
 }
 
 // SetPortForwardLimits applies startup configuration to the in-memory tunnel

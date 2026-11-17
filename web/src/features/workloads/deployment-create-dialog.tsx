@@ -11,6 +11,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { ImageReferencePicker } from "@/features/registries/image-reference-picker";
 import { cn } from "@/lib/utils";
 
 const DNS_LABEL = /^[a-z0-9]([-a-z0-9]*[a-z0-9])?$/;
@@ -21,6 +22,7 @@ type FormState = {
   name: string;
   replicas: string;
   image: string;
+  registryId: string;
   containerName: string;
   containerPort: string;
   cpuRequest: string;
@@ -38,6 +40,7 @@ const initialForm = (namespace: string): FormState => ({
   name: "",
   replicas: "1",
   image: "nginx:alpine",
+  registryId: "",
   containerName: "",
   containerPort: "80",
   cpuRequest: "0.1",
@@ -199,7 +202,14 @@ export function DeploymentCreateDialog({ open, onOpenChange, initialNamespace }:
         {step === 1 ? (
           <div className="grid gap-4 sm:grid-cols-2">
             <Field label="容器镜像" htmlFor="deployment-image" error={errors.image} className="sm:col-span-2">
-              <Input id="deployment-image" value={form.image} onChange={(event) => update("image", event.target.value)} placeholder="registry.example.com/team/app:1.0.0" className="font-mono" />
+              <ImageReferencePicker
+                id="deployment-image"
+                value={form.image}
+                registryId={form.registryId || undefined}
+                onChange={(image, registryId) => setForm((current) => ({ ...current, image, registryId: registryId ?? "" }))}
+                hideLabel
+                hint="支持从已配置镜像仓搜索仓库和 Tag；直接输入时仍按完整镜像地址提交。"
+              />
             </Field>
             <Field label="容器名称（可选）" htmlFor="deployment-container-name" error={errors.containerName}>
               <Input id="deployment-container-name" value={form.containerName} onChange={(event) => update("containerName", event.target.value)} placeholder="默认使用 Deployment 名称" />
@@ -324,6 +334,7 @@ function buildInput(form: FormState, errors: FormErrors): DeploymentCreateInput 
     replicas,
     containerName: form.containerName || undefined,
     image: form.image.trim(),
+    registryId: form.registryId || undefined,
     containerPort: port,
     cpuRequestMilli: cpuRequest,
     cpuLimitMilli: cpuLimit,

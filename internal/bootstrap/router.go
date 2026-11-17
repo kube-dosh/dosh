@@ -16,6 +16,7 @@ import (
 	nodeshttp "dosh/internal/modules/nodes/http"
 	overviewhttp "dosh/internal/modules/overview/http"
 	preferenceshttp "dosh/internal/modules/preferences/http"
+	registrieshttp "dosh/internal/modules/registries/http"
 	releaseshttp "dosh/internal/modules/releases/http"
 	resourceshttp "dosh/internal/modules/resources/http"
 	storagehttp "dosh/internal/modules/storage/http"
@@ -36,6 +37,7 @@ type routerDependencies struct {
 	auth          *authhttp.Handler
 	overview      *overviewhttp.Handler
 	preferences   *preferenceshttp.Handler
+	registries    *registrieshttp.Handler
 	resources     *resourceshttp.Handler
 	clusterConfig *clusterconfighttp.Handler
 	nodes         *nodeshttp.Handler
@@ -84,6 +86,7 @@ func buildRouter(deps routerDependencies) (stdhttp.Handler, error) {
 			authhttp.MountProtected(r, deps.auth)
 			deps.overview.Mount(r)
 			deps.preferences.Mount(r)
+			deps.registries.Mount(r)
 			deps.resources.Mount(r)
 			deps.clusterConfig.Mount(r)
 			deps.nodes.Mount(r)

@@ -35,6 +35,10 @@ func (s *Service) UpdateImage(ctx context.Context, actor domain.Actor, kind, nam
 		s.audit(ctx, actor, "update-image", kind, namespace, name, err)
 		return err
 	}
+	if err := s.applyImagePullSecret(ctx, actor, update.RegistryID, update.Image, &update.ImagePullSecrets); err != nil {
+		s.audit(ctx, actor, "update-image", kind, namespace, name, err)
+		return err
+	}
 	err := s.repository.UpdateWorkloadImage(ctx, kind, namespace, name, update)
 	s.audit(ctx, actor, "update-image", kind, namespace, name, err)
 	return err
@@ -52,6 +56,7 @@ func isApplicationWorkload(kind string) bool {
 func validateImageUpdate(namespace, name string, update *domain.WorkloadImageUpdate) error {
 	update.ContainerName = strings.TrimSpace(update.ContainerName)
 	update.Image = strings.TrimSpace(update.Image)
+	update.RegistryID = strings.TrimSpace(update.RegistryID)
 	update.ResourceVersion = strings.TrimSpace(update.ResourceVersion)
 	if err := validateWorkloadIdentity(namespace, name); err != nil {
 		return err

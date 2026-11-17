@@ -8,6 +8,10 @@ import type {
   ConfigMapCreateInput,
   ConfigMapSummary,
   ConfigMapUpdateInput,
+  ContainerRegistry,
+  ContainerRegistryRepository,
+  ContainerRegistryTag,
+  ContainerRegistryUpsertInput,
   CronJobSuspendInput,
   DeploymentCreateInput,
   DeploymentPreview,
@@ -21,6 +25,7 @@ import type {
   IngressClassSummary,
   IngressSummary,
   IngressUpdateInput,
+  ImageReferenceResolution,
   HelmReleaseDetail,
   HelmReleaseDiff,
   HelmReleaseRollbackInput,
@@ -84,6 +89,7 @@ import type {
 export class ApiError extends Error {
   status: number;
   code: string;
+  detail: string;
   requestId?: string;
   fieldErrors?: Record<string, string>;
 
@@ -92,6 +98,7 @@ export class ApiError extends Error {
     this.name = "ApiError";
     this.status = status;
     this.code = problem.code || "request_failed";
+    this.detail = problem.message || "";
     this.requestId = problem.requestId;
     this.fieldErrors = problem.fieldErrors;
   }
@@ -573,6 +580,26 @@ export const api = {
   },
   savePreferences: (preferences: UserPreferences) =>
     request<UserPreferences>("/api/v1/preferences", { method: "PUT", body: JSON.stringify(preferences) }),
+  containerRegistries: async () => {
+    const value = await request<{ items?: ContainerRegistry[] }>("/api/v1/container-registries");
+    return list(value.items);
+  },
+  createContainerRegistry: (input: ContainerRegistryUpsertInput) =>
+    request<ContainerRegistry>("/api/v1/container-registries", { method: "POST", body: JSON.stringify(input) }),
+  updateContainerRegistry: (id: string, input: ContainerRegistryUpsertInput) =>
+    request<ContainerRegistry>(`/api/v1/container-registries/${encodeURIComponent(id)}`, { method: "PUT", body: JSON.stringify(input) }),
+  deleteContainerRegistry: (id: string, revision?: string) =>
+    request<{ status: string }>(`/api/v1/container-registries/${encodeURIComponent(id)}${revision ? `?revision=${encodeURIComponent(revision)}` : ""}`, { method: "DELETE" }),
+  testContainerRegistry: (id: string) =>
+    request<ContainerRegistry>(`/api/v1/container-registries/${encodeURIComponent(id)}/test`, { method: "POST" }),
+  containerRegistryRepositories: (id: string, params?: ListParams) =>
+    listRequest<ContainerRegistryRepository>(`/api/v1/container-registries/${encodeURIComponent(id)}/repositories${query(params)}`),
+  containerRegistryTags: (id: string, repository: string, params?: ListParams) => {
+    const existing = query(params);
+    return listRequest<ContainerRegistryTag>(`/api/v1/container-registries/${encodeURIComponent(id)}/tags${existing}${existing ? "&" : "?"}repository=${encodeURIComponent(repository)}`);
+  },
+  resolveContainerRegistryImage: (image: string) =>
+    request<ImageReferenceResolution>(`/api/v1/container-registries/resolve?image=${encodeURIComponent(image)}`),
   genericResourceCapabilities: (reference: ResourceReference, namespace?: string) =>
     request<ResourceCapabilities>(`/api/v1/resources/capabilities?${new URLSearchParams({
       group: reference.group, version: reference.version, resource: reference.resource, ...(namespace ? { namespace } : {}),

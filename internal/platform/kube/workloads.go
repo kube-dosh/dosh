@@ -492,7 +492,7 @@ func (c *Client) UpdateWorkloadImage(ctx context.Context, kind, namespace, name 
 		if err != nil {
 			return mapKubeError(err)
 		}
-		changed, err := applyContainerImage(item.Spec.Template.Spec.Containers, item.ResourceVersion, update)
+		changed, err := applyContainerImage(&item.Spec.Template.Spec, item.ResourceVersion, update)
 		if err != nil || !changed {
 			return err
 		}
@@ -503,7 +503,7 @@ func (c *Client) UpdateWorkloadImage(ctx context.Context, kind, namespace, name 
 		if err != nil {
 			return mapKubeError(err)
 		}
-		changed, err := applyContainerImage(item.Spec.Template.Spec.Containers, item.ResourceVersion, update)
+		changed, err := applyContainerImage(&item.Spec.Template.Spec, item.ResourceVersion, update)
 		if err != nil || !changed {
 			return err
 		}
@@ -514,7 +514,7 @@ func (c *Client) UpdateWorkloadImage(ctx context.Context, kind, namespace, name 
 		if err != nil {
 			return mapKubeError(err)
 		}
-		changed, err := applyContainerImage(item.Spec.Template.Spec.Containers, item.ResourceVersion, update)
+		changed, err := applyContainerImage(&item.Spec.Template.Spec, item.ResourceVersion, update)
 		if err != nil || !changed {
 			return err
 		}
@@ -525,10 +525,10 @@ func (c *Client) UpdateWorkloadImage(ctx context.Context, kind, namespace, name 
 	}
 }
 
-func applyContainerImage(containers []corev1.Container, resourceVersion string, update domain.WorkloadImageUpdate) (bool, error) {
+func applyContainerImage(spec *corev1.PodSpec, resourceVersion string, update domain.WorkloadImageUpdate) (bool, error) {
 	index := -1
-	for i := range containers {
-		if containers[i].Name == update.ContainerName {
+	for i := range spec.Containers {
+		if spec.Containers[i].Name == update.ContainerName {
 			index = i
 			break
 		}
@@ -536,18 +536,40 @@ func applyContainerImage(containers []corev1.Container, resourceVersion string, 
 	if index < 0 {
 		return false, fmt.Errorf("%w: container %q not found", domain.ErrInvalid, update.ContainerName)
 	}
-	current := containers[index].Image
+	current := spec.Containers[index].Image
+	secretsChanged := mergeImagePullSecrets(spec, update.ImagePullSecrets)
 	if update.ResourceVersion != "" && resourceVersion != update.ResourceVersion {
 		if current == update.Image {
-			return false, nil
+			return secretsChanged, nil
 		}
 		return false, fmt.Errorf("%w: expected %s, got %s", domain.ErrConflict, update.ResourceVersion, resourceVersion)
 	}
 	if current == update.Image {
-		return false, nil
+		return secretsChanged, nil
 	}
-	containers[index].Image = update.Image
+	spec.Containers[index].Image = update.Image
 	return true, nil
+}
+
+func mergeImagePullSecrets(spec *corev1.PodSpec, names []string) bool {
+	changed := false
+	seen := make(map[string]struct{}, len(spec.ImagePullSecrets)+len(names))
+	for _, secret := range spec.ImagePullSecrets {
+		seen[secret.Name] = struct{}{}
+	}
+	for _, name := range names {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			continue
+		}
+		if _, exists := seen[name]; exists {
+			continue
+		}
+		seen[name] = struct{}{}
+		spec.ImagePullSecrets = append(spec.ImagePullSecrets, corev1.LocalObjectReference{Name: name})
+		changed = true
+	}
+	return changed
 }
 
 // SetCronJobSuspend applies a read-modify-write to the CronJob suspend flag.

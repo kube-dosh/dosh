@@ -24,6 +24,7 @@ tags:
   - name: yaml
   - name: resources
   - name: preferences
+  - name: registries
 security:
   - cookieAuth: []
 paths:
@@ -114,6 +115,167 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Capabilities" }
         "401": { $ref: "#/components/responses/Unauthorized" }
+  /api/v1/container-registries:
+    get:
+      tags: [registries]
+      summary: List configured container registries
+      responses:
+        "200":
+          description: Container registry metadata without credentials
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ContainerRegistryList" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
+    post:
+      tags: [registries]
+      summary: Add a container registry
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ContainerRegistryUpsert" }
+      responses:
+        "201":
+          description: Container registry created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ContainerRegistry" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "501": { $ref: "#/components/responses/NotSupported" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
+  /api/v1/container-registries/resolve:
+    get:
+      tags: [registries]
+      summary: Resolve an image reference to a configured registry
+      parameters:
+        - { name: image, in: query, required: true, schema: { type: string, minLength: 1, maxLength: 512 } }
+      responses:
+        "200":
+          description: Image resolution, including whether the registry is configured
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ImageReferenceResolution" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/container-registries/{id}:
+    put:
+      tags: [registries]
+      summary: Update a container registry
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, maxLength: 128 } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ContainerRegistryUpsert" }
+      responses:
+        "200":
+          description: Container registry updated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ContainerRegistry" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
+    delete:
+      tags: [registries]
+      summary: Delete a container registry
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, maxLength: 128 } }
+        - { name: revision, in: query, schema: { type: string, maxLength: 256 } }
+      responses:
+        "200":
+          description: Container registry deleted
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OperationStatus" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
+  /api/v1/container-registries/{id}/test:
+    post:
+      tags: [registries]
+      summary: Test registry connectivity and record capabilities
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, maxLength: 128 } }
+      responses:
+        "200":
+          description: Registry with the recorded test result
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ContainerRegistry" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
+  /api/v1/container-registries/{id}/repositories:
+    get:
+      tags: [registries]
+      summary: Search repositories exposed by a registry catalog
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, maxLength: 128 } }
+        - { $ref: "#/components/parameters/Search" }
+        - { $ref: "#/components/parameters/Page" }
+        - { $ref: "#/components/parameters/PageSize" }
+        - { $ref: "#/components/parameters/Cursor" }
+      responses:
+        "200":
+          description: Matching repositories
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ContainerRegistryRepositoryList" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "501": { $ref: "#/components/responses/NotSupported" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
+  /api/v1/container-registries/{id}/tags:
+    get:
+      tags: [registries]
+      summary: Search tags for one registry repository
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, maxLength: 128 } }
+        - { name: repository, in: query, required: true, schema: { type: string, minLength: 1, maxLength: 512 } }
+        - { $ref: "#/components/parameters/Search" }
+        - { $ref: "#/components/parameters/Page" }
+        - { $ref: "#/components/parameters/PageSize" }
+        - { $ref: "#/components/parameters/Cursor" }
+      responses:
+        "200":
+          description: Matching tags
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ContainerRegistryTagList" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
   /api/v1/capabilities/review:
     get:
       tags: [auth]
@@ -648,6 +810,7 @@ paths:
               properties:
                 containerName: { type: string, minLength: 1, maxLength: 63 }
                 image: { type: string, minLength: 1, maxLength: 512 }
+                registryId: { type: string, maxLength: 128 }
                 resourceVersion: { type: string, maxLength: 256 }
       responses:
         "200":
@@ -3118,6 +3281,7 @@ components:
         replicas: { type: integer, minimum: 0, maximum: 1000 }
         containerName: { type: string, maxLength: 63 }
         image: { type: string, minLength: 1, maxLength: 512 }
+        registryId: { type: string, maxLength: 128 }
         containerPort: { type: integer, minimum: 1, maximum: 65535 }
         cpuRequestMilli: { type: integer, minimum: 0, maximum: 128000 }
         cpuLimitMilli: { type: integer, minimum: 0, maximum: 128000 }
@@ -3967,6 +4131,109 @@ components:
           type: array
           items: { type: string }
         createdAt: { type: integer, format: int64 }
+    ContainerRegistryCapabilities:
+      type: object
+      required: [catalog, tags]
+      properties:
+        catalog: { type: boolean }
+        tags: { type: boolean }
+    ContainerRegistryTest:
+      type: object
+      required: [ok, testedAt, capabilities]
+      properties:
+        ok: { type: boolean }
+        message: { type: string }
+        testedAt: { type: string, format: date-time }
+        capabilities: { $ref: "#/components/schemas/ContainerRegistryCapabilities" }
+    ContainerRegistryCredentials:
+      type: object
+      description: Write-only credentials. The API never returns these values.
+      properties:
+        username: { type: string, maxLength: 16384 }
+        password: { type: string, format: password, maxLength: 16384 }
+        token: { type: string, format: password, maxLength: 16384 }
+        caPem: { type: string, maxLength: 65536 }
+    ContainerRegistryUpsert:
+      type: object
+      required: [name, endpoint, authType]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 128 }
+        endpoint: { type: string, minLength: 1, maxLength: 2048 }
+        repositoryPrefix: { type: string, maxLength: 512 }
+        authType: { type: string, enum: [anonymous, basic, bearer] }
+        credentials: { $ref: "#/components/schemas/ContainerRegistryCredentials" }
+        clearCredentials: { type: boolean }
+        insecureSkipTlsVerify: { type: boolean }
+        pullSecretName: { type: string, maxLength: 253 }
+        default: { type: boolean }
+        revision: { type: string, maxLength: 256 }
+    ContainerRegistry:
+      type: object
+      required: [id, name, endpoint, authType, hasCredentials, hasCustomCa, insecureSkipTlsVerify, default, capabilities, createdAt, updatedAt]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        endpoint: { type: string }
+        repositoryPrefix: { type: string }
+        authType: { type: string, enum: [anonymous, basic, bearer] }
+        hasCredentials: { type: boolean }
+        hasCustomCa: { type: boolean }
+        insecureSkipTlsVerify: { type: boolean }
+        pullSecretName: { type: string }
+        default: { type: boolean }
+        capabilities: { $ref: "#/components/schemas/ContainerRegistryCapabilities" }
+        lastTest: { $ref: "#/components/schemas/ContainerRegistryTest" }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+        revision: { type: string }
+    ContainerRegistryList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/ContainerRegistry" }
+    ContainerRegistryRepository:
+      type: object
+      required: [name, image]
+      properties:
+        name: { type: string }
+        image: { type: string }
+    ContainerRegistryRepositoryList:
+      type: object
+      required: [items, meta]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/ContainerRegistryRepository" }
+        meta: { $ref: "#/components/schemas/ListMeta" }
+    ContainerRegistryTag:
+      type: object
+      required: [name, image]
+      properties:
+        name: { type: string }
+        image: { type: string }
+    ContainerRegistryTagList:
+      type: object
+      required: [items, meta]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/ContainerRegistryTag" }
+        meta: { $ref: "#/components/schemas/ListMeta" }
+    ImageReferenceResolution:
+      type: object
+      required: [image, explicitRegistry, matched]
+      properties:
+        image: { type: string }
+        explicitRegistry: { type: boolean }
+        registryId: { type: string }
+        registryName: { type: string }
+        registryEndpoint: { type: string }
+        repository: { type: string }
+        tag: { type: string }
+        digest: { type: string }
+        matched: { type: boolean }
     UserPreferences:
       type: object
       properties:

@@ -2,6 +2,7 @@
 {{- if $networkPolicy.enabled }}
 {{- $dns := $networkPolicy.dns | default dict }}
 {{- $apiServer := $networkPolicy.apiServer | default dict }}
+{{- $containerRegistries := $networkPolicy.containerRegistries | default dict }}
 {{- $cilium := $networkPolicy.ciliumApiServer | default dict }}
 {{- $ciliumApiServer := or $cilium.enabled (and $cilium.autoDetect ($.Capabilities.APIVersions.Has "cilium.io/v2")) }}
 {{- $webhook := $networkPolicy.webhook | default dict }}
@@ -64,6 +65,18 @@ spec:
         {{- end }}
       ports:
         {{- range ($webhook.ports | default (list 443)) }}
+        - protocol: TCP
+          port: {{ . }}
+        {{- end }}
+    {{- end }}
+    {{- if $containerRegistries.ipBlocks }}
+    - to:
+        {{- range $containerRegistries.ipBlocks }}
+        - ipBlock:
+            cidr: {{ . }}
+        {{- end }}
+      ports:
+        {{- range ($containerRegistries.ports | default (list 443 5000)) }}
         - protocol: TCP
           port: {{ . }}
         {{- end }}

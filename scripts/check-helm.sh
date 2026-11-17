@@ -63,6 +63,15 @@ helm template dosh "$CHART" -n dosh \
   --set audit.webhook.ca.existingConfigMap=dosh-audit-ca \
   --set networkPolicy.webhook.ipBlocks[0]=203.0.113.30/32 \
   >"$OUT/dosh-audit-cilium.yaml"
+helm template dosh "$CHART" -n dosh \
+  --set networkPolicy.containerRegistries.ipBlocks[0]=203.0.113.40/32 \
+  --set networkPolicy.containerRegistries.ports[0]=5000 \
+  >"$OUT/dosh-registries.yaml"
+helm template dosh "$CHART" -n dosh \
+  --api-versions cilium.io/v2 \
+  --set networkPolicy.containerRegistries.ipBlocks[0]=203.0.113.40/32 \
+  --set networkPolicy.containerRegistries.ports[0]=5000 \
+  >"$OUT/dosh-registries-cilium.yaml"
 
 require() {
   local file="$1"
@@ -195,6 +204,13 @@ require "$OUT/dosh-audit-cilium.yaml" 'kind: CiliumNetworkPolicy' 'audit Cilium 
 require "$OUT/dosh-audit-cilium.yaml" 'cidr: 203.0.113.30/32' 'audit Cilium webhook egress CIDR'
 require "$OUT/dosh-audit-cilium.yaml" 'port: "443"' 'audit Cilium webhook egress port'
 reject "$OUT/dosh-audit-cilium.yaml" '0.0.0.0/0' 'audit Cilium broad egress'
+
+require "$OUT/dosh-registries.yaml" 'cidr: 203.0.113.40/32' 'container registry egress CIDR'
+require "$OUT/dosh-registries.yaml" 'port: 5000' 'container registry egress port'
+require "$OUT/dosh-registries-cilium.yaml" 'kind: CiliumNetworkPolicy' 'container registry Cilium policy'
+require "$OUT/dosh-registries-cilium.yaml" '203.0.113.40/32' 'container registry Cilium egress CIDR'
+require "$OUT/dosh-registries-cilium.yaml" 'port: "5000"' 'container registry Cilium egress port'
+reject "$OUT/dosh-registries-cilium.yaml" '0.0.0.0/0' 'container registry Cilium broad egress'
 
 expect_failure() {
   local description="$1"

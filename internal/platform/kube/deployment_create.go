@@ -2,6 +2,7 @@ package kube
 
 import (
 	"context"
+	"strings"
 
 	"dosh/internal/domain"
 
@@ -56,7 +57,7 @@ func deploymentForCreate(spec domain.DeploymentCreateSpec) *appsv1.Deployment {
 			Selector: &metav1.LabelSelector{MatchLabels: selector},
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{Labels: labels},
-				Spec: corev1.PodSpec{Containers: []corev1.Container{{
+				Spec: corev1.PodSpec{ImagePullSecrets: deploymentImagePullSecrets(spec.ImagePullSecrets), Containers: []corev1.Container{{
 					Name: spec.ContainerName, Image: spec.Image,
 					Ports:     []corev1.ContainerPort{{Name: "http", ContainerPort: spec.ContainerPort, Protocol: corev1.ProtocolTCP}},
 					Env:       deploymentEnv(spec.Env),
@@ -65,6 +66,26 @@ func deploymentForCreate(spec domain.DeploymentCreateSpec) *appsv1.Deployment {
 			},
 		},
 	}
+}
+
+func deploymentImagePullSecrets(names []string) []corev1.LocalObjectReference {
+	if len(names) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(names))
+	result := make([]corev1.LocalObjectReference, 0, len(names))
+	for _, name := range names {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			continue
+		}
+		if _, exists := seen[name]; exists {
+			continue
+		}
+		seen[name] = struct{}{}
+		result = append(result, corev1.LocalObjectReference{Name: name})
+	}
+	return result
 }
 
 func mergedDeploymentLabels(name string, custom map[string]string) map[string]string {

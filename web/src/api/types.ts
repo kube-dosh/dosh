@@ -462,6 +462,7 @@ export interface WorkloadContainerConfigUpdateInput {
 export interface WorkloadImageUpdateInput {
   containerName: string;
   image: string;
+  registryId?: string;
   resourceVersion?: string;
 }
 
@@ -485,6 +486,7 @@ export interface DeploymentCreateInput {
   replicas: number;
   containerName?: string;
   image: string;
+  registryId?: string;
   containerPort: number;
   cpuRequestMilli?: number;
   cpuLimitMilli?: number;
@@ -496,6 +498,78 @@ export interface DeploymentCreateInput {
 
 export interface DeploymentPreview {
   yaml: string;
+}
+
+export interface ContainerRegistryCapabilities {
+  catalog: boolean;
+  tags: boolean;
+}
+
+export interface ContainerRegistryTest {
+  ok: boolean;
+  message?: string;
+  testedAt: string;
+  capabilities: ContainerRegistryCapabilities;
+}
+
+export interface ContainerRegistry {
+  id: string;
+  name: string;
+  endpoint: string;
+  repositoryPrefix?: string;
+  authType: "anonymous" | "basic" | "bearer";
+  hasCredentials: boolean;
+  hasCustomCa: boolean;
+  insecureSkipTlsVerify: boolean;
+  pullSecretName?: string;
+  default: boolean;
+  capabilities: ContainerRegistryCapabilities;
+  lastTest?: ContainerRegistryTest;
+  createdAt: string;
+  updatedAt: string;
+  revision?: string;
+}
+
+export interface ContainerRegistryCredentialsInput {
+  username?: string;
+  password?: string;
+  token?: string;
+  caPem?: string;
+}
+
+export interface ContainerRegistryUpsertInput {
+  name: string;
+  endpoint: string;
+  repositoryPrefix?: string;
+  authType: "anonymous" | "basic" | "bearer";
+  credentials?: ContainerRegistryCredentialsInput;
+  clearCredentials?: boolean;
+  insecureSkipTlsVerify?: boolean;
+  pullSecretName?: string;
+  default?: boolean;
+  revision?: string;
+}
+
+export interface ContainerRegistryRepository {
+  name: string;
+  image: string;
+}
+
+export interface ContainerRegistryTag {
+  name: string;
+  image: string;
+}
+
+export interface ImageReferenceResolution {
+  image: string;
+  explicitRegistry: boolean;
+  registryId?: string;
+  registryName?: string;
+  registryEndpoint?: string;
+  repository?: string;
+  tag?: string;
+  digest?: string;
+  matched: boolean;
 }
 
 export interface ContainerInfo {

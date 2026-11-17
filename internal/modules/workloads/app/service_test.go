@@ -234,6 +234,21 @@ type fakeGuard struct {
 	access *domain.Access
 }
 
+type fakeImageRegistryResolver struct {
+	secret     string
+	err        error
+	registryID string
+	image      string
+	calls      int
+}
+
+func (r *fakeImageRegistryResolver) ResolvePullSecret(_ context.Context, _ domain.Actor, registryID, image string) (string, error) {
+	r.calls++
+	r.registryID = registryID
+	r.image = image
+	return r.secret, r.err
+}
+
 type selectiveGuard struct {
 	deniedPods map[string]bool
 }
@@ -769,6 +784,27 @@ func TestCreateDeploymentDryRunsBeforeWritingAndAudits(t *testing.T) {
 	}
 	if auditor.events != 1 || auditor.results[0] != "success" {
 		t.Fatalf("audit = events %d results %#v", auditor.events, auditor.results)
+	}
+}
+
+func TestWorkloadImageUpdatesMergeRegistryPullSecret(t *testing.T) {
+	t.Parallel()
+	repo := &fakeRepository{}
+	resolver := &fakeImageRegistryResolver{secret: "registry-pull"}
+	service := New(repo, fakeGuard{allow: true}, &fakeAuditor{})
+	service.SetImageRegistryResolver(resolver)
+	update := domain.WorkloadImageUpdate{
+		ContainerName: "api", Image: "registry.example.com/platform/api:2", ResourceVersion: "42",
+		RegistryID: "reg-primary", ImagePullSecrets: []string{"existing-pull"},
+	}
+	if err := service.UpdateImage(context.Background(), domain.Actor{Username: "admin"}, "deployment", "prod", "api", update); err != nil {
+		t.Fatalf("UpdateImage() error = %v", err)
+	}
+	if resolver.calls != 1 || resolver.registryID != "reg-primary" || resolver.image != update.Image {
+		t.Fatalf("resolver call = %#v", resolver)
+	}
+	if len(repo.lastImage.ImagePullSecrets) != 2 || repo.lastImage.ImagePullSecrets[0] != "existing-pull" || repo.lastImage.ImagePullSecrets[1] != "registry-pull" {
+		t.Fatalf("image pull secrets = %#v", repo.lastImage.ImagePullSecrets)
 	}
 }
 

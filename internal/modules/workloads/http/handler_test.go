@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -675,7 +676,7 @@ func TestUpdateImageRequiresSessionCSRFAndValidPayload(t *testing.T) {
 	if response.Code != http.StatusOK || server.repo.imageCalls != 1 {
 		t.Fatalf("image status = %d calls = %d body = %s", response.Code, server.repo.imageCalls, response.Body.String())
 	}
-	if server.repo.lastImage != (domain.WorkloadImageUpdate{ContainerName: "api", Image: "registry.test/api:2", ResourceVersion: "42"}) {
+	if !reflect.DeepEqual(server.repo.lastImage, domain.WorkloadImageUpdate{ContainerName: "api", Image: "registry.test/api:2", ResourceVersion: "42"}) {
 		t.Fatalf("image update = %#v", server.repo.lastImage)
 	}
 	server.repo.imageErr = domain.ErrConflict

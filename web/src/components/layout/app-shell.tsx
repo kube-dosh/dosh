@@ -35,6 +35,7 @@ const nav: Array<{ href: string; label: string; icon: LucideIcon; adminOnly?: bo
 ];
 
 const secondaryNav: Array<{ href: string; label: string; icon: LucideIcon; match: (path: string) => boolean }> = [
+  { href: "/registries", label: "镜像仓库", icon: Boxes, match: (path: string) => path.startsWith("/registries") },
   { href: "/governance", label: "治理与策略", icon: ShieldCheck, match: (path: string) => path.startsWith("/governance") },
   { href: "/access", label: "权限检查", icon: KeyRound, match: (path: string) => path.startsWith("/access") },
 ];

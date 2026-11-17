@@ -38,6 +38,10 @@ func (s *Service) CreateDeployment(ctx context.Context, actor domain.Actor, spec
 		s.audit(ctx, actor, "create", "deployment", spec.Namespace, spec.Name, err)
 		return domain.WorkloadSummary{}, err
 	}
+	if err := s.applyImagePullSecret(ctx, actor, spec.RegistryID, spec.Image, &spec.ImagePullSecrets); err != nil {
+		s.audit(ctx, actor, "create", "deployment", spec.Namespace, spec.Name, err)
+		return domain.WorkloadSummary{}, err
+	}
 	if _, err := s.repository.CreateDeployment(ctx, spec, true); err != nil {
 		s.audit(ctx, actor, "create", "deployment", spec.Namespace, spec.Name, err)
 		return domain.WorkloadSummary{}, err
@@ -58,6 +62,9 @@ func (s *Service) PreviewDeployment(ctx context.Context, actor domain.Actor, spe
 	if err := ValidateDeploymentSpec(&spec); err != nil {
 		return "", err
 	}
+	if err := s.applyImagePullSecret(ctx, actor, spec.RegistryID, spec.Image, &spec.ImagePullSecrets); err != nil {
+		return "", err
+	}
 	return s.repository.PreviewDeployment(ctx, spec)
 }
 
@@ -69,6 +76,7 @@ func ValidateDeploymentSpec(spec *domain.DeploymentCreateSpec) error {
 	spec.Namespace = strings.TrimSpace(spec.Namespace)
 	spec.ContainerName = strings.TrimSpace(spec.ContainerName)
 	spec.Image = strings.TrimSpace(spec.Image)
+	spec.RegistryID = strings.TrimSpace(spec.RegistryID)
 	if spec.ContainerName == "" {
 		spec.ContainerName = spec.Name
 	}

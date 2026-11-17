@@ -79,6 +79,7 @@ type scaleRequest struct {
 type imageUpdateRequest struct {
 	ContainerName   string `json:"containerName"`
 	Image           string `json:"image"`
+	RegistryID      string `json:"registryId"`
 	ResourceVersion string `json:"resourceVersion"`
 }
 
@@ -182,6 +183,7 @@ type deploymentCreateRequest struct {
 	Replicas           int32                     `json:"replicas"`
 	ContainerName      string                    `json:"containerName"`
 	Image              string                    `json:"image"`
+	RegistryID         string                    `json:"registryId"`
 	ContainerPort      int32                     `json:"containerPort"`
 	CPURequestMilli    int64                     `json:"cpuRequestMilli"`
 	CPULimitMilli      int64                     `json:"cpuLimitMilli"`
@@ -198,7 +200,7 @@ func (request deploymentCreateRequest) spec() domain.DeploymentCreateSpec {
 	}
 	return domain.DeploymentCreateSpec{
 		Name: request.Name, Namespace: request.Namespace, Replicas: request.Replicas,
-		ContainerName: request.ContainerName, Image: request.Image, ContainerPort: request.ContainerPort,
+		ContainerName: request.ContainerName, Image: request.Image, RegistryID: request.RegistryID, ContainerPort: request.ContainerPort,
 		CPURequestMilli: request.CPURequestMilli, CPULimitMilli: request.CPULimitMilli,
 		MemoryRequestBytes: request.MemoryRequestBytes, MemoryLimitBytes: request.MemoryLimitBytes,
 		Env: env, Labels: request.Labels,
@@ -266,7 +268,7 @@ func (h *Handler) UpdateImage(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	}
 	actor, _ := domain.ActorFromContext(r.Context())
 	err := h.service.UpdateImage(r.Context(), actor, chi.URLParam(r, "kind"), chi.URLParam(r, "namespace"), chi.URLParam(r, "name"), domain.WorkloadImageUpdate{
-		ContainerName: request.ContainerName, Image: request.Image, ResourceVersion: request.ResourceVersion,
+		ContainerName: request.ContainerName, Image: request.Image, RegistryID: request.RegistryID, ResourceVersion: request.ResourceVersion,
 	})
 	if err != nil {
 		httpx.Error(w, r, err)

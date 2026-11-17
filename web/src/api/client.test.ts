@@ -39,6 +39,7 @@ describe("api request errors", () => {
       status: 403,
       code: "forbidden",
       message: "没有执行该操作的权限",
+      detail: "operation is not permitted",
       requestId: "req-403",
     } satisfies Partial<ApiError>);
   });

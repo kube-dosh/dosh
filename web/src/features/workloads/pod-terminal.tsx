@@ -9,10 +9,10 @@ import { api } from "@/api/client";
 import type { ContainerInfo } from "@/api/types";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
+import { ImageReferencePicker } from "@/features/registries/image-reference-picker";
 
 type TerminalFrame = {
   type: "ready" | "output" | "exit" | "error";
@@ -63,6 +63,7 @@ export function PodTerminal({
   const [missingShell, setMissingShell] = useState(false);
   const [debugOpen, setDebugOpen] = useState(false);
   const [debugImage, setDebugImage] = useState("busybox:1.36");
+  const [debugRegistryId, setDebugRegistryId] = useState("");
   const [debugShell, setDebugShell] = useState("sh");
   const [debugTarget, setDebugTarget] = useState("");
   const [pendingDebugContainer, setPendingDebugContainer] = useState("");
@@ -325,11 +326,16 @@ export function PodTerminal({
             </Select>
             <p className="text-xs text-muted-foreground">指定目标容器后可共享其进程命名空间，便于使用 ps、netstat 等工具。</p>
           </div>
-          <div className="space-y-2">
-            <Label htmlFor="debug-image">调试镜像</Label>
-            <Input id="debug-image" value={debugImage} onChange={(event) => setDebugImage(event.target.value)} placeholder="busybox:1.36" autoComplete="off" spellCheck={false} />
-            <p className="text-xs text-muted-foreground">镜像必须包含所选 Shell。生产环境建议使用受信任并固定 digest 的调试镜像。</p>
-          </div>
+          <ImageReferencePicker
+            id="debug-image"
+            value={debugImage}
+            registryId={debugRegistryId || undefined}
+            onChange={(image, registryId) => { setDebugImage(image); setDebugRegistryId(registryId ?? ""); }}
+            label="调试镜像"
+            placeholder="busybox:1.36"
+            hint="镜像必须包含所选 Shell。Ephemeral Container 无法补充 Pod 级 imagePullSecrets，私有镜像请确认 Pod 已有拉取凭证。"
+          />
+          {debugRegistryId ? <p className="rounded-md border border-warning/35 bg-warning/10 px-3 py-2 text-xs text-warning">该镜像来自已配置镜像仓。调试容器不能修改 Pod 级 imagePullSecrets，若镜像需要认证，请在创建 Pod 时预先配置拉取凭证。</p> : null}
           <div className="space-y-2">
             <Label htmlFor="debug-shell">Shell</Label>
             <Select value={debugShell} onValueChange={setDebugShell}>

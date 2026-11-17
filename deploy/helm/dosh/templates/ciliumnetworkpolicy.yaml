@@ -2,6 +2,7 @@
 {{- $cilium := $networkPolicy.ciliumApiServer | default dict }}
 {{- $oidc := $networkPolicy.oidc | default dict }}
 {{- $webhook := $networkPolicy.webhook | default dict }}
+{{- $containerRegistries := $networkPolicy.containerRegistries | default dict }}
 {{- $authMode := include "dosh.authMode" . }}
 {{- $ciliumApiServer := or $cilium.enabled (and $cilium.autoDetect ($.Capabilities.APIVersions.Has "cilium.io/v2")) }}
 {{- if and $.Values.audit.webhook.enabled (not $webhook.ipBlocks) }}
@@ -42,6 +43,18 @@ spec:
       toPorts:
         - ports:
             {{- range ($webhook.ports | default (list 443)) }}
+            - port: {{ . | quote }}
+              protocol: TCP
+            {{- end }}
+    {{- end }}
+    {{- if $containerRegistries.ipBlocks }}
+    - toCIDR:
+        {{- range $containerRegistries.ipBlocks }}
+        - {{ . | quote }}
+        {{- end }}
+      toPorts:
+        - ports:
+            {{- range ($containerRegistries.ports | default (list 443 5000)) }}
             - port: {{ . | quote }}
               protocol: TCP
             {{- end }}

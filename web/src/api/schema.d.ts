@@ -186,6 +186,336 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/container-registries": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List configured container registries */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Container registry metadata without credentials */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ContainerRegistryList"];
+                    };
+                };
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+                503: components["responses"]["DependencyUnavailable"];
+            };
+        };
+        put?: never;
+        /** Add a container registry */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["ContainerRegistryUpsert"];
+                };
+            };
+            responses: {
+                /** @description Container registry created */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ContainerRegistry"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+                409: components["responses"]["Conflict"];
+                501: components["responses"]["NotSupported"];
+                503: components["responses"]["DependencyUnavailable"];
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/container-registries/resolve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Resolve an image reference to a configured registry */
+        get: {
+            parameters: {
+                query: {
+                    image: string;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Image resolution, including whether the registry is configured */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ImageReferenceResolution"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/container-registries/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Update a container registry */
+        put: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["ContainerRegistryUpsert"];
+                };
+            };
+            responses: {
+                /** @description Container registry updated */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ContainerRegistry"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+                404: components["responses"]["NotFound"];
+                409: components["responses"]["Conflict"];
+                503: components["responses"]["DependencyUnavailable"];
+            };
+        };
+        post?: never;
+        /** Delete a container registry */
+        delete: {
+            parameters: {
+                query?: {
+                    revision?: string;
+                };
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Container registry deleted */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["OperationStatus"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+                404: components["responses"]["NotFound"];
+                409: components["responses"]["Conflict"];
+                503: components["responses"]["DependencyUnavailable"];
+            };
+        };
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/container-registries/{id}/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Test registry connectivity and record capabilities */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Registry with the recorded test result */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ContainerRegistry"];
+                    };
+                };
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+                404: components["responses"]["NotFound"];
+                503: components["responses"]["DependencyUnavailable"];
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/container-registries/{id}/repositories": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Search repositories exposed by a registry catalog */
+        get: {
+            parameters: {
+                query?: {
+                    q?: components["parameters"]["Search"];
+                    page?: components["parameters"]["Page"];
+                    pageSize?: components["parameters"]["PageSize"];
+                    /** @description Opaque continuation cursor returned in meta.nextCursor. Use it for the next page; do not construct or modify it. */
+                    cursor?: components["parameters"]["Cursor"];
+                };
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Matching repositories */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ContainerRegistryRepositoryList"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+                404: components["responses"]["NotFound"];
+                501: components["responses"]["NotSupported"];
+                503: components["responses"]["DependencyUnavailable"];
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/container-registries/{id}/tags": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Search tags for one registry repository */
+        get: {
+            parameters: {
+                query: {
+                    repository: string;
+                    q?: components["parameters"]["Search"];
+                    page?: components["parameters"]["Page"];
+                    pageSize?: components["parameters"]["PageSize"];
+                    /** @description Opaque continuation cursor returned in meta.nextCursor. Use it for the next page; do not construct or modify it. */
+                    cursor?: components["parameters"]["Cursor"];
+                };
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Matching tags */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ContainerRegistryTagList"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+                404: components["responses"]["NotFound"];
+                503: components["responses"]["DependencyUnavailable"];
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/capabilities/review": {
         parameters: {
             query?: never;
@@ -1309,6 +1639,7 @@ export interface paths {
                     "application/json": {
                         containerName: string;
                         image: string;
+                        registryId?: string;
                         resourceVersion?: string;
                     };
                 };
@@ -4941,6 +5272,7 @@ export interface components {
             replicas: number;
             containerName?: string;
             image: string;
+            registryId?: string;
             containerPort: number;
             cpuRequestMilli?: number;
             cpuLimitMilli?: number;
@@ -5563,6 +5895,89 @@ export interface components {
             hiddenColumns?: string[];
             /** Format: int64 */
             createdAt: number;
+        };
+        ContainerRegistryCapabilities: {
+            catalog: boolean;
+            tags: boolean;
+        };
+        ContainerRegistryTest: {
+            ok: boolean;
+            message?: string;
+            /** Format: date-time */
+            testedAt: string;
+            capabilities: components["schemas"]["ContainerRegistryCapabilities"];
+        };
+        /** @description Write-only credentials. The API never returns these values. */
+        ContainerRegistryCredentials: {
+            username?: string;
+            /** Format: password */
+            password?: string;
+            /** Format: password */
+            token?: string;
+            caPem?: string;
+        };
+        ContainerRegistryUpsert: {
+            name: string;
+            endpoint: string;
+            repositoryPrefix?: string;
+            /** @enum {string} */
+            authType: "anonymous" | "basic" | "bearer";
+            credentials?: components["schemas"]["ContainerRegistryCredentials"];
+            clearCredentials?: boolean;
+            insecureSkipTlsVerify?: boolean;
+            pullSecretName?: string;
+            default?: boolean;
+            revision?: string;
+        };
+        ContainerRegistry: {
+            id: string;
+            name: string;
+            endpoint: string;
+            repositoryPrefix?: string;
+            /** @enum {string} */
+            authType: "anonymous" | "basic" | "bearer";
+            hasCredentials: boolean;
+            hasCustomCa: boolean;
+            insecureSkipTlsVerify: boolean;
+            pullSecretName?: string;
+            default: boolean;
+            capabilities: components["schemas"]["ContainerRegistryCapabilities"];
+            lastTest?: components["schemas"]["ContainerRegistryTest"];
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: date-time */
+            updatedAt: string;
+            revision?: string;
+        };
+        ContainerRegistryList: {
+            items: components["schemas"]["ContainerRegistry"][];
+        };
+        ContainerRegistryRepository: {
+            name: string;
+            image: string;
+        };
+        ContainerRegistryRepositoryList: {
+            items: components["schemas"]["ContainerRegistryRepository"][];
+            meta: components["schemas"]["ListMeta"];
+        };
+        ContainerRegistryTag: {
+            name: string;
+            image: string;
+        };
+        ContainerRegistryTagList: {
+            items: components["schemas"]["ContainerRegistryTag"][];
+            meta: components["schemas"]["ListMeta"];
+        };
+        ImageReferenceResolution: {
+            image: string;
+            explicitRegistry: boolean;
+            registryId?: string;
+            registryName?: string;
+            registryEndpoint?: string;
+            repository?: string;
+            tag?: string;
+            digest?: string;
+            matched: boolean;
         };
         UserPreferences: {
             favorites?: string[];

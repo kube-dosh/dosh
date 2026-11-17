@@ -30,6 +30,7 @@ import { PodTerminal } from "@/features/workloads/pod-terminal";
 import { WorkloadLogViewer } from "@/features/workloads/workload-log-viewer";
 import { ResourceRelationsPanel } from "@/features/resources/resource-relations-panel";
 import { WorkloadContainerConfigPanel } from "@/features/workloads/workload-container-config-panel";
+import { ImageReferencePicker } from "@/features/registries/image-reference-picker";
 import { WorkloadRevisionHistory } from "@/features/workloads/workload-revision-history";
 import { WorkloadServicesPanel } from "@/features/workloads/workload-services-panel";
 import { formatAge, formatDate } from "@/lib/utils";
@@ -68,6 +69,7 @@ export function WorkloadDetailPage() {
   const [imageOpen, setImageOpen] = useState(false);
   const [imageContainer, setImageContainer] = useState("");
   const [imageValue, setImageValue] = useState("");
+  const [imageRegistryId, setImageRegistryId] = useState("");
   const [imageResourceVersion, setImageResourceVersion] = useState("");
   const [replicas, setReplicas] = useState(1);
   const [confirmName, setConfirmName] = useState("");
@@ -127,6 +129,7 @@ export function WorkloadDetailPage() {
     mutationFn: () => api.updateWorkloadImage(kind, params.namespace, params.name, {
       containerName: imageContainer,
       image: imageValue.trim(),
+      registryId: imageRegistryId || undefined,
       resourceVersion: imageResourceVersion || undefined,
     }),
     onSuccess: async () => {
@@ -182,6 +185,7 @@ export function WorkloadDetailPage() {
     const container = workload.containers[0];
     setImageContainer(container?.name ?? "");
     setImageValue(container?.image ?? "");
+    setImageRegistryId("");
     setImageResourceVersion(workload.resourceVersion ?? "");
     setImageOpen(true);
   };
@@ -293,16 +297,20 @@ export function WorkloadDetailPage() {
                 setImageContainer(value);
                 const container = workload.containers.find((item) => item.name === value);
                 setImageValue(container?.image ?? "");
+                setImageRegistryId("");
               }}>
                 <SelectTrigger id="workload-image-container" aria-label="选择容器"><SelectValue placeholder="选择容器" /></SelectTrigger>
                 <SelectContent>{workload.containers.map((container) => <SelectItem key={container.name} value={container.name}>{container.name}</SelectItem>)}</SelectContent>
               </Select>
             </div>
-            <div className="space-y-2">
-              <Label htmlFor="workload-image">镜像地址</Label>
-              <Input id="workload-image" value={imageValue} onChange={(event) => setImageValue(event.target.value)} placeholder="registry.example.com/app:1.2.3" autoComplete="off" spellCheck={false} />
-              <p className="text-xs text-muted-foreground">使用不可变 digest 或明确版本标签；当前资源版本 {imageResourceVersion || "未锁定"}。</p>
-            </div>
+            <ImageReferencePicker
+              id="workload-image"
+              value={imageValue}
+              registryId={imageRegistryId || undefined}
+              onChange={(image, registryId) => { setImageValue(image); setImageRegistryId(registryId ?? ""); }}
+              label="镜像地址"
+              hint={`使用不可变 digest 或明确版本标签；当前资源版本 ${imageResourceVersion || "未锁定"}。`}
+            />
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setImageOpen(false)} disabled={updateImage.isPending}>取消</Button>

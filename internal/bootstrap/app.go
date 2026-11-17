@@ -32,6 +32,8 @@ import (
 	overviewhttp "dosh/internal/modules/overview/http"
 	preferencesapp "dosh/internal/modules/preferences/app"
 	preferenceshttp "dosh/internal/modules/preferences/http"
+	registriesapp "dosh/internal/modules/registries/app"
+	registrieshttp "dosh/internal/modules/registries/http"
 	releasesapp "dosh/internal/modules/releases/app"
 	releaseshttp "dosh/internal/modules/releases/http"
 	resourcesapp "dosh/internal/modules/resources/app"
@@ -49,6 +51,7 @@ import (
 	"dosh/internal/platform/httpx"
 	"dosh/internal/platform/kube"
 	oidcprovider "dosh/internal/platform/oidc"
+	"dosh/internal/platform/registryclient"
 	"dosh/internal/platform/tlscert"
 	"dosh/internal/version"
 )
@@ -154,6 +157,8 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 	workloadsService.SetPortForwardLimits(domain.PortForwardLimits{
 		MaxDuration: cfg.PortForwardTTL, MaxSessionsPerUser: cfg.PortForwardMaxSessions,
 	})
+	registriesService := registriesapp.New(kubeClient, registryclient.New(cfg.RequestTimeout), authorizer, auditLogger)
+	workloadsService.SetImageRegistryResolver(registriesService)
 	releasesService := releasesapp.New(kubeClient, authorizer, auditLogger)
 	eventsService := eventsapp.New(kubeClient)
 	networkService := networkapp.New(kubeClient, authorizer, auditLogger)
@@ -170,6 +175,7 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 		auth:          authHandler,
 		overview:      overviewhttp.New(overviewService),
 		preferences:   preferenceshttp.New(preferencesService),
+		registries:    registrieshttp.New(registriesService),
 		resources:     resourceshttp.New(resourcesService),
 		clusterConfig: clusterconfighttp.New(clusterConfigService),
 		nodes:         nodeshttp.New(nodesService),

@@ -35,6 +35,8 @@ type Client struct {
 	tokenAudience        string
 	preferencesNamespace string
 
+	registryStoreMu sync.Mutex
+
 	metricsMu        sync.Mutex
 	metricsCheckedAt time.Time
 	metricsAvailable bool
@@ -137,6 +139,8 @@ func NewForClientsWithMetrics(clientset kubernetes.Interface, dynamicClient dyna
 }
 
 func (c *Client) ClusterName() string { return c.clusterName }
+
+func (c *Client) ControlPlaneNamespace() string { return c.preferencesNamespace }
 
 func (c *Client) Version(ctx context.Context) (string, error) {
 	ctx, cancel := c.withTimeout(ctx)

@@ -224,6 +224,7 @@ The main Helm settings live in [`deploy/helm/dosh/values.yaml`](deploy/helm/dosh
 | `runtime.readOnly` | `false` | Disable all write operations |
 | `audit.webhook.enabled` | `false` | Deliver audit events to an HTTPS receiver |
 | `networkPolicy.enabled` | `true` | Create the default network policies |
+| `networkPolicy.containerRegistries.ipBlocks` | `[]` | Explicit registry CIDRs that Dosh may reach for repository and tag discovery; no registry egress is allowed when empty |
 
 After a TLS certificate rotation, Dosh checks the mounted files every 30 seconds by default and reloads them without restarting Pods. See the [`operations runbook`](docs/operations-runbook.md) for certificate, audit, network-policy, and rollback details.
 

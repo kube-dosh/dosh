@@ -36,6 +36,13 @@ networkPolicy:
       - 443
       - 6443
       - 16443
+  containerRegistries:
+    # 镜像仓列表、Tag 和连接测试都从 Dosh Pod 发起。启用 NetworkPolicy 时，
+    # 必须显式填写镜像仓的 CIDR；留空表示不放行任何镜像仓出口。
+    ipBlocks: []
+    ports:
+      - 443
+      - 5000
   webhook:
     ipBlocks: []
     ports:

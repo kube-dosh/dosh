@@ -9,6 +9,8 @@ type DeploymentCreateSpec struct {
 	Replicas           int32              `json:"replicas"`
 	ContainerName      string             `json:"containerName"`
 	Image              string             `json:"image"`
+	RegistryID         string             `json:"registryId,omitempty"`
+	ImagePullSecrets   []string           `json:"-"`
 	ContainerPort      int32              `json:"containerPort"`
 	CPURequestMilli    int64              `json:"cpuRequestMilli"`
 	CPULimitMilli      int64              `json:"cpuLimitMilli"`
