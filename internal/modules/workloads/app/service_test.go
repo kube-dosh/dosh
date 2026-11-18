@@ -49,6 +49,10 @@ type fakeRepository struct {
 	suspendCalls   int
 	suspendErr     error
 	lastSuspend    domain.CronJobSuspendUpdate
+	rolloutCalls   int
+	rolloutErr     error
+	lastRollout    domain.WorkloadRolloutUpdate
+	lastRunInput   domain.CronJobRunInput
 	pods           []domain.PodSummary
 	podsErr        error
 	podDetail      domain.PodDetail
@@ -133,12 +137,20 @@ func (f *fakeRepository) SetCronJobSuspend(_ context.Context, namespace, name st
 	f.lastSuspend = update
 	return f.suspendErr
 }
-func (f *fakeRepository) RunCronJobOnce(_ context.Context, namespace, name string) (domain.WorkloadSummary, error) {
+func (f *fakeRepository) RunCronJobOnce(_ context.Context, namespace, name string, input domain.CronJobRunInput) (domain.WorkloadSummary, error) {
 	f.lastNamespace, f.lastName = namespace, name
+	f.lastRunInput = input
 	if f.runErr != nil {
 		return domain.WorkloadSummary{}, f.runErr
 	}
 	return domain.WorkloadSummary{Kind: "Job", Name: name + "-manual", Namespace: namespace}, nil
+}
+
+func (f *fakeRepository) UpdateWorkloadRollout(_ context.Context, kind, namespace, name string, update domain.WorkloadRolloutUpdate) error {
+	f.rolloutCalls++
+	f.lastKind, f.lastNamespace, f.lastName = kind, namespace, name
+	f.lastRollout = update
+	return f.rolloutErr
 }
 func (f *fakeRepository) ListWorkloadRevisions(_ context.Context, kind, namespace, name string) ([]domain.WorkloadRevision, error) {
 	f.lastKind, f.lastNamespace, f.lastName = kind, namespace, name
@@ -891,7 +903,7 @@ func TestRunCronJobOnceRequiresGetAndJobCreateAndAudits(t *testing.T) {
 	guard := &recordingGuard{}
 	auditor := &fakeAuditor{}
 	service := New(repo, guard, auditor)
-	created, err := service.RunCronJobOnce(context.Background(), domain.Actor{Username: "admin"}, " prod ", " backup ")
+	created, err := service.RunCronJobOnce(context.Background(), domain.Actor{Username: "admin"}, " prod ", " backup ", domain.CronJobRunInput{})
 	if err != nil {
 		t.Fatalf("RunCronJobOnce() error = %v", err)
 	}
@@ -917,11 +929,11 @@ func TestRunCronJobOnceRejectsInvalidNamesAndAuditsFailures(t *testing.T) {
 	repo := &fakeRepository{}
 	ax := &fakeAuditor{}
 	service := New(repo, &recordingGuard{}, ax)
-	if _, err := service.RunCronJobOnce(context.Background(), domain.Actor{Username: "admin"}, "Bad_NS", "backup"); !errors.Is(err, domain.ErrInvalid) {
+	if _, err := service.RunCronJobOnce(context.Background(), domain.Actor{Username: "admin"}, "Bad_NS", "backup", domain.CronJobRunInput{}); !errors.Is(err, domain.ErrInvalid) {
 		t.Fatalf("invalid namespace error = %v", err)
 	}
 	repo.runErr = domain.ErrUnavailable
-	if _, err := service.RunCronJobOnce(context.Background(), domain.Actor{Username: "admin"}, "prod", "backup"); !errors.Is(err, domain.ErrUnavailable) {
+	if _, err := service.RunCronJobOnce(context.Background(), domain.Actor{Username: "admin"}, "prod", "backup", domain.CronJobRunInput{}); !errors.Is(err, domain.ErrUnavailable) {
 		t.Fatalf("repository error = %v", err)
 	}
 	if len(ax.actions) != 2 || ax.actions[0] != "run-cronjob" || ax.results[0] != "failure" || ax.results[1] != "failure" {
@@ -1354,3 +1366,152 @@ func TestRollbackRequiresPermissionAndAudits(t *testing.T) {
 		t.Fatalf("rollback calls=%d revision=%d audit=%#v", repo.rollbackCalls, repo.lastRevision, auditor.results)
 	}
 }
+
+func TestCreateWorkloadSupportsMultiContainerSchedulingAndBatchParameters(t *testing.T) {
+	t.Parallel()
+	repo := &fakeRepository{}
+	service := New(repo, fakeGuard{allow: true}, &fakeAuditor{})
+	runAsUser := int64(1000)
+	runAsNonRoot := true
+	readOnly := true
+	tolerationSeconds := int64(60)
+	completions := int32(3)
+	parallelism := int32(2)
+	backoffLimit := int32(4)
+	deadline := int64(300)
+	ttl := int32(120)
+	spec := domain.WorkloadCreateSpec{
+		Kind: "job", Name: "migrate", Namespace: "prod",
+		Containers: []domain.WorkloadContainerSpec{
+			{Name: "app", Image: "registry.test/app:2", ContainerPort: 8080, Command: []string{"/app"}, Args: []string{"serve"}},
+			{Name: "sidecar", Image: "registry.test/sidecar:1", Env: []domain.DeploymentEnvVar{{Name: "MODE", Value: "proxy"}}},
+		},
+		InitContainers:            []domain.WorkloadContainerSpec{{Name: "init-db", Image: "busybox:1.37", Command: []string{"sh", "-c", "wait-db"}}},
+		NodeSelector:              map[string]string{"node-pool": "gpu"},
+		Tolerations:               []domain.WorkloadToleration{{Key: "dedicated", Operator: "Equal", Value: "gpu", Effect: "NoExecute", TolerationSeconds: &tolerationSeconds}},
+		NodeAffinity:              []domain.WorkloadNodeSelectorRequirement{{Key: "topology.kubernetes.io/zone", Operator: "In", Values: []string{"az-a", "az-b"}}},
+		TopologySpreadConstraints: []domain.WorkloadTopologySpreadConstraint{{MaxSkew: 1, TopologyKey: "kubernetes.io/hostname", WhenUnsatisfiable: "ScheduleAnyway"}},
+		PriorityClassName:         "high-priority", ServiceAccountName: "migrator",
+		PodSecurityContext: &domain.WorkloadPodSecurityContext{RunAsNonRoot: &runAsNonRoot, FSGroup: &runAsUser},
+		JobCompletions:     &completions, JobParallelism: &parallelism, JobBackoffLimit: &backoffLimit,
+		JobActiveDeadlineSeconds: &deadline, JobTTLSecondsAfterFinished: &ttl,
+	}
+	spec.Containers[0].SecurityContext = &domain.WorkloadContainerSecurityContext{RunAsUser: &runAsUser, ReadOnlyRootFilesystem: &readOnly}
+	if _, err := service.CreateWorkload(context.Background(), domain.Actor{Username: "admin"}, spec); err != nil {
+		t.Fatalf("CreateWorkload() error = %v", err)
+	}
+	got := repo.lastCreateSpec
+	if len(got.Containers) != 2 || len(got.InitContainers) != 1 || got.Containers[1].Name != "sidecar" || got.InitContainers[0].Image != "busybox:1.37" {
+		t.Fatalf("containers = %#v init = %#v", got.Containers, got.InitContainers)
+	}
+	if got.NodeSelector["node-pool"] != "gpu" || len(got.Tolerations) != 1 || got.Tolerations[0].TolerationSeconds == nil || got.PriorityClassName != "high-priority" || got.ServiceAccountName != "migrator" {
+		t.Fatalf("scheduling = %#v", got)
+	}
+	if got.PodSecurityContext == nil || got.PodSecurityContext.RunAsNonRoot == nil || !*got.PodSecurityContext.RunAsNonRoot || got.Containers[0].SecurityContext == nil || !*got.Containers[0].SecurityContext.ReadOnlyRootFilesystem {
+		t.Fatalf("security context = pod %#v container %#v", got.PodSecurityContext, got.Containers[0].SecurityContext)
+	}
+	if got.JobCompletions == nil || *got.JobCompletions != 3 || got.JobParallelism == nil || *got.JobParallelism != 2 || got.JobBackoffLimit == nil || *got.JobBackoffLimit != 4 || got.JobTTLSecondsAfterFinished == nil || *got.JobTTLSecondsAfterFinished != 120 {
+		t.Fatalf("batch parameters = %#v", got)
+	}
+}
+
+func TestCreateWorkloadRejectsInvalidContainerAndSchedulingShapes(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name  string
+		spec  domain.WorkloadCreateSpec
+		field string
+	}{
+		{
+			name:  "duplicate container names",
+			spec:  domain.WorkloadCreateSpec{Kind: "deployment", Name: "api", Namespace: "prod", Replicas: 1, Containers: []domain.WorkloadContainerSpec{{Name: "app", Image: "nginx:1"}, {Name: "app", Image: "nginx:2"}}},
+			field: "containers.1.name",
+		},
+		{
+			name:  "invalid container security context",
+			spec:  domain.WorkloadCreateSpec{Kind: "deployment", Name: "api", Namespace: "prod", Replicas: 1, Containers: []domain.WorkloadContainerSpec{{Name: "app", Image: "nginx:1", SecurityContext: &domain.WorkloadContainerSecurityContext{CapabilitiesAdd: []string{"net_admin"}}}}},
+			field: "containers.0.securityContext.capabilities.0",
+		},
+		{
+			name:  "invalid toleration seconds effect",
+			spec:  domain.WorkloadCreateSpec{Kind: "deployment", Name: "api", Namespace: "prod", Replicas: 1, Containers: []domain.WorkloadContainerSpec{{Name: "app", Image: "nginx:1"}}, Tolerations: []domain.WorkloadToleration{{Key: "dedicated", Operator: "Exists", Effect: "NoSchedule", TolerationSeconds: int64Pointer(10)}}},
+			field: "tolerations.0.tolerationSeconds",
+		},
+		{
+			name:  "invalid topology policy",
+			spec:  domain.WorkloadCreateSpec{Kind: "deployment", Name: "api", Namespace: "prod", Replicas: 1, Containers: []domain.WorkloadContainerSpec{{Name: "app", Image: "nginx:1"}}, TopologySpreadConstraints: []domain.WorkloadTopologySpreadConstraint{{MaxSkew: 1, TopologyKey: "zone", WhenUnsatisfiable: "Sometimes"}}},
+			field: "topologySpreadConstraints.0.whenUnsatisfiable",
+		},
+		{
+			name:  "job completions out of range",
+			spec:  domain.WorkloadCreateSpec{Kind: "job", Name: "api", Namespace: "prod", Containers: []domain.WorkloadContainerSpec{{Name: "app", Image: "nginx:1"}}, JobCompletions: int32Pointer(0)},
+			field: "jobCompletions",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := &fakeRepository{}
+			service := New(repo, fakeGuard{allow: true}, &fakeAuditor{})
+			_, err := service.CreateWorkload(context.Background(), domain.Actor{Username: "admin"}, tt.spec)
+			if !errors.Is(err, domain.ErrInvalid) {
+				t.Fatalf("error = %v, want ErrInvalid", err)
+			}
+			var validation *domain.ValidationError
+			if !errors.As(err, &validation) || validation.Field != tt.field {
+				t.Fatalf("validation = %#v, want field %q", validation, tt.field)
+			}
+			if len(repo.createCalls) != 0 {
+				t.Fatalf("repository called for invalid spec: %#v", repo.createCalls)
+			}
+		})
+	}
+}
+
+func TestUpdateRolloutValidatesAuthorizesAndAudits(t *testing.T) {
+	t.Parallel()
+	repo := &fakeRepository{}
+	auditor := &fakeAuditor{}
+	service := New(repo, fakeGuard{allow: true}, auditor)
+	paused := true
+	if err := service.UpdateRollout(context.Background(), domain.Actor{Username: "admin"}, "deployment", "prod", "api", domain.WorkloadRolloutUpdate{Paused: &paused, MaxSurge: "25%", MaxUnavailable: "0"}); err != nil {
+		t.Fatalf("UpdateRollout() error = %v", err)
+	}
+	if repo.rolloutCalls != 1 || repo.lastRollout.Paused == nil || !*repo.lastRollout.Paused || repo.lastRollout.MaxSurge != "25%" || repo.lastRollout.MaxUnavailable != "0" {
+		t.Fatalf("rollout = %#v calls = %d", repo.lastRollout, repo.rolloutCalls)
+	}
+	if len(auditor.actions) != 1 || auditor.actions[0] != "update-rollout" || auditor.results[0] != "success" {
+		t.Fatalf("audit = %#v %#v", auditor.actions, auditor.results)
+	}
+	for _, update := range []domain.WorkloadRolloutUpdate{{}, {MaxSurge: "-1"}, {MaxSurge: "101%"}, {MaxSurge: "0", MaxUnavailable: "0%"}} {
+		if err := service.UpdateRollout(context.Background(), domain.Actor{Username: "admin"}, "deployment", "prod", "api", update); !errors.Is(err, domain.ErrInvalid) {
+			t.Fatalf("UpdateRollout(%#v) error = %v", update, err)
+		}
+	}
+	if err := service.UpdateRollout(context.Background(), domain.Actor{Username: "admin"}, "statefulset", "prod", "db", domain.WorkloadRolloutUpdate{Paused: &paused}); !errors.Is(err, domain.ErrUnsupported) {
+		t.Fatalf("statefulset error = %v", err)
+	}
+	deniedRepo := &fakeRepository{}
+	denied := New(deniedRepo, fakeGuard{allow: false}, &fakeAuditor{})
+	if err := denied.UpdateRollout(context.Background(), domain.Actor{Username: "viewer"}, "deployment", "prod", "api", domain.WorkloadRolloutUpdate{Paused: &paused}); !errors.Is(err, domain.ErrForbidden) {
+		t.Fatalf("denied error = %v", err)
+	}
+	if deniedRepo.rolloutCalls != 0 {
+		t.Fatalf("repository called without permission")
+	}
+}
+
+func TestRunCronJobOncePassesContainerAndCommandOverrides(t *testing.T) {
+	t.Parallel()
+	repo := &fakeRepository{}
+	service := New(repo, fakeGuard{allow: true}, &fakeAuditor{})
+	input := domain.CronJobRunInput{ContainerName: "worker", Command: []string{"/bin/sh", "-c"}, Args: []string{"backup --once"}}
+	if _, err := service.RunCronJobOnce(context.Background(), domain.Actor{Username: "admin"}, "prod", "backup", input); err != nil {
+		t.Fatalf("RunCronJobOnce() error = %v", err)
+	}
+	if repo.lastRunInput.ContainerName != "worker" || len(repo.lastRunInput.Command) != 2 || repo.lastRunInput.Args[0] != "backup --once" {
+		t.Fatalf("run input = %#v", repo.lastRunInput)
+	}
+}
+
+func int32Pointer(value int32) *int32 { return &value }
+func int64Pointer(value int64) *int64 { return &value }

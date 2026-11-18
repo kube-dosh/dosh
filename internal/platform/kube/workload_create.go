@@ -2,6 +2,8 @@ package kube
 
 import (
 	"context"
+	"fmt"
+	"strconv"
 	"strings"
 
 	"dosh/internal/domain"
@@ -11,6 +13,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	"sigs.k8s.io/yaml"
 )
 
@@ -20,10 +23,11 @@ const (
 )
 
 // CreateWorkload validates through API Server dry-run and creates one of the
-// supported workload kinds with a single application container.
+// supported workload kinds with application and optional init containers.
 func (c *Client) CreateWorkload(ctx context.Context, spec domain.WorkloadCreateSpec, dryRun bool) (domain.WorkloadSummary, error) {
 	ctx, cancel := c.withTimeout(ctx)
 	defer cancel()
+	normalizeCreateContainers(&spec)
 	options := metav1.CreateOptions{}
 	if dryRun {
 		options.DryRun = []string{metav1.DryRunAll}
@@ -67,6 +71,7 @@ func (c *Client) CreateWorkload(ctx context.Context, spec domain.WorkloadCreateS
 // PreviewWorkload returns the exact manifest the create path would submit,
 // without contacting the Kubernetes API Server.
 func (c *Client) PreviewWorkload(_ context.Context, spec domain.WorkloadCreateSpec) (string, error) {
+	normalizeCreateContainers(&spec)
 	var object any
 	switch normalizeWorkloadCreateKind(spec.Kind) {
 	case "deployment":
@@ -92,7 +97,7 @@ func (c *Client) PreviewWorkload(_ context.Context, spec domain.WorkloadCreateSp
 // RunCronJobOnce creates a Job from the current CronJob job template. It is the
 // dashboard equivalent of `kubectl create job --from=cronjob/<name>` and does
 // not alter the CronJob schedule.
-func (c *Client) RunCronJobOnce(ctx context.Context, namespace, name string) (domain.WorkloadSummary, error) {
+func (c *Client) RunCronJobOnce(ctx context.Context, namespace, name string, input domain.CronJobRunInput) (domain.WorkloadSummary, error) {
 	ctx, cancel := c.withTimeout(ctx)
 	defer cancel()
 	cronJob, err := c.clientset.BatchV1().CronJobs(namespace).Get(ctx, name, metav1.GetOptions{})
@@ -100,6 +105,28 @@ func (c *Client) RunCronJobOnce(ctx context.Context, namespace, name string) (do
 		return domain.WorkloadSummary{}, mapKubeError(err)
 	}
 	job := jobFromCronJobTemplate(*cronJob)
+	if len(job.Spec.Template.Spec.Containers) == 0 {
+		return domain.WorkloadSummary{}, fmt.Errorf("%w: cronjob pod template has no application container", domain.ErrInvalid)
+	}
+	index := 0
+	if input.ContainerName != "" {
+		index = -1
+		for i := range job.Spec.Template.Spec.Containers {
+			if job.Spec.Template.Spec.Containers[i].Name == input.ContainerName {
+				index = i
+				break
+			}
+		}
+		if index < 0 {
+			return domain.WorkloadSummary{}, fmt.Errorf("%w: container %q not found", domain.ErrInvalid, input.ContainerName)
+		}
+	}
+	if len(input.Command) > 0 {
+		job.Spec.Template.Spec.Containers[index].Command = append([]string(nil), input.Command...)
+	}
+	if len(input.Args) > 0 {
+		job.Spec.Template.Spec.Containers[index].Args = append([]string(nil), input.Args...)
+	}
 	created, err := c.clientset.BatchV1().Jobs(namespace).Create(ctx, job, metav1.CreateOptions{})
 	if err != nil {
 		return domain.WorkloadSummary{}, mapKubeError(err)
@@ -111,20 +138,61 @@ func normalizeWorkloadCreateKind(kind string) string {
 	return strings.ToLower(strings.TrimSpace(kind))
 }
 
+func normalizeCreateContainers(spec *domain.WorkloadCreateSpec) {
+	if len(spec.Containers) == 0 && strings.TrimSpace(spec.Image) != "" {
+		spec.Containers = []domain.WorkloadContainerSpec{{
+			Name: spec.ContainerName, Image: spec.Image, RegistryID: spec.RegistryID, ContainerPort: spec.ContainerPort,
+			CPURequestMilli: spec.CPURequestMilli, CPULimitMilli: spec.CPULimitMilli,
+			MemoryRequestBytes: spec.MemoryRequestBytes, MemoryLimitBytes: spec.MemoryLimitBytes,
+			Env: spec.Env, Command: spec.Command, Args: spec.Args,
+		}}
+	}
+	for i := range spec.Containers {
+		spec.Containers[i].Name = strings.TrimSpace(spec.Containers[i].Name)
+		if spec.Containers[i].Name == "" && i == 0 {
+			spec.Containers[i].Name = spec.Name
+		}
+	}
+}
+
 func podTemplateForCreate(spec domain.WorkloadCreateSpec) corev1.PodTemplateSpec {
+	normalizeCreateContainers(&spec)
 	labels := mergedWorkloadLabels(spec.Name, spec.Labels)
+	initContainers := make([]corev1.Container, 0, len(spec.InitContainers))
+	for _, container := range spec.InitContainers {
+		initContainers = append(initContainers, containerForCreate(container))
+	}
+	containers := make([]corev1.Container, 0, len(spec.Containers))
+	for _, container := range spec.Containers {
+		containers = append(containers, containerForCreate(container))
+	}
 	return corev1.PodTemplateSpec{
 		ObjectMeta: metav1.ObjectMeta{Labels: labels},
 		Spec: corev1.PodSpec{
-			ImagePullSecrets: workloadImagePullSecrets(spec.ImagePullSecrets),
-			Containers: []corev1.Container{{
-				Name: spec.ContainerName, Image: spec.Image,
-				Ports:     []corev1.ContainerPort{{Name: "http", ContainerPort: spec.ContainerPort, Protocol: corev1.ProtocolTCP}},
-				Env:       workloadEnv(spec.Env),
-				Resources: workloadResources(spec),
-			}},
+			ImagePullSecrets:          workloadImagePullSecrets(spec.ImagePullSecrets),
+			InitContainers:            initContainers,
+			Containers:                containers,
+			NodeSelector:              spec.NodeSelector,
+			Tolerations:               workloadTolerations(spec.Tolerations),
+			Affinity:                  workloadAffinity(spec.NodeAffinity),
+			TopologySpreadConstraints: workloadTopologySpread(spec),
+			PriorityClassName:         spec.PriorityClassName,
+			ServiceAccountName:        spec.ServiceAccountName,
+			SecurityContext:           workloadPodSecurityContext(spec.PodSecurityContext),
 		},
 	}
+}
+
+func containerForCreate(spec domain.WorkloadContainerSpec) corev1.Container {
+	container := corev1.Container{
+		Name: spec.Name, Image: spec.Image, Env: workloadEnv(spec.Env),
+		Command: append([]string(nil), spec.Command...), Args: append([]string(nil), spec.Args...),
+		Resources: resourcesForContainer(spec), SecurityContext: workloadContainerSecurityContext(spec.SecurityContext),
+	}
+	if spec.ContainerPort > 0 {
+		container.Ports = []corev1.ContainerPort{{ContainerPort: spec.ContainerPort, Protocol: corev1.ProtocolTCP}}
+	}
+	return container
 }
 
 func deploymentForCreate(spec domain.WorkloadCreateSpec) *appsv1.Deployment {
@@ -171,9 +239,7 @@ func jobForCreate(spec domain.WorkloadCreateSpec) *batchv1.Job {
 	return &batchv1.Job{
 		TypeMeta:   metav1.TypeMeta{APIVersion: "batch/v1", Kind: "Job"},
 		ObjectMeta: metav1.ObjectMeta{Name: spec.Name, Namespace: spec.Namespace, Labels: mergedWorkloadLabels(spec.Name, spec.Labels)},
-		Spec: batchv1.JobSpec{
-			Template: template,
-		},
+		Spec:       jobSpecForCreate(spec, template),
 	}
 }
 
@@ -195,8 +261,22 @@ func cronJobForCreate(spec domain.WorkloadCreateSpec) *batchv1.CronJob {
 			Schedule:          spec.Schedule,
 			ConcurrencyPolicy: policy,
 			Suspend:           &suspend,
-			JobTemplate:       batchv1.JobTemplateSpec{Spec: batchv1.JobSpec{Template: template}},
+			JobTemplate: batchv1.JobTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{Labels: mergedWorkloadLabels(spec.Name, spec.Labels)},
+				Spec:       jobSpecForCreate(spec, template),
+			},
 		},
+	}
+}
+
+func jobSpecForCreate(spec domain.WorkloadCreateSpec, template corev1.PodTemplateSpec) batchv1.JobSpec {
+	return batchv1.JobSpec{
+		Template:                template,
+		Completions:             spec.JobCompletions,
+		Parallelism:             spec.JobParallelism,
+		BackoffLimit:            spec.JobBackoffLimit,
+		ActiveDeadlineSeconds:   spec.JobActiveDeadlineSeconds,
+		TTLSecondsAfterFinished: spec.JobTTLSecondsAfterFinished,
 	}
 }
 
@@ -273,7 +353,7 @@ func workloadEnv(env []domain.DeploymentEnvVar) []corev1.EnvVar {
 	return out
 }
 
-func workloadResources(spec domain.WorkloadCreateSpec) corev1.ResourceRequirements {
+func resourcesForContainer(spec domain.WorkloadContainerSpec) corev1.ResourceRequirements {
 	requests := corev1.ResourceList{}
 	limits := corev1.ResourceList{}
 	if spec.CPURequestMilli > 0 {
@@ -289,4 +369,103 @@ func workloadResources(spec domain.WorkloadCreateSpec) corev1.ResourceRequiremen
 		limits[corev1.ResourceMemory] = *resource.NewQuantity(spec.MemoryLimitBytes, resource.BinarySI)
 	}
 	return corev1.ResourceRequirements{Requests: requests, Limits: limits}
+}
+
+func workloadTolerations(items []domain.WorkloadToleration) []corev1.Toleration {
+	if len(items) == 0 {
+		return nil
+	}
+	out := make([]corev1.Toleration, 0, len(items))
+	for _, item := range items {
+		out = append(out, corev1.Toleration{
+			Key: item.Key, Operator: corev1.TolerationOperator(item.Operator), Value: item.Value,
+			Effect: corev1.TaintEffect(item.Effect), TolerationSeconds: item.TolerationSeconds,
+		})
+	}
+	return out
+}
+
+func workloadAffinity(items []domain.WorkloadNodeSelectorRequirement) *corev1.Affinity {
+	if len(items) == 0 {
+		return nil
+	}
+	expressions := make([]corev1.NodeSelectorRequirement, 0, len(items))
+	for _, item := range items {
+		expressions = append(expressions, corev1.NodeSelectorRequirement{
+			Key: item.Key, Operator: corev1.NodeSelectorOperator(item.Operator), Values: append([]string(nil), item.Values...),
+		})
+	}
+	return &corev1.Affinity{NodeAffinity: &corev1.NodeAffinity{
+		RequiredDuringSchedulingIgnoredDuringExecution: &corev1.NodeSelector{
+			NodeSelectorTerms: []corev1.NodeSelectorTerm{{MatchExpressions: expressions}},
+		},
+	}}
+}
+
+func workloadTopologySpread(spec domain.WorkloadCreateSpec) []corev1.TopologySpreadConstraint {
+	if len(spec.TopologySpreadConstraints) == 0 {
+		return nil
+	}
+	out := make([]corev1.TopologySpreadConstraint, 0, len(spec.TopologySpreadConstraints))
+	for _, item := range spec.TopologySpreadConstraints {
+		out = append(out, corev1.TopologySpreadConstraint{
+			MaxSkew: item.MaxSkew, TopologyKey: item.TopologyKey,
+			WhenUnsatisfiable: corev1.UnsatisfiableConstraintAction(item.WhenUnsatisfiable),
+			LabelSelector:     &metav1.LabelSelector{MatchLabels: workloadCreateSelector(spec.Name)},
+		})
+	}
+	return out
+}
+
+func workloadPodSecurityContext(spec *domain.WorkloadPodSecurityContext) *corev1.PodSecurityContext {
+	if spec == nil {
+		return nil
+	}
+	out := &corev1.PodSecurityContext{RunAsUser: spec.RunAsUser, RunAsGroup: spec.RunAsGroup, FSGroup: spec.FSGroup, RunAsNonRoot: spec.RunAsNonRoot}
+	if spec.SeccompProfile != "" {
+		out.SeccompProfile = &corev1.SeccompProfile{Type: corev1.SeccompProfileType(spec.SeccompProfile)}
+	}
+	return out
+}
+
+func workloadContainerSecurityContext(spec *domain.WorkloadContainerSecurityContext) *corev1.SecurityContext {
+	if spec == nil {
+		return nil
+	}
+	out := &corev1.SecurityContext{
+		RunAsUser: spec.RunAsUser, RunAsGroup: spec.RunAsGroup, RunAsNonRoot: spec.RunAsNonRoot,
+		ReadOnlyRootFilesystem: spec.ReadOnlyRootFilesystem, AllowPrivilegeEscalation: spec.AllowPrivilegeEscalation,
+	}
+	if len(spec.CapabilitiesAdd) > 0 || len(spec.CapabilitiesDrop) > 0 {
+		out.Capabilities = &corev1.Capabilities{}
+		for _, capability := range spec.CapabilitiesAdd {
+			out.Capabilities.Add = append(out.Capabilities.Add, corev1.Capability(capability))
+		}
+		for _, capability := range spec.CapabilitiesDrop {
+			out.Capabilities.Drop = append(out.Capabilities.Drop, corev1.Capability(capability))
+		}
+	}
+	return out
+}
+
+func parseRolloutValue(value string) (*intstr.IntOrString, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil, nil
+	}
+	parsed := intstr.Parse(value)
+	if parsed.Type == intstr.Int && parsed.IntVal < 0 {
+		return nil, fmt.Errorf("%w: rollout value must not be negative", domain.ErrInvalid)
+	}
+	if parsed.Type == intstr.String {
+		text := strings.TrimSuffix(parsed.StrVal, "%")
+		if !strings.HasSuffix(parsed.StrVal, "%") || text == "" {
+			return nil, fmt.Errorf("%w: rollout percentage must use the form 25%%", domain.ErrInvalid)
+		}
+		percentage, err := strconv.Atoi(text)
+		if err != nil || percentage < 0 || percentage > 100 {
+			return nil, fmt.Errorf("%w: rollout percentage must be between 0%% and 100%%", domain.ErrInvalid)
+		}
+	}
+	return &parsed, nil
 }

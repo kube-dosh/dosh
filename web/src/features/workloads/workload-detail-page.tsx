@@ -5,7 +5,8 @@ import { createColumnHelper } from "@tanstack/react-table";
 import { Boxes, FileCode2, Loader2, Minus, Pause, Pencil, Play, PlayCircle, Plus, RefreshCw, ScrollText, TerminalSquare, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { ApiError, api } from "@/api/client";
-import type { PodSummary } from "@/api/types";
+import type { CronJobRunInput, PodSummary, WorkloadBatchStatus, WorkloadDetail, WorkloadRolloutStatus } from "@/api/types";
+import { Badge } from "@/components/ui/badge";
 import { DataTable } from "@/components/data/data-table";
 import { DetailItem } from "@/components/data/detail-item";
 import { ErrorState, LoadingState } from "@/components/feedback/states";
@@ -23,6 +24,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Textarea } from "@/components/ui/textarea";
 import { useCapabilities } from "@/features/auth/use-session";
 import { DiagnoseButton } from "@/features/diagnostics/diagnose-button";
 import { resourceCapabilities, workloadCapabilities } from "@/lib/capabilities";
@@ -68,6 +70,13 @@ export function WorkloadDetailPage() {
   const [restartOpen, setRestartOpen] = useState(false);
   const [suspendOpen, setSuspendOpen] = useState(false);
   const [runOpen, setRunOpen] = useState(false);
+  const [rolloutOpen, setRolloutOpen] = useState(false);
+  const [rolloutPaused, setRolloutPaused] = useState(false);
+  const [maxSurge, setMaxSurge] = useState("");
+  const [maxUnavailable, setMaxUnavailable] = useState("");
+  const [runContainer, setRunContainer] = useState("");
+  const [runCommand, setRunCommand] = useState("");
+  const [runArgs, setRunArgs] = useState("");
   const [imageOpen, setImageOpen] = useState(false);
   const [imageContainer, setImageContainer] = useState("");
   const [imageValue, setImageValue] = useState("");
@@ -111,6 +120,7 @@ export function WorkloadDetailPage() {
   const canUpdateContainerConfig = workloadCaps.update && ["deployment", "statefulset", "daemonset"].includes(kind);
   const canSuspend = workloadCaps.update && kind === "cronjob";
   const canRunNow = kind === "cronjob" && resourceCapabilities(capabilities, "jobs").create;
+  const canRollout = workloadCaps.update && kind === "deployment";
   const canRollback = workloadCaps.update && supportsRevisions;
   const canDelete = workloadCaps.delete;
   const invalidate = async () => {
@@ -127,6 +137,27 @@ export function WorkloadDetailPage() {
     mutationFn: () => api.restartWorkload(kind, params.namespace, params.name),
     onSuccess: async () => { toast.success("已触发滚动重启"); setRestartOpen(false); await invalidate(); },
     onError: (error) => toast.error(error.message),
+  });
+  const updateRollout = useMutation({
+    mutationFn: () => api.updateWorkloadRollout(kind, params.namespace, params.name, {
+      paused: rolloutPaused,
+      maxSurge: maxSurge.trim() || undefined,
+      maxUnavailable: maxUnavailable.trim() || undefined,
+      resourceVersion: query.data?.resourceVersion,
+    }),
+    onSuccess: async () => {
+      toast.success(rolloutPaused ? "Deployment 发布已暂停" : "Deployment 发布控制已更新");
+      setRolloutOpen(false);
+      await invalidate();
+    },
+    onError: (error) => {
+      if (error instanceof ApiError && error.status === 409) {
+        toast.error("Deployment 已被其他操作更新，请刷新后重试");
+        void invalidate();
+        return;
+      }
+      toast.error(error.message);
+    },
   });
   const updateImage = useMutation({
     mutationFn: () => api.updateWorkloadImage(kind, params.namespace, params.name, {
@@ -169,7 +200,7 @@ export function WorkloadDetailPage() {
     },
   });
   const runCronJob = useMutation({
-    mutationFn: () => api.runCronJobOnce(params.namespace, params.name),
+    mutationFn: (input: CronJobRunInput) => api.runCronJobOnce(params.namespace, params.name, input),
     onSuccess: async (created) => {
       toast.success(`已从 CronJob 创建 Job ${created.name}`);
       setRunOpen(false);
@@ -202,6 +233,19 @@ export function WorkloadDetailPage() {
     setImageResourceVersion(workload.resourceVersion ?? "");
     setImageOpen(true);
   };
+  const openRolloutDialog = () => {
+    setRolloutPaused(Boolean(workload.rollout?.paused));
+    setMaxSurge(workload.rollout?.maxSurge ?? "");
+    setMaxUnavailable(workload.rollout?.maxUnavailable ?? "");
+    setRolloutOpen(true);
+  };
+  const openRunDialog = () => {
+    setRunContainer(workload.containers[0]?.name ?? "");
+    setRunCommand("");
+    setRunArgs("");
+    setRunOpen(true);
+  };
+  const rolloutValueValid = (value: string) => value.trim() === "" || /^\d+%?$/.test(value.trim());
 
   return (
     <>
@@ -213,8 +257,9 @@ export function WorkloadDetailPage() {
           <>
             <DiagnoseButton kind={kind} namespace={workload.namespace} name={workload.name} />
             <Button variant="outline" size="sm" onClick={() => setYamlOpen(true)}><FileCode2 className="h-4 w-4" />YAML</Button>
-            {canRunNow ? <Button variant="outline" size="sm" onClick={() => setRunOpen(true)}><PlayCircle className="h-4 w-4" />立即执行</Button> : null}
+            {canRunNow ? <Button variant="outline" size="sm" onClick={openRunDialog}><PlayCircle className="h-4 w-4" />立即执行</Button> : null}
             {canSuspend ? <Button variant="outline" size="sm" onClick={() => setSuspendOpen(true)}>{suspended ? <Play className="h-4 w-4" /> : <Pause className="h-4 w-4" />}{suspended ? "恢复调度" : "暂停调度"}</Button> : null}
+            {canRollout ? <Button variant="outline" size="sm" onClick={openRolloutDialog}>{workload.rollout?.paused ? <Play className="h-4 w-4" /> : <Pause className="h-4 w-4" />}发布控制</Button> : null}
             {canUpdateImage && workload.containers.length ? <Button variant="outline" size="sm" onClick={openImageDialog}><Pencil className="h-4 w-4" />更新镜像</Button> : null}
             {canRestart ? <Button variant="outline" size="sm" onClick={() => setRestartOpen(true)}><RefreshCw className="h-4 w-4" />重启</Button> : null}
             {canScale ? <Button size="sm" onClick={() => { setReplicas(workload.desired); setScaleOpen(true); }}><Plus className="h-4 w-4" />扩缩容</Button> : null}
@@ -243,10 +288,14 @@ export function WorkloadDetailPage() {
             <Card>
               <CardHeader><CardTitle>镜像与选择器</CardTitle></CardHeader>
               <CardContent className="space-y-5">
-                <div><p className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">容器镜像</p><div className="space-y-2">{workload.containers.length ? workload.containers.map((container) => <div key={container.name} className="rounded-md border bg-muted/30 px-3 py-2"><p className="mb-1 text-xs font-medium">{container.name}</p><p className="break-all font-mono text-xs text-muted-foreground">{container.image}</p></div>) : <p className="text-sm text-muted-foreground">—</p>}</div></div>
+                <div><p className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">容器镜像</p><div className="space-y-2">{workload.containers.length ? workload.containers.map((container) => <div key={container.name} className="min-w-0 rounded-md border bg-muted/30 px-3 py-2"><p className="mb-1 break-all text-xs font-medium">{container.name}</p><p className="break-all font-mono text-xs text-muted-foreground">{container.image}</p></div>) : <p className="text-sm text-muted-foreground">—</p>}</div></div>
+                {workload.initContainers?.length ? <div><p className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">Init Container 镜像</p><div className="space-y-2">{workload.initContainers.map((container) => <div key={container.name} className="min-w-0 rounded-md border border-dashed bg-muted/20 px-3 py-2"><p className="mb-1 break-all text-xs font-medium">{container.name}</p><p className="break-all font-mono text-xs text-muted-foreground">{container.image}</p></div>)}</div></div> : null}
                 <div><p className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">Selector</p><div className="flex flex-wrap gap-1.5">{Object.entries(workload.selector).map(([key, value]) => <span key={key} className="rounded border bg-card px-2 py-1 font-mono text-[11px]">{key}={value}</span>)}</div></div>
               </CardContent>
             </Card>
+            {workload.rollout ? <RolloutPanel rollout={workload.rollout} desired={workload.desired} canEdit={canRollout} onEdit={openRolloutDialog} /> : null}
+            {workload.batch ? <BatchPanel batch={workload.batch} namespace={workload.namespace} /> : null}
+            {workload.replicaSets?.length ? <ReplicaSetPanel replicaSets={workload.replicaSets} /> : null}
             <Card className="xl:col-span-2">
               <CardHeader><CardTitle>Conditions</CardTitle></CardHeader>
               <CardContent className="space-y-2">
@@ -256,7 +305,10 @@ export function WorkloadDetailPage() {
           </div>
           <div className="mt-4"><ResourceRelationsPanel reference={{ group: relationGroup, version: "v1", resource: relationResource }} name={workload.name} namespace={workload.namespace} title="故障拓扑与直接关系" /></div>
         </TabsContent>
-        <TabsContent value="config"><WorkloadContainerConfigPanel workload={workload} canEdit={canUpdateContainerConfig} onSaved={invalidate} /></TabsContent>
+        <TabsContent value="config" className="space-y-4">
+          {workload.initContainers?.length ? <InitContainerPanel containers={workload.initContainers} /> : null}
+          <WorkloadContainerConfigPanel workload={workload} canEdit={canUpdateContainerConfig} onSaved={invalidate} />
+        </TabsContent>
         <TabsContent value="pods">
           <DataTable
             columns={[
@@ -296,6 +348,45 @@ export function WorkloadDetailPage() {
           <DialogHeader><DialogTitle>调整副本数</DialogTitle><DialogDescription>{workload.namespace}/{workload.name} · 当前 {workload.desired} 个副本</DialogDescription></DialogHeader>
           <div className="space-y-2"><Label htmlFor="replicas">期望副本数</Label><div className="flex items-center gap-2"><Button variant="outline" size="icon" onClick={() => setReplicas((value) => Math.max(0, value - 1))}><Minus className="h-4 w-4" /></Button><Input id="replicas" type="number" min={0} max={1000} value={replicas} onChange={(event) => setReplicas(Math.max(0, Number(event.target.value) || 0))} /><Button variant="outline" size="icon" onClick={() => setReplicas((value) => Math.min(1000, value + 1))}><Plus className="h-4 w-4" /></Button></div></div>
           <DialogFooter><Button variant="outline" onClick={() => setScaleOpen(false)}>取消</Button><Button onClick={() => scale.mutate()} disabled={scale.isPending}>{scale.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : null}确认调整</Button></DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={rolloutOpen} onOpenChange={setRolloutOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>发布控制</DialogTitle>
+            <DialogDescription>{workload.namespace}/{workload.name} · 暂停只会冻结 Pod 模板变更，不影响现有 Pod；maxSurge 和 maxUnavailable 支持整数或百分比。</DialogDescription>
+          </DialogHeader>
+          <div className="grid min-w-0 gap-4 sm:grid-cols-2">
+            <div className="min-w-0 space-y-2 sm:col-span-2">
+              <Label htmlFor="rollout-state">发布状态</Label>
+              <Select value={rolloutPaused ? "paused" : "running"} onValueChange={(value) => setRolloutPaused(value === "paused")}>
+                <SelectTrigger id="rollout-state"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="running"><Play className="mr-2 inline h-4 w-4" />继续发布</SelectItem>
+                  <SelectItem value="paused"><Pause className="mr-2 inline h-4 w-4" />暂停发布</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="min-w-0 space-y-2">
+              <Label htmlFor="rollout-max-surge">maxSurge</Label>
+              <Input id="rollout-max-surge" value={maxSurge} onChange={(event) => setMaxSurge(event.target.value)} placeholder="25%" className="font-mono" />
+              <p className="text-xs text-muted-foreground">滚动期间允许超过期望副本的数量。</p>
+            </div>
+            <div className="min-w-0 space-y-2">
+              <Label htmlFor="rollout-max-unavailable">maxUnavailable</Label>
+              <Input id="rollout-max-unavailable" value={maxUnavailable} onChange={(event) => setMaxUnavailable(event.target.value)} placeholder="25%" className="font-mono" />
+              <p className="text-xs text-muted-foreground">滚动期间允许不可用的副本数量。</p>
+            </div>
+            {!rolloutValueValid(maxSurge) || !rolloutValueValid(maxUnavailable) ? <p role="alert" className="text-xs text-destructive-strong sm:col-span-2">请输入非负整数或 0% 到 100% 的百分比。</p> : null}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setRolloutOpen(false)} disabled={updateRollout.isPending}>取消</Button>
+            <Button onClick={() => updateRollout.mutate()} disabled={updateRollout.isPending || !rolloutValueValid(maxSurge) || !rolloutValueValid(maxUnavailable)}>
+              {updateRollout.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : rolloutPaused ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
+              保存发布设置
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 
@@ -358,14 +449,39 @@ export function WorkloadDetailPage() {
       </AlertDialog>
 
       <AlertDialog open={runOpen} onOpenChange={setRunOpen}>
-        <AlertDialogContent>
+        <AlertDialogContent className="max-h-[88vh] overflow-y-auto">
           <AlertDialogHeader>
             <AlertDialogTitle>立即执行 {workload.name}？</AlertDialogTitle>
-            <AlertDialogDescription>将从当前 CronJob 的 Job 模板创建一个一次性 Job，不会修改 CronJob 调度，也不会补跑历史任务。需要具备创建 Job 的权限。</AlertDialogDescription>
+            <AlertDialogDescription>将从当前 CronJob 的 Job 模板创建一个一次性 Job，不会修改 CronJob 调度，也不会补跑历史任务。可选择目标容器并临时覆盖命令与参数。</AlertDialogDescription>
           </AlertDialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="run-container">目标容器</Label>
+              <Select value={runContainer} onValueChange={setRunContainer}>
+                <SelectTrigger id="run-container"><SelectValue placeholder="选择容器" /></SelectTrigger>
+                <SelectContent>{workload.containers.map((container) => <SelectItem key={container.name} value={container.name}>{container.name} · {container.image}</SelectItem>)}</SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="run-command">Command 覆盖（可选）</Label>
+              <Textarea id="run-command" value={runCommand} onChange={(event) => setRunCommand(event.target.value)} placeholder={"/bin/sh"} className="min-h-20 font-mono text-xs" spellCheck={false} />
+              <p className="text-xs text-muted-foreground">每行一个参数；留空则沿用 CronJob 模板。</p>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="run-args">Args 覆盖（可选）</Label>
+              <Textarea id="run-args" value={runArgs} onChange={(event) => setRunArgs(event.target.value)} placeholder={"-c\nbackup --once"} className="min-h-20 font-mono text-xs" spellCheck={false} />
+            </div>
+          </div>
           <AlertDialogFooter>
             <AlertDialogCancel disabled={runCronJob.isPending}>取消</AlertDialogCancel>
-            <AlertDialogAction onClick={(event) => { event.preventDefault(); runCronJob.mutate(); }} disabled={runCronJob.isPending}>
+            <AlertDialogAction onClick={(event) => {
+              event.preventDefault();
+              runCronJob.mutate({
+                containerName: runContainer || undefined,
+                command: splitCommandLines(runCommand),
+                args: splitCommandLines(runArgs),
+              });
+            }} disabled={runCronJob.isPending}>
               {runCronJob.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <PlayCircle className="h-4 w-4" />}
               确认执行
             </AlertDialogAction>
@@ -382,4 +498,113 @@ export function WorkloadDetailPage() {
       <YamlDialog open={yamlOpen} onOpenChange={setYamlOpen} type={kind} name={workload.name} namespace={workload.namespace} />
     </>
   );
+}
+
+function RolloutPanel({ rollout, desired, canEdit, onEdit }: {
+  rollout: WorkloadRolloutStatus;
+  desired: number;
+  canEdit: boolean;
+  onEdit: () => void;
+}) {
+  const progress = desired > 0 ? Math.min(100, Math.round((rollout.updatedReplicas / desired) * 100)) : 100;
+  return (
+    <Card className="min-w-0 overflow-hidden xl:col-span-2">
+      <CardHeader className="gap-2">
+        <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
+          <CardTitle>发布进度</CardTitle>
+          <div className="flex flex-wrap items-center gap-2">
+            <Badge variant={rollout.paused ? "warning" : "secondary"}>{rollout.paused ? "已暂停" : "进行中"}</Badge>
+            {canEdit ? <Button variant="outline" size="sm" onClick={onEdit}><Pause className="h-4 w-4" />调整策略</Button> : null}
+          </div>
+        </div>
+      </CardHeader>
+      <CardContent className="min-w-0 space-y-4">
+        <div className="min-w-0 space-y-1.5">
+          <div className="flex min-w-0 flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground"><span>{rollout.strategy || "RollingUpdate"}</span><span>{rollout.updatedReplicas}/{desired} 已更新 · {progress}%</span></div>
+          <div className="h-2 overflow-hidden rounded-full bg-muted" role="progressbar" aria-label="发布更新进度" aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress}>
+            <div className="h-full rounded-full bg-primary transition-[width]" style={{ width: `${progress}%` }} />
+          </div>
+        </div>
+        <dl className="grid min-w-0 gap-3 text-sm sm:grid-cols-2 lg:grid-cols-4">
+          <DetailItem label="maxSurge" value={rollout.maxSurge || "—"} mono />
+          <DetailItem label="maxUnavailable" value={rollout.maxUnavailable || "—"} mono />
+          <DetailItem label="已更新 / 就绪" value={`${rollout.updatedReplicas} / ${rollout.readyReplicas}`} />
+          <DetailItem label="可用 / 不可用" value={`${rollout.availableReplicas} / ${rollout.unavailableReplicas}`} />
+          {rollout.partition ? <DetailItem label="StatefulSet Partition" value={String(rollout.partition)} /> : null}
+          <DetailItem label="Observed Generation" value={String(rollout.observedGeneration)} mono />
+        </dl>
+      </CardContent>
+    </Card>
+  );
+}
+
+function BatchPanel({ batch, namespace }: { batch: WorkloadBatchStatus; namespace: string }) {
+  const parameters = [
+    ["completions", batch.completions],
+    ["parallelism", batch.parallelism],
+    ["backoffLimit", batch.backoffLimit],
+    ["activeDeadlineSeconds", batch.activeDeadlineSeconds],
+    ["ttlSecondsAfterFinished", batch.ttlSecondsAfterFinished],
+  ].filter(([, value]) => value !== undefined);
+  return (
+    <Card className="min-w-0 overflow-hidden xl:col-span-2">
+      <CardHeader><CardTitle>批处理状态</CardTitle></CardHeader>
+      <CardContent className="min-w-0 space-y-4">
+        <dl className="grid min-w-0 grid-cols-2 gap-3 text-sm sm:grid-cols-4">
+          <DetailItem label="运行中" value={String(batch.active)} />
+          <DetailItem label="成功" value={String(batch.succeeded)} />
+          <DetailItem label="失败" value={String(batch.failed)} />
+          <DetailItem label="失败原因" value={batch.failureReason || "—"} />
+          <DetailItem label="最近调度" value={batch.lastScheduleTime ? formatDate(batch.lastScheduleTime) : "—"} />
+          <DetailItem label="最近成功" value={batch.lastSuccessfulTime ? formatDate(batch.lastSuccessfulTime) : "—"} />
+        </dl>
+        {parameters.length ? <div className="flex min-w-0 flex-wrap gap-1.5">{parameters.map(([label, value]) => <Badge key={String(label)} variant="outline" className="max-w-full whitespace-normal break-all font-mono">{label}={String(value)}</Badge>)}</div> : <p className="text-xs text-muted-foreground">使用 Kubernetes 默认 Job 参数。</p>}
+        {batch.failureMessage ? <div role="alert" className="min-w-0 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive-strong"><p className="font-medium">最近失败</p><p className="mt-1 break-words">{batch.failureMessage}</p></div> : null}
+        {batch.activeJobs?.length ? <div className="min-w-0 space-y-2"><p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">最近 Job</p>{batch.activeJobs.map((job) => <div key={job.name} className="flex min-w-0 flex-wrap items-center gap-2 rounded-md border px-3 py-2 text-sm"><Link to="/workloads/$kind/$namespace/$name" params={{ kind: "job", namespace, name: job.name }} className="min-w-0 break-all font-medium text-primary hover:underline">{job.name}</Link><StatusBadge status={job.status} /><span className="text-xs text-muted-foreground">成功 {job.succeeded} · 失败 {job.failed}</span>{job.startTime ? <span className="text-xs text-muted-foreground">开始于 {formatDate(job.startTime)}</span> : null}</div>)}</div> : <p className="text-xs text-muted-foreground">没有关联的近期 Job。</p>}
+      </CardContent>
+    </Card>
+  );
+}
+
+function ReplicaSetPanel({ replicaSets }: { replicaSets: NonNullable<WorkloadDetail["replicaSets"]> }) {
+  return (
+    <Card className="min-w-0 overflow-hidden xl:col-span-2">
+      <CardHeader><CardTitle>ReplicaSet</CardTitle></CardHeader>
+      <CardContent className="min-w-0 space-y-2">
+        {replicaSets.map((replicaSet) => (
+          <div key={replicaSet.name} className="min-w-0 rounded-md border px-3 py-3">
+            <div className="flex min-w-0 flex-wrap items-center gap-2">
+              <span className="min-w-0 break-all font-mono text-sm font-medium">{replicaSet.name}</span>
+              {replicaSet.current ? <Badge>当前版本</Badge> : <Badge variant="outline">历史版本</Badge>}
+              <span className="text-xs text-muted-foreground">revision {replicaSet.revision} · {formatAge(replicaSet.createdAt)}</span>
+            </div>
+            <div className="mt-2 flex min-w-0 flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground"><span>期望 {replicaSet.desired}</span><span>就绪 {replicaSet.ready}</span><span>可用 {replicaSet.available}</span></div>
+            <p className="mt-2 break-all font-mono text-xs text-muted-foreground">{replicaSet.images.join(" · ") || "—"}</p>
+          </div>
+        ))}
+      </CardContent>
+    </Card>
+  );
+}
+
+function InitContainerPanel({ containers }: { containers: NonNullable<WorkloadDetail["initContainers"]> }) {
+  return (
+    <Card className="min-w-0 overflow-hidden">
+      <CardHeader><CardTitle>Init Container</CardTitle></CardHeader>
+      <CardContent className="grid min-w-0 gap-2 sm:grid-cols-2">
+        {containers.map((container) => (
+          <div key={container.name} className="min-w-0 rounded-md border border-dashed bg-muted/20 px-3 py-2">
+            <p className="break-all font-mono text-xs font-medium">{container.name}</p>
+            <p className="mt-1 break-all font-mono text-xs text-muted-foreground">{container.image}</p>
+            <p className="mt-1 text-xs text-muted-foreground">{container.env.length} 个环境变量 · {container.volumeMounts.length} 个挂载</p>
+          </div>
+        ))}
+      </CardContent>
+    </Card>
+  );
+}
+
+function splitCommandLines(value: string): string[] | undefined {
+  const items = value.split("\n").map((line) => line.trim()).filter(Boolean);
+  return items.length ? items : undefined;
 }

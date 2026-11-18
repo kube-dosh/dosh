@@ -188,6 +188,22 @@
 
 当用户通过资源浏览器创建 StatefulSet、DaemonSet、Job、CronJob、PersistentVolume 或 StorageClass 时，系统应提供可编辑的推荐模板，并可随时恢复推荐内容；模板仍通过现有 Schema 动态表单和 YAML 双模式编辑，复杂字段或 Schema 不可用时必须可回退到 YAML。
 
+### GR-046 多容器与 Init Container 创建
+
+当用户创建 Deployment、StatefulSet、DaemonSet、Job 或 CronJob 时，系统应允许配置最多 32 个应用容器和 32 个 Init Container。每个容器应独立支持镜像与镜像仓关联、端口、CPU/内存、环境变量、Command/Args 和容器级 SecurityContext；容器名称在应用容器与 Init Container 之间必须全局唯一。未提供应用容器列表的旧客户端仍可使用首容器标量字段，服务端应将其规范化为单容器请求。
+
+### GR-047 Pod 调度与安全上下文
+
+当用户创建工作负载时，系统应支持 NodeSelector、Equal/Exists 容忍、required 节点亲和性、TopologySpreadConstraints、PriorityClass、ServiceAccount，以及 Pod 级 runAsUser、runAsGroup、fsGroup、runAsNonRoot、seccompProfile 和容器级 runAsUser、runAsGroup、runAsNonRoot、readOnlyRootFilesystem、allowPrivilegeEscalation、capabilities add/drop。所有字段必须在写 Kubernetes 前完成范围、枚举、标签键值和长度校验；节点亲和性 label 值必须保持大小写敏感，不得被前端统一转成大写。
+
+### GR-048 Deployment 发布控制
+
+当用户具备 `update deployments` 权限时，系统应展示 Deployment 的发布进度、当前策略、maxSurge/maxUnavailable、observedGeneration、更新/就绪/可用副本和 ReplicaSet 列表，并允许暂停、恢复发布及调整滚动策略。更新必须携带 `resourceVersion`，冲突返回 409；maxSurge 和 maxUnavailable 仅接受非负整数或 0%–100% 百分比，且不得同时为零。请求成功、失败或被拒绝必须写入审计。
+
+### GR-049 Job/CronJob 运行参数与受控执行
+
+当用户创建 Job 或 CronJob 时，系统应支持 completions、parallelism、backoffLimit、activeDeadlineSeconds 和 ttlSecondsAfterFinished。详情应展示活动、成功、失败数量，最近调度/成功时间、失败原因与消息，以及由该 CronJob 控制的有界近期 Job 列表。用户具备 `get cronjobs` 与 `create jobs` 权限时，可选择任一应用容器并临时覆盖 Command/Args 立即创建一次性 Job；不得修改 CronJob 调度或补跑历史任务。目标容器不存在、命令/参数越界或权限不足时，必须在 Kubernetes 写入前拒绝并审计。
+
 ## 2. 实现落点
 
 | 层 | 文件 | 职责 |
@@ -214,6 +230,7 @@
   - Table API 成功、priority 列过滤、Table API 回退和 cells 映射。
   - SelfSubjectRulesReview 过滤、规则缓存、失败关闭和集群级搜索范围。
   - Pod 日志 `pods/log` 授权、Previous 参数和审计。
+  - 多应用容器/Init Container 创建、调度与安全上下文规范化、亲和性 label 值大小写保持、Deployment 发布控制、Job 参数和 CronJob 指定容器覆盖执行。
   - 工作负载多 Pod/多容器日志聚合、20 流上限、逐流拒绝、全部拒绝/无 Pod/不可用错误分类和取消释放。
   - 通用创建/更新 Dry Run、Secret 保护、update→patch 回退、能力查询和删除策略。
   - Deployment ReplicaSet 与 StatefulSet ControllerRevision 历史、回滚冲突和 change-cause 恢复。
@@ -232,6 +249,7 @@
 - `cd web && npm run api:check && npm run typecheck`
 - `cd web && npm test -- --run`
 - Playwright Chromium/Firefox：多版本切换、动态表单、Diff、风险确认、排空、终端、Ephemeral Container 创建与移动端弹窗、聚合日志、Helm Diff/回滚/升级、端口转发、关系拓扑筛选、跨命名空间搜索、偏好同步、权限检查、本地模板、390px/320px/大字体/Android 和弹窗后代边界。
+- Playwright N05–N08：多容器与 Init Container 创建请求体、NodeSelector/容忍/亲和性/拓扑/PriorityClass/ServiceAccount/SecurityContext、Deployment 发布进度与发布控制、CronJob 批处理详情和指定容器 Command/Args 覆盖；在桌面 Chromium、Firefox 以及 320/360/390px 视口检查页面与弹窗横向溢出。
 - axe：资源浏览器、Helm、权限检查、列表、详情在亮暗主题下无 serious/critical 问题。
 - `make arch`
 

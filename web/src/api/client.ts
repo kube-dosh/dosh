@@ -78,8 +78,10 @@ import type {
   StorageClass,
   StorageClassDetail,
   UserPreferences,
+  CronJobRunInput,
   WorkloadDetail,
   WorkloadCreateInput,
+  WorkloadRolloutInput,
   WorkloadContainerConfigUpdateInput,
   WorkloadImageUpdateInput,
   WorkloadProbe,
@@ -191,6 +193,18 @@ function normalizeOverview(value: Overview): Overview {
 }
 
 function normalizeWorkloadDetail(value: WorkloadDetail): WorkloadDetail {
+  const normalizeContainer = (container: WorkloadDetail["containers"][number]) => ({
+    ...container,
+    ports: list(container.ports),
+    resources: container.resources ?? {
+      cpuRequestMilli: 0, cpuLimitMilli: 0, memoryRequestBytes: 0, memoryLimitBytes: 0,
+    },
+    env: list(container.env).map((variable) => ({ ...variable, value: variable.value ?? "" })),
+    volumeMounts: list(container.volumeMounts).map((mount) => ({ ...mount, readOnly: Boolean(mount.readOnly) })),
+    livenessProbe: normalizeWorkloadProbe(container.livenessProbe),
+    readinessProbe: normalizeWorkloadProbe(container.readinessProbe),
+    startupProbe: normalizeWorkloadProbe(container.startupProbe),
+  });
   return {
     ...value,
     images: list(value.images),
@@ -198,18 +212,10 @@ function normalizeWorkloadDetail(value: WorkloadDetail): WorkloadDetail {
     selector: record(value.selector),
     pods: list(value.pods),
     volumes: list(value.volumes).map((volume) => ({ ...volume, readOnly: Boolean(volume.readOnly) })),
-    containers: list(value.containers).map((container) => ({
-      ...container,
-      ports: list(container.ports),
-      resources: container.resources ?? {
-        cpuRequestMilli: 0, cpuLimitMilli: 0, memoryRequestBytes: 0, memoryLimitBytes: 0,
-      },
-      env: list(container.env).map((variable) => ({ ...variable, value: variable.value ?? "" })),
-      volumeMounts: list(container.volumeMounts).map((mount) => ({ ...mount, readOnly: Boolean(mount.readOnly) })),
-      livenessProbe: normalizeWorkloadProbe(container.livenessProbe),
-      readinessProbe: normalizeWorkloadProbe(container.readinessProbe),
-      startupProbe: normalizeWorkloadProbe(container.startupProbe),
-    })),
+    containers: list(value.containers).map(normalizeContainer),
+    initContainers: list(value.initContainers).map(normalizeContainer),
+    replicaSets: list(value.replicaSets).map((replicaSet) => ({ ...replicaSet, images: list(replicaSet.images) })),
+    batch: value.batch ? { ...value.batch, activeJobs: list(value.batch.activeJobs) } : undefined,
   };
 }
 
@@ -443,8 +449,13 @@ export const api = {
     request<WorkloadSummary>("/api/v1/workloads/create", { method: "POST", body: JSON.stringify(input) }),
   previewWorkload: (input: WorkloadCreateInput) =>
     request<DeploymentPreview>("/api/v1/workloads/create/preview", { method: "POST", body: JSON.stringify(input) }),
-  runCronJobOnce: (namespace: string, name: string) =>
-    request<WorkloadSummary>(`/api/v1/workloads/cronjob/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}/run`, { method: "POST" }),
+  runCronJobOnce: (namespace: string, name: string, input: CronJobRunInput = {}) =>
+    request<WorkloadSummary>(`/api/v1/workloads/cronjob/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}/run`, { method: "POST", body: JSON.stringify(input) }),
+  updateWorkloadRollout: (kind: string, namespace: string, name: string, input: WorkloadRolloutInput) =>
+    request<{ status: string }>(`/api/v1/workloads/${kind}/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}/rollout`, {
+      method: "POST",
+      body: JSON.stringify(input),
+    }),
   scaleWorkload: (kind: string, namespace: string, name: string, replicas: number) =>
     request<{ status: string }>(`/api/v1/workloads/${kind}/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}/scale`, {
       method: "POST",

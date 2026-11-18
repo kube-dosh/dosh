@@ -425,6 +425,59 @@ export interface WorkloadDetail extends WorkloadSummary {
   pods: PodSummary[];
   volumes: WorkloadVolume[];
   containers: WorkloadContainer[];
+  initContainers?: WorkloadContainer[];
+  rollout?: WorkloadRolloutStatus;
+  replicaSets?: WorkloadReplicaSet[];
+  batch?: WorkloadBatchStatus;
+}
+
+export interface WorkloadRolloutStatus {
+  paused: boolean;
+  strategy: string;
+  maxSurge?: string;
+  maxUnavailable?: string;
+  partition?: number;
+  observedGeneration: number;
+  updatedReplicas: number;
+  readyReplicas: number;
+  availableReplicas: number;
+  unavailableReplicas: number;
+}
+
+export interface WorkloadReplicaSet {
+  name: string;
+  revision: number;
+  current: boolean;
+  desired: number;
+  ready: number;
+  available: number;
+  images: string[];
+  createdAt: string;
+}
+
+export interface WorkloadBatchStatus {
+  active: number;
+  succeeded: number;
+  failed: number;
+  completions?: number;
+  parallelism?: number;
+  backoffLimit?: number;
+  activeDeadlineSeconds?: number;
+  ttlSecondsAfterFinished?: number;
+  lastScheduleTime?: string;
+  lastSuccessfulTime?: string;
+  failureReason?: string;
+  failureMessage?: string;
+  activeJobs?: WorkloadActiveJob[];
+}
+
+export interface WorkloadActiveJob {
+  name: string;
+  status: string;
+  succeeded: number;
+  failed: number;
+  startTime?: string;
+  completionTime?: string;
 }
 
 export interface WorkloadRevision {
@@ -540,6 +593,59 @@ export interface DeploymentEnvVar {
 
 export type WorkloadCreateKind = "deployment" | "statefulset" | "daemonset" | "job" | "cronjob";
 
+export interface WorkloadContainerSecurityContext {
+  runAsUser?: number;
+  runAsGroup?: number;
+  runAsNonRoot?: boolean;
+  readOnlyRootFilesystem?: boolean;
+  allowPrivilegeEscalation?: boolean;
+  capabilitiesAdd?: string[];
+  capabilitiesDrop?: string[];
+}
+
+export interface WorkloadPodSecurityContext {
+  runAsUser?: number;
+  runAsGroup?: number;
+  fsGroup?: number;
+  runAsNonRoot?: boolean;
+  seccompProfile?: "RuntimeDefault" | "Localhost" | "Unconfined";
+}
+
+export interface WorkloadContainerSpec {
+  name?: string;
+  image: string;
+  registryId?: string;
+  containerPort?: number;
+  cpuRequestMilli?: number;
+  cpuLimitMilli?: number;
+  memoryRequestBytes?: number;
+  memoryLimitBytes?: number;
+  env?: DeploymentEnvVar[];
+  command?: string[];
+  args?: string[];
+  securityContext?: WorkloadContainerSecurityContext;
+}
+
+export interface WorkloadToleration {
+  key?: string;
+  operator?: "Equal" | "Exists";
+  value?: string;
+  effect?: "" | "NoSchedule" | "PreferNoSchedule" | "NoExecute";
+  tolerationSeconds?: number;
+}
+
+export interface WorkloadNodeSelectorRequirement {
+  key: string;
+  operator: "In" | "NotIn" | "Exists" | "DoesNotExist";
+  values?: string[];
+}
+
+export interface WorkloadTopologySpreadConstraint {
+  maxSkew: number;
+  topologyKey: string;
+  whenUnsatisfiable: "DoNotSchedule" | "ScheduleAnyway";
+}
+
 export interface WorkloadCreateInput {
   kind: WorkloadCreateKind;
   name: string;
@@ -550,21 +656,50 @@ export interface WorkloadCreateInput {
   concurrencyPolicy?: "Allow" | "Forbid" | "Replace";
   suspend?: boolean;
   containerName?: string;
-  image: string;
+  image?: string;
   registryId?: string;
-  containerPort: number;
+  containerPort?: number;
   cpuRequestMilli?: number;
   cpuLimitMilli?: number;
   memoryRequestBytes?: number;
   memoryLimitBytes?: number;
   env?: DeploymentEnvVar[];
   labels?: Record<string, string>;
+  containers?: WorkloadContainerSpec[];
+  initContainers?: WorkloadContainerSpec[];
+  command?: string[];
+  args?: string[];
+  nodeSelector?: Record<string, string>;
+  tolerations?: WorkloadToleration[];
+  nodeAffinity?: WorkloadNodeSelectorRequirement[];
+  topologySpreadConstraints?: WorkloadTopologySpreadConstraint[];
+  priorityClassName?: string;
+  serviceAccountName?: string;
+  podSecurityContext?: WorkloadPodSecurityContext;
+  jobCompletions?: number;
+  jobParallelism?: number;
+  jobBackoffLimit?: number;
+  jobActiveDeadlineSeconds?: number;
+  jobTtlSecondsAfterFinished?: number;
 }
 
 export type DeploymentCreateInput = WorkloadCreateInput;
 
 export interface DeploymentPreview {
   yaml: string;
+}
+
+export interface WorkloadRolloutInput {
+  paused?: boolean;
+  maxSurge?: string;
+  maxUnavailable?: string;
+  resourceVersion?: string;
+}
+
+export interface CronJobRunInput {
+  containerName?: string;
+  command?: string[];
+  args?: string[];
 }
 
 export type AuditExportFormat = "csv" | "json";

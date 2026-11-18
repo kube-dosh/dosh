@@ -1459,7 +1459,7 @@ export interface paths {
         put?: never;
         /**
          * Validate with API Server dry-run and create a workload
-         * @description Creates one Deployment, StatefulSet, DaemonSet, Job or CronJob with a single application container. The request is validated locally, then submitted once with API Server dry-run before the real create request.
+         * @description Creates one Deployment, StatefulSet, DaemonSet, Job or CronJob with one or more application containers and optional init containers. The request is validated locally, then submitted once with API Server dry-run before the real create request.
          */
         post: {
             parameters: {
@@ -1562,7 +1562,11 @@ export interface paths {
                 };
                 cookie?: never;
             };
-            requestBody?: never;
+            requestBody?: {
+                content: {
+                    "application/json": components["schemas"]["CronJobRunRequest"];
+                };
+            };
             responses: {
                 /** @description Job created from the CronJob template */
                 201: {
@@ -1889,6 +1893,60 @@ export interface paths {
             };
             responses: {
                 /** @description CronJob scheduling state updated */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["OperationStatus"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+                404: components["responses"]["NotFound"];
+                409: components["responses"]["Conflict"];
+                501: components["responses"]["NotSupported"];
+                503: components["responses"]["DependencyUnavailable"];
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/workloads/{kind}/{namespace}/{name}/rollout": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Pause, resume or tune a Deployment rolling update
+         * @description Only Deployments are supported. Values may be integers or percentages.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    kind: components["parameters"]["KindPath"];
+                    namespace: components["parameters"]["NamespacePath"];
+                    name: components["parameters"]["Name"];
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["WorkloadRolloutUpdate"];
+                };
+            };
+            responses: {
+                /** @description Rollout settings updated */
                 200: {
                     headers: {
                         [name: string]: unknown;
@@ -5620,17 +5678,106 @@ export interface components {
             /** @default false */
             suspend: boolean;
             containerName?: string;
-            image: string;
+            image?: string;
             registryId?: string;
-            containerPort: number;
+            containerPort?: number;
             cpuRequestMilli?: number;
             cpuLimitMilli?: number;
             memoryRequestBytes?: number;
             memoryLimitBytes?: number;
             env?: components["schemas"]["DeploymentEnvVar"][];
+            /** @description Preferred application-container list. Legacy image/containerPort fields are converted to one container when omitted. */
+            containers?: components["schemas"]["WorkloadContainerSpec"][];
+            initContainers?: components["schemas"]["WorkloadContainerSpec"][];
+            command?: string[];
+            args?: string[];
+            nodeSelector?: {
+                [key: string]: string;
+            };
+            tolerations?: components["schemas"]["WorkloadToleration"][];
+            nodeAffinity?: components["schemas"]["WorkloadNodeSelectorRequirement"][];
+            topologySpreadConstraints?: components["schemas"]["WorkloadTopologySpreadConstraint"][];
+            priorityClassName?: string;
+            serviceAccountName?: string;
+            podSecurityContext?: components["schemas"]["WorkloadPodSecurityContext"];
+            jobCompletions?: number;
+            jobParallelism?: number;
+            jobBackoffLimit?: number;
+            /** Format: int64 */
+            jobActiveDeadlineSeconds?: number;
+            jobTtlSecondsAfterFinished?: number;
             labels?: {
                 [key: string]: string;
             };
+        };
+        WorkloadContainerSpec: {
+            name?: string;
+            image: string;
+            registryId?: string;
+            containerPort?: number;
+            cpuRequestMilli?: number;
+            cpuLimitMilli?: number;
+            memoryRequestBytes?: number;
+            memoryLimitBytes?: number;
+            env?: components["schemas"]["DeploymentEnvVar"][];
+            command?: string[];
+            args?: string[];
+            securityContext?: components["schemas"]["WorkloadContainerSecurityContext"];
+        };
+        WorkloadToleration: {
+            key?: string;
+            /** @enum {string} */
+            operator?: "Equal" | "Exists";
+            value?: string;
+            /** @enum {string} */
+            effect?: "" | "NoSchedule" | "PreferNoSchedule" | "NoExecute";
+            /** Format: int64 */
+            tolerationSeconds?: number;
+        };
+        WorkloadNodeSelectorRequirement: {
+            key: string;
+            /** @enum {string} */
+            operator: "In" | "NotIn" | "Exists" | "DoesNotExist";
+            values?: string[];
+        };
+        WorkloadTopologySpreadConstraint: {
+            maxSkew: number;
+            topologyKey: string;
+            /** @enum {string} */
+            whenUnsatisfiable: "DoNotSchedule" | "ScheduleAnyway";
+        };
+        WorkloadPodSecurityContext: {
+            /** Format: int64 */
+            runAsUser?: number;
+            /** Format: int64 */
+            runAsGroup?: number;
+            /** Format: int64 */
+            fsGroup?: number;
+            runAsNonRoot?: boolean;
+            /** @enum {string} */
+            seccompProfile?: "RuntimeDefault" | "Localhost" | "Unconfined";
+        };
+        WorkloadContainerSecurityContext: {
+            /** Format: int64 */
+            runAsUser?: number;
+            /** Format: int64 */
+            runAsGroup?: number;
+            runAsNonRoot?: boolean;
+            readOnlyRootFilesystem?: boolean;
+            allowPrivilegeEscalation?: boolean;
+            capabilitiesAdd?: string[];
+            capabilitiesDrop?: string[];
+        };
+        CronJobRunRequest: {
+            containerName?: string;
+            command?: string[];
+            args?: string[];
+        };
+        WorkloadRolloutUpdate: {
+            paused?: boolean;
+            maxSurge?: string;
+            maxUnavailable?: string;
+            resourceVersion?: string;
         };
         WorkloadCreateKindRequest: components["schemas"]["WorkloadCreateRequest"] & Record<string, never>;
         DeploymentPreview: {
@@ -5644,6 +5791,63 @@ export interface components {
             pods: components["schemas"]["PodSummary"][];
             volumes: components["schemas"]["WorkloadVolume"][];
             containers: components["schemas"]["WorkloadContainer"][];
+            initContainers?: components["schemas"]["WorkloadContainer"][];
+            rollout?: components["schemas"]["WorkloadRolloutStatus"];
+            replicaSets?: components["schemas"]["WorkloadReplicaSet"][];
+            batch?: components["schemas"]["WorkloadBatchStatus"];
+        };
+        WorkloadRolloutStatus: {
+            paused: boolean;
+            strategy: string;
+            maxSurge?: string;
+            maxUnavailable?: string;
+            partition?: number;
+            /** Format: int64 */
+            observedGeneration: number;
+            updatedReplicas: number;
+            readyReplicas: number;
+            availableReplicas: number;
+            unavailableReplicas: number;
+        };
+        WorkloadReplicaSet: {
+            name: string;
+            /** Format: int64 */
+            revision: number;
+            current: boolean;
+            desired: number;
+            ready: number;
+            available: number;
+            images: string[];
+            /** Format: date-time */
+            createdAt: string;
+        };
+        WorkloadBatchStatus: {
+            active: number;
+            succeeded: number;
+            failed: number;
+            completions?: number;
+            parallelism?: number;
+            backoffLimit?: number;
+            /** Format: int64 */
+            activeDeadlineSeconds?: number;
+            ttlSecondsAfterFinished?: number;
+            /** Format: date-time */
+            lastScheduleTime?: string;
+            /** Format: date-time */
+            lastSuccessfulTime?: string;
+            failureReason?: string;
+            failureMessage?: string;
+            activeJobs?: components["schemas"]["WorkloadActiveJob"][];
+        };
+        WorkloadActiveJob: {
+            name: string;
+            status: string;
+            succeeded: number;
+            failed: number;
+            /** Format: date-time */
+            startTime?: string;
+            /** Format: date-time */
+            completionTime?: string;
         };
         WorkloadContainer: {
             name: string;

@@ -416,11 +416,68 @@ type WorkloadSummary struct {
 
 type WorkloadDetail struct {
 	WorkloadSummary
-	Conditions []Condition         `json:"conditions"`
-	Selector   map[string]string   `json:"selector"`
-	Pods       []PodSummary        `json:"pods"`
-	Volumes    []WorkloadVolume    `json:"volumes"`
-	Containers []WorkloadContainer `json:"containers"`
+	Conditions     []Condition            `json:"conditions"`
+	Selector       map[string]string      `json:"selector"`
+	Pods           []PodSummary           `json:"pods"`
+	Volumes        []WorkloadVolume       `json:"volumes"`
+	Containers     []WorkloadContainer    `json:"containers"`
+	InitContainers []WorkloadContainer    `json:"initContainers,omitempty"`
+	Rollout        *WorkloadRolloutStatus `json:"rollout,omitempty"`
+	ReplicaSets    []WorkloadReplicaSet   `json:"replicaSets,omitempty"`
+	Batch          *WorkloadBatchStatus   `json:"batch,omitempty"`
+}
+
+// WorkloadRolloutStatus exposes the controller's declarative rollout settings
+// and the aggregate progress fields needed to explain a stalled release.
+type WorkloadRolloutStatus struct {
+	Paused              bool   `json:"paused"`
+	Strategy            string `json:"strategy"`
+	MaxSurge            string `json:"maxSurge,omitempty"`
+	MaxUnavailable      string `json:"maxUnavailable,omitempty"`
+	Partition           int32  `json:"partition,omitempty"`
+	ObservedGeneration  int64  `json:"observedGeneration"`
+	UpdatedReplicas     int32  `json:"updatedReplicas"`
+	ReadyReplicas       int32  `json:"readyReplicas"`
+	AvailableReplicas   int32  `json:"availableReplicas"`
+	UnavailableReplicas int32  `json:"unavailableReplicas"`
+}
+
+type WorkloadReplicaSet struct {
+	Name      string    `json:"name"`
+	Revision  int64     `json:"revision"`
+	Current   bool      `json:"current"`
+	Desired   int32     `json:"desired"`
+	Ready     int32     `json:"ready"`
+	Available int32     `json:"available"`
+	Images    []string  `json:"images"`
+	CreatedAt time.Time `json:"createdAt"`
+}
+
+// WorkloadBatchStatus summarizes Job and CronJob execution details. ActiveJobs
+// is populated for CronJobs from Jobs controlled by the selected CronJob.
+type WorkloadBatchStatus struct {
+	Active                  int32               `json:"active"`
+	Succeeded               int32               `json:"succeeded"`
+	Failed                  int32               `json:"failed"`
+	Completions             *int32              `json:"completions,omitempty"`
+	Parallelism             *int32              `json:"parallelism,omitempty"`
+	BackoffLimit            *int32              `json:"backoffLimit,omitempty"`
+	ActiveDeadlineSeconds   *int64              `json:"activeDeadlineSeconds,omitempty"`
+	TTLSecondsAfterFinished *int32              `json:"ttlSecondsAfterFinished,omitempty"`
+	LastScheduleTime        *time.Time          `json:"lastScheduleTime,omitempty"`
+	LastSuccessfulTime      *time.Time          `json:"lastSuccessfulTime,omitempty"`
+	FailureReason           string              `json:"failureReason,omitempty"`
+	FailureMessage          string              `json:"failureMessage,omitempty"`
+	ActiveJobs              []WorkloadActiveJob `json:"activeJobs,omitempty"`
+}
+
+type WorkloadActiveJob struct {
+	Name           string     `json:"name"`
+	Status         string     `json:"status"`
+	Succeeded      int32      `json:"succeeded"`
+	Failed         int32      `json:"failed"`
+	StartTime      *time.Time `json:"startTime,omitempty"`
+	CompletionTime *time.Time `json:"completionTime,omitempty"`
 }
 
 // WorkloadRevision describes one retained pod-template revision for a

@@ -315,7 +315,11 @@ func (c *Client) GetWorkload(ctx context.Context, kind, namespace, name string) 
 	var selector *metav1.LabelSelector
 	conditions := make([]domain.Condition, 0)
 	var containers []corev1.Container
+	var initContainers []corev1.Container
 	var volumes []corev1.Volume
+	var rollout *domain.WorkloadRolloutStatus
+	var replicaSets []domain.WorkloadReplicaSet
+	var batchStatus *domain.WorkloadBatchStatus
 	switch strings.ToLower(kind) {
 	case "deployment":
 		item, err := c.clientset.AppsV1().Deployments(namespace).Get(ctx, name, metav1.GetOptions{})
@@ -325,7 +329,10 @@ func (c *Client) GetWorkload(ctx context.Context, kind, namespace, name string) 
 		summary = deploymentSummary(*item)
 		selector = item.Spec.Selector
 		containers = item.Spec.Template.Spec.Containers
+		initContainers = item.Spec.Template.Spec.InitContainers
 		volumes = item.Spec.Template.Spec.Volumes
+		rollout = deploymentRolloutStatus(*item)
+		replicaSets = c.deploymentReplicaSets(ctx, *item)
 		for _, condition := range item.Status.Conditions {
 			conditions = append(conditions, domain.Condition{Type: string(condition.Type), Status: string(condition.Status), Reason: condition.Reason, Message: condition.Message, LastTransitionTime: condition.LastTransitionTime.Time})
 		}
@@ -337,7 +344,9 @@ func (c *Client) GetWorkload(ctx context.Context, kind, namespace, name string) 
 		summary = statefulSetSummary(*item)
 		selector = item.Spec.Selector
 		containers = item.Spec.Template.Spec.Containers
+		initContainers = item.Spec.Template.Spec.InitContainers
 		volumes = item.Spec.Template.Spec.Volumes
+		rollout = statefulSetRolloutStatus(*item)
 		for _, condition := range item.Status.Conditions {
 			conditions = append(conditions, domain.Condition{Type: string(condition.Type), Status: string(condition.Status), Reason: condition.Reason, Message: condition.Message, LastTransitionTime: condition.LastTransitionTime.Time})
 		}
@@ -349,6 +358,7 @@ func (c *Client) GetWorkload(ctx context.Context, kind, namespace, name string) 
 		summary = daemonSetSummary(*item)
 		selector = item.Spec.Selector
 		containers = item.Spec.Template.Spec.Containers
+		initContainers = item.Spec.Template.Spec.InitContainers
 		volumes = item.Spec.Template.Spec.Volumes
 		for _, condition := range item.Status.Conditions {
 			conditions = append(conditions, domain.Condition{Type: string(condition.Type), Status: string(condition.Status), Reason: condition.Reason, Message: condition.Message, LastTransitionTime: condition.LastTransitionTime.Time})
@@ -361,7 +371,9 @@ func (c *Client) GetWorkload(ctx context.Context, kind, namespace, name string) 
 		summary = jobSummary(*item)
 		selector = item.Spec.Selector
 		containers = item.Spec.Template.Spec.Containers
+		initContainers = item.Spec.Template.Spec.InitContainers
 		volumes = item.Spec.Template.Spec.Volumes
+		batchStatus = jobBatchStatus(*item)
 		for _, condition := range item.Status.Conditions {
 			conditions = append(conditions, domain.Condition{Type: string(condition.Type), Status: string(condition.Status), Reason: condition.Reason, Message: condition.Message, LastTransitionTime: condition.LastTransitionTime.Time})
 		}
@@ -372,7 +384,9 @@ func (c *Client) GetWorkload(ctx context.Context, kind, namespace, name string) 
 		}
 		summary = cronJobSummary(*item)
 		containers = item.Spec.JobTemplate.Spec.Template.Spec.Containers
+		initContainers = item.Spec.JobTemplate.Spec.Template.Spec.InitContainers
 		volumes = item.Spec.JobTemplate.Spec.Template.Spec.Volumes
+		batchStatus = c.cronJobBatchStatus(ctx, *item)
 	default:
 		return domain.WorkloadDetail{}, fmt.Errorf("%w: workload kind %q", domain.ErrUnsupported, kind)
 	}
@@ -392,7 +406,136 @@ func (c *Client) GetWorkload(ctx context.Context, kind, namespace, name string) 
 		Pods:            pods,
 		Volumes:         workloadVolumes(volumes),
 		Containers:      workloadContainers(containers),
+		InitContainers:  workloadContainers(initContainers),
+		Rollout:         rollout,
+		ReplicaSets:     replicaSets,
+		Batch:           batchStatus,
 	}, nil
+}
+
+func deploymentRolloutStatus(item appsv1.Deployment) *domain.WorkloadRolloutStatus {
+	status := &domain.WorkloadRolloutStatus{
+		Paused: item.Spec.Paused, Strategy: string(item.Spec.Strategy.Type),
+		ObservedGeneration: item.Status.ObservedGeneration, UpdatedReplicas: item.Status.UpdatedReplicas,
+		ReadyReplicas: item.Status.ReadyReplicas, AvailableReplicas: item.Status.AvailableReplicas,
+		UnavailableReplicas: item.Status.UnavailableReplicas,
+	}
+	if rolling := item.Spec.Strategy.RollingUpdate; rolling != nil {
+		if rolling.MaxSurge != nil {
+			status.MaxSurge = rolling.MaxSurge.String()
+		}
+		if rolling.MaxUnavailable != nil {
+			status.MaxUnavailable = rolling.MaxUnavailable.String()
+		}
+	}
+	return status
+}
+
+func statefulSetRolloutStatus(item appsv1.StatefulSet) *domain.WorkloadRolloutStatus {
+	status := &domain.WorkloadRolloutStatus{
+		Strategy: string(item.Spec.UpdateStrategy.Type), ObservedGeneration: item.Status.ObservedGeneration,
+		UpdatedReplicas: item.Status.UpdatedReplicas, ReadyReplicas: item.Status.ReadyReplicas,
+		AvailableReplicas: item.Status.AvailableReplicas,
+	}
+	if item.Spec.Replicas != nil && *item.Spec.Replicas > item.Status.ReadyReplicas {
+		status.UnavailableReplicas = *item.Spec.Replicas - item.Status.ReadyReplicas
+	}
+	if rolling := item.Spec.UpdateStrategy.RollingUpdate; rolling != nil && rolling.Partition != nil {
+		status.Partition = *rolling.Partition
+	}
+	return status
+}
+
+func (c *Client) deploymentReplicaSets(ctx context.Context, deployment appsv1.Deployment) []domain.WorkloadReplicaSet {
+	selector, err := metav1.LabelSelectorAsSelector(deployment.Spec.Selector)
+	if err != nil {
+		return nil
+	}
+	items, err := c.clientset.AppsV1().ReplicaSets(deployment.Namespace).List(ctx, metav1.ListOptions{LabelSelector: selector.String()})
+	if err != nil {
+		return nil
+	}
+	currentRevision := deployment.Annotations["deployment.kubernetes.io/revision"]
+	out := make([]domain.WorkloadReplicaSet, 0, len(items.Items))
+	for _, item := range items.Items {
+		if !metav1.IsControlledBy(&item, &deployment) {
+			continue
+		}
+		revision, _ := strconv.ParseInt(item.Annotations["deployment.kubernetes.io/revision"], 10, 64)
+		desired := int32(0)
+		if item.Spec.Replicas != nil {
+			desired = *item.Spec.Replicas
+		}
+		out = append(out, domain.WorkloadReplicaSet{
+			Name: item.Name, Revision: revision, Current: item.Annotations["deployment.kubernetes.io/revision"] == currentRevision,
+			Desired: desired, Ready: item.Status.ReadyReplicas, Available: item.Status.AvailableReplicas,
+			Images: podTemplateImages(item.Spec.Template.Spec.Containers), CreatedAt: item.CreationTimestamp.Time,
+		})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Revision > out[j].Revision })
+	return out
+}
+
+func jobBatchStatus(item batchv1.Job) *domain.WorkloadBatchStatus {
+	status := &domain.WorkloadBatchStatus{
+		Active: item.Status.Active, Succeeded: item.Status.Succeeded, Failed: item.Status.Failed,
+		Completions: item.Spec.Completions, Parallelism: item.Spec.Parallelism, BackoffLimit: item.Spec.BackoffLimit,
+		ActiveDeadlineSeconds: item.Spec.ActiveDeadlineSeconds, TTLSecondsAfterFinished: item.Spec.TTLSecondsAfterFinished,
+	}
+	for _, condition := range item.Status.Conditions {
+		if condition.Type == batchv1.JobFailed && condition.Status == corev1.ConditionTrue {
+			status.FailureReason = condition.Reason
+			status.FailureMessage = condition.Message
+		}
+	}
+	return status
+}
+
+func (c *Client) cronJobBatchStatus(ctx context.Context, cronJob batchv1.CronJob) *domain.WorkloadBatchStatus {
+	status := &domain.WorkloadBatchStatus{
+		Active: int32(len(cronJob.Status.Active)), LastScheduleTime: timePointer(cronJob.Status.LastScheduleTime), LastSuccessfulTime: timePointer(cronJob.Status.LastSuccessfulTime),
+		Completions: cronJob.Spec.JobTemplate.Spec.Completions, Parallelism: cronJob.Spec.JobTemplate.Spec.Parallelism,
+		BackoffLimit: cronJob.Spec.JobTemplate.Spec.BackoffLimit, ActiveDeadlineSeconds: cronJob.Spec.JobTemplate.Spec.ActiveDeadlineSeconds,
+		TTLSecondsAfterFinished: cronJob.Spec.JobTemplate.Spec.TTLSecondsAfterFinished,
+	}
+	jobs, err := c.clientset.BatchV1().Jobs(cronJob.Namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return status
+	}
+	recent := make([]batchv1.Job, 0)
+	for _, job := range jobs.Items {
+		if metav1.IsControlledBy(&job, &cronJob) {
+			recent = append(recent, job)
+		}
+	}
+	sort.Slice(recent, func(i, j int) bool { return recent[i].CreationTimestamp.After(recent[j].CreationTimestamp.Time) })
+	if len(recent) > 10 {
+		recent = recent[:10]
+	}
+	for _, job := range recent {
+		status.ActiveJobs = append(status.ActiveJobs, domain.WorkloadActiveJob{
+			Name: job.Name, Status: jobSummary(job).Status, Succeeded: job.Status.Succeeded, Failed: job.Status.Failed,
+			StartTime: timePointer(job.Status.StartTime), CompletionTime: timePointer(job.Status.CompletionTime),
+		})
+		if status.FailureReason == "" {
+			for _, condition := range job.Status.Conditions {
+				if condition.Type == batchv1.JobFailed && condition.Status == corev1.ConditionTrue {
+					status.FailureReason = condition.Reason
+					status.FailureMessage = fmt.Sprintf("%s: %s", job.Name, condition.Message)
+					break
+				}
+			}
+		}
+	}
+	return status
+}
+
+func timePointer(value *metav1.Time) *time.Time {
+	if value == nil {
+		return nil
+	}
+	result := value.Time
+	return &result
 }
 
 func (c *Client) ScaleWorkload(ctx context.Context, kind, namespace, name string, replicas int32, expectedResourceVersion string) error {
@@ -595,6 +738,72 @@ func (c *Client) SetCronJobSuspend(ctx context.Context, namespace, name string, 
 	suspend := update.Suspend
 	item.Spec.Suspend = &suspend
 	_, err = c.clientset.BatchV1().CronJobs(namespace).Update(ctx, item, metav1.UpdateOptions{})
+	return mapKubeError(err)
+}
+
+// UpdateWorkloadRollout changes a Deployment's pause flag and rolling-update
+// parameters using a read-modify-write guarded by resourceVersion. A stale
+// version is idempotent when the requested state is already present.
+func (c *Client) UpdateWorkloadRollout(ctx context.Context, kind, namespace, name string, update domain.WorkloadRolloutUpdate) error {
+	ctx, cancel := c.withTimeout(ctx)
+	defer cancel()
+	if !strings.EqualFold(kind, "deployment") {
+		return fmt.Errorf("%w: rollout controls are only supported for deployments", domain.ErrUnsupported)
+	}
+	item, err := c.clientset.AppsV1().Deployments(namespace).Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		return mapKubeError(err)
+	}
+	changed := false
+	if update.Paused != nil && item.Spec.Paused != *update.Paused {
+		paused := *update.Paused
+		item.Spec.Paused = paused
+		changed = true
+	}
+	if update.MaxSurge != "" || update.MaxUnavailable != "" {
+		if item.Spec.Strategy.Type != appsv1.RollingUpdateDeploymentStrategyType {
+			item.Spec.Strategy.Type = appsv1.RollingUpdateDeploymentStrategyType
+			changed = true
+		}
+		if item.Spec.Strategy.RollingUpdate == nil {
+			item.Spec.Strategy.RollingUpdate = &appsv1.RollingUpdateDeployment{}
+			changed = true
+		}
+		if update.MaxSurge != "" {
+			value, err := parseRolloutValue(update.MaxSurge)
+			if err != nil {
+				return err
+			}
+			if item.Spec.Strategy.RollingUpdate.MaxSurge == nil || item.Spec.Strategy.RollingUpdate.MaxSurge.String() != value.String() {
+				item.Spec.Strategy.RollingUpdate.MaxSurge = value
+				changed = true
+			}
+		}
+		if update.MaxUnavailable != "" {
+			value, err := parseRolloutValue(update.MaxUnavailable)
+			if err != nil {
+				return err
+			}
+			if item.Spec.Strategy.RollingUpdate.MaxUnavailable == nil || item.Spec.Strategy.RollingUpdate.MaxUnavailable.String() != value.String() {
+				item.Spec.Strategy.RollingUpdate.MaxUnavailable = value
+				changed = true
+			}
+		}
+		if item.Spec.Strategy.RollingUpdate.MaxSurge != nil && item.Spec.Strategy.RollingUpdate.MaxUnavailable != nil &&
+			item.Spec.Strategy.RollingUpdate.MaxSurge.String() == "0" && item.Spec.Strategy.RollingUpdate.MaxUnavailable.String() == "0" {
+			return fmt.Errorf("%w: maxSurge and maxUnavailable cannot both be zero", domain.ErrInvalid)
+		}
+	}
+	if update.ResourceVersion != "" && item.ResourceVersion != update.ResourceVersion {
+		if !changed {
+			return nil
+		}
+		return fmt.Errorf("%w: expected %s, got %s", domain.ErrConflict, update.ResourceVersion, item.ResourceVersion)
+	}
+	if !changed {
+		return nil
+	}
+	_, err = c.clientset.AppsV1().Deployments(namespace).Update(ctx, item, metav1.UpdateOptions{})
 	return mapKubeError(err)
 }
 

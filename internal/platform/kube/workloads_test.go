@@ -19,6 +19,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	dynamicfake "k8s.io/client-go/dynamic/fake"
 	k8sfake "k8s.io/client-go/kubernetes/fake"
 	k8stesting "k8s.io/client-go/testing"
@@ -896,6 +897,175 @@ func TestRollbackDeploymentRestoresPodTemplateAndChangeCause(t *testing.T) {
 	}
 	if updated.Spec.Replicas == nil || *updated.Spec.Replicas != 2 || updated.Labels["team"] != "platform" {
 		t.Fatalf("rollback changed unrelated fields: replicas=%v labels=%v", updated.Spec.Replicas, updated.Labels)
+	}
+}
+
+func TestWorkloadCreateObjectsIncludeContainersSchedulingSecurityAndBatchOptions(t *testing.T) {
+	runAsUser := int64(1000)
+	runAsNonRoot := true
+	readOnly := true
+	tolerationSeconds := int64(30)
+	completions := int32(4)
+	parallelism := int32(2)
+	backoffLimit := int32(3)
+	deadline := int64(600)
+	ttl := int32(300)
+	spec := domain.WorkloadCreateSpec{
+		Kind: "job", Name: "migrate", Namespace: "prod",
+		Containers: []domain.WorkloadContainerSpec{
+			{Name: "app", Image: "registry.test/app:2", ContainerPort: 8080, Command: []string{"/app"}, Args: []string{"serve"}, CPURequestMilli: 100},
+			{Name: "sidecar", Image: "registry.test/sidecar:1", Env: []domain.DeploymentEnvVar{{Name: "MODE", Value: "proxy"}}, SecurityContext: &domain.WorkloadContainerSecurityContext{RunAsUser: &runAsUser, ReadOnlyRootFilesystem: &readOnly}},
+		},
+		InitContainers:            []domain.WorkloadContainerSpec{{Name: "init-db", Image: "busybox:1.37", Command: []string{"sh", "-c", "wait-db"}}},
+		NodeSelector:              map[string]string{"node-pool": "gpu"},
+		Tolerations:               []domain.WorkloadToleration{{Key: "dedicated", Operator: "Equal", Value: "gpu", Effect: "NoExecute", TolerationSeconds: &tolerationSeconds}},
+		NodeAffinity:              []domain.WorkloadNodeSelectorRequirement{{Key: "topology.kubernetes.io/zone", Operator: "In", Values: []string{"az-a"}}},
+		TopologySpreadConstraints: []domain.WorkloadTopologySpreadConstraint{{MaxSkew: 1, TopologyKey: "kubernetes.io/hostname", WhenUnsatisfiable: "DoNotSchedule"}},
+		PriorityClassName:         "high-priority", ServiceAccountName: "migrator",
+		PodSecurityContext: &domain.WorkloadPodSecurityContext{RunAsUser: &runAsUser, RunAsNonRoot: &runAsNonRoot},
+		JobCompletions:     &completions, JobParallelism: &parallelism, JobBackoffLimit: &backoffLimit,
+		JobActiveDeadlineSeconds: &deadline, JobTTLSecondsAfterFinished: &ttl,
+	}
+	job := jobForCreate(spec)
+	pod := job.Spec.Template.Spec
+	if len(pod.Containers) != 2 || pod.Containers[0].Name != "app" || pod.Containers[1].Name != "sidecar" || pod.Containers[1].Command != nil {
+		t.Fatalf("containers = %#v", pod.Containers)
+	}
+	if len(pod.InitContainers) != 1 || pod.InitContainers[0].Name != "init-db" || len(pod.InitContainers[0].Command) != 3 {
+		t.Fatalf("init containers = %#v", pod.InitContainers)
+	}
+	if pod.NodeSelector["node-pool"] != "gpu" || len(pod.Tolerations) != 1 || pod.Tolerations[0].TolerationSeconds == nil || *pod.Tolerations[0].TolerationSeconds != 30 {
+		t.Fatalf("scheduling = %#v", pod)
+	}
+	if pod.Affinity == nil || pod.Affinity.NodeAffinity == nil || pod.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution == nil {
+		t.Fatalf("affinity = %#v", pod.Affinity)
+	}
+	if len(pod.TopologySpreadConstraints) != 1 || pod.TopologySpreadConstraints[0].WhenUnsatisfiable != corev1.DoNotSchedule || pod.TopologySpreadConstraints[0].LabelSelector == nil {
+		t.Fatalf("topology = %#v", pod.TopologySpreadConstraints)
+	}
+	if pod.PriorityClassName != "high-priority" || pod.ServiceAccountName != "migrator" || pod.SecurityContext == nil || pod.SecurityContext.RunAsNonRoot == nil || !*pod.SecurityContext.RunAsNonRoot {
+		t.Fatalf("pod settings = %#v", pod)
+	}
+	if pod.Containers[1].SecurityContext == nil || pod.Containers[1].SecurityContext.ReadOnlyRootFilesystem == nil || !*pod.Containers[1].SecurityContext.ReadOnlyRootFilesystem {
+		t.Fatalf("container security context = %#v", pod.Containers[1].SecurityContext)
+	}
+	if job.Spec.Completions == nil || *job.Spec.Completions != 4 || job.Spec.Parallelism == nil || *job.Spec.Parallelism != 2 || job.Spec.BackoffLimit == nil || *job.Spec.BackoffLimit != 3 || job.Spec.ActiveDeadlineSeconds == nil || *job.Spec.ActiveDeadlineSeconds != 600 || job.Spec.TTLSecondsAfterFinished == nil || *job.Spec.TTLSecondsAfterFinished != 300 {
+		t.Fatalf("job options = %#v", job.Spec)
+	}
+}
+
+func TestRunCronJobOnceOverridesOnlySelectedContainer(t *testing.T) {
+	cronJob := &batchv1.CronJob{
+		ObjectMeta: metav1.ObjectMeta{Name: "backup", Namespace: "prod"},
+		Spec: batchv1.CronJobSpec{JobTemplate: batchv1.JobTemplateSpec{Spec: batchv1.JobSpec{Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{
+			RestartPolicy: corev1.RestartPolicyOnFailure,
+			Containers: []corev1.Container{
+				{Name: "app", Image: "backup:1", Command: []string{"backup"}, Args: []string{"--scheduled"}},
+				{Name: "worker", Image: "worker:1", Command: []string{"worker"}, Args: []string{"--queue"}},
+			},
+		}}}}},
+	}
+	client, clientset := newFakeKubeClient(cronJob)
+	if _, err := client.RunCronJobOnce(context.Background(), "prod", "backup", domain.CronJobRunInput{
+		ContainerName: "worker", Command: []string{"/bin/sh", "-c"}, Args: []string{"worker --once"},
+	}); err != nil {
+		t.Fatalf("RunCronJobOnce() error = %v", err)
+	}
+	jobs, err := clientset.BatchV1().Jobs("prod").List(context.Background(), metav1.ListOptions{})
+	if err != nil || len(jobs.Items) != 1 {
+		t.Fatalf("jobs = %#v error = %v", jobs, err)
+	}
+	containers := jobs.Items[0].Spec.Template.Spec.Containers
+	if containers[0].Command[0] != "backup" || containers[0].Args[0] != "--scheduled" {
+		t.Fatalf("unselected container changed = %#v", containers[0])
+	}
+	if len(containers[1].Command) != 2 || containers[1].Command[0] != "/bin/sh" || containers[1].Args[0] != "worker --once" {
+		t.Fatalf("selected container = %#v", containers[1])
+	}
+}
+
+func TestGetWorkloadIncludesRolloutReplicaSetsAndBatchStatus(t *testing.T) {
+	deployment := testDeployment()
+	deployment.UID = "deployment-uid"
+	deployment.Annotations = map[string]string{"deployment.kubernetes.io/revision": "3"}
+	one := intstr.FromInt32(1)
+	deployment.Spec.Strategy = appsv1.DeploymentStrategy{Type: appsv1.RollingUpdateDeploymentStrategyType, RollingUpdate: &appsv1.RollingUpdateDeployment{MaxSurge: &one}}
+	deployment.Status = appsv1.DeploymentStatus{ObservedGeneration: 7, UpdatedReplicas: 1, ReadyReplicas: 1, AvailableReplicas: 1, UnavailableReplicas: 1}
+	deployment.Spec.Paused = true
+	replicaSet := &appsv1.ReplicaSet{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "api-current", Namespace: "prod",
+			Labels:          map[string]string{"app": "api"},
+			Annotations:     map[string]string{"deployment.kubernetes.io/revision": "3"},
+			OwnerReferences: []metav1.OwnerReference{{APIVersion: "apps/v1", Kind: "Deployment", Name: deployment.Name, UID: deployment.UID, Controller: boolPointer(true)}},
+		},
+		Spec:   appsv1.ReplicaSetSpec{Replicas: int32Pointer(2), Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "api", Image: "registry.test/api:3"}}}}},
+		Status: appsv1.ReplicaSetStatus{ReadyReplicas: 1, AvailableReplicas: 1},
+	}
+	client, _ := newFakeKubeClient(deployment, replicaSet)
+	detail, err := client.GetWorkload(context.Background(), "deployment", "prod", "api")
+	if err != nil {
+		t.Fatalf("GetWorkload() error = %v", err)
+	}
+	if detail.Rollout == nil || !detail.Rollout.Paused || detail.Rollout.MaxSurge != "1" || detail.Rollout.UpdatedReplicas != 1 || detail.Rollout.ObservedGeneration != 7 {
+		t.Fatalf("rollout = %#v", detail.Rollout)
+	}
+	if len(detail.ReplicaSets) != 1 || !detail.ReplicaSets[0].Current || detail.ReplicaSets[0].Revision != 3 || detail.ReplicaSets[0].Images[0] != "registry.test/api:3" {
+		t.Fatalf("replicaSets = %#v", detail.ReplicaSets)
+	}
+}
+
+func TestBatchStatusIncludesFailuresAndActiveJobs(t *testing.T) {
+	completions := int32(3)
+	job := &batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{Name: "migrate", Namespace: "prod"},
+		Spec:       batchv1.JobSpec{Completions: &completions},
+		Status: batchv1.JobStatus{
+			Active: 1, Succeeded: 1, Failed: 2,
+			Conditions: []batchv1.JobCondition{{Type: batchv1.JobFailed, Status: corev1.ConditionTrue, Reason: "BackoffLimitExceeded", Message: "job has reached the specified backoff limit"}},
+		},
+	}
+	status := jobBatchStatus(*job)
+	if status.Active != 1 || status.Succeeded != 1 || status.Failed != 2 || status.FailureReason != "BackoffLimitExceeded" || !strings.Contains(status.FailureMessage, "backoff limit") {
+		t.Fatalf("job batch status = %#v", status)
+	}
+	cronJob := &batchv1.CronJob{ObjectMeta: metav1.ObjectMeta{Name: "backup", Namespace: "prod", UID: "cron-uid"}}
+	activeJob := &batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{Name: "backup-1", Namespace: "prod", OwnerReferences: []metav1.OwnerReference{{APIVersion: "batch/v1", Kind: "CronJob", Name: "backup", UID: cronJob.UID, Controller: boolPointer(true)}}},
+		Spec:       batchv1.JobSpec{Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "backup", Image: "backup:1"}}}}},
+		Status:     batchv1.JobStatus{Active: 1, Succeeded: 2},
+	}
+	client, _ := newFakeKubeClient(cronJob, activeJob)
+	cronStatus := client.cronJobBatchStatus(context.Background(), *cronJob)
+	if len(cronStatus.ActiveJobs) != 1 || cronStatus.ActiveJobs[0].Name != "backup-1" || cronStatus.ActiveJobs[0].Succeeded != 2 {
+		t.Fatalf("cronjob batch status = %#v", cronStatus)
+	}
+}
+
+func TestUpdateWorkloadRolloutPausesAndTunesStrategy(t *testing.T) {
+	deployment := testDeployment()
+	client, clientset := newFakeKubeClient(deployment)
+	paused := true
+	if err := client.UpdateWorkloadRollout(context.Background(), "deployment", "prod", "api", domain.WorkloadRolloutUpdate{
+		Paused: &paused, MaxSurge: "25%", MaxUnavailable: "0", ResourceVersion: deployment.ResourceVersion,
+	}); err != nil {
+		t.Fatalf("UpdateWorkloadRollout() error = %v", err)
+	}
+	updated, err := clientset.AppsV1().Deployments("prod").Get(context.Background(), "api", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("get deployment: %v", err)
+	}
+	if !updated.Spec.Paused || updated.Spec.Strategy.Type != appsv1.RollingUpdateDeploymentStrategyType || updated.Spec.Strategy.RollingUpdate == nil {
+		t.Fatalf("updated deployment = %#v", updated.Spec)
+	}
+	if updated.Spec.Strategy.RollingUpdate.MaxSurge.String() != "25%" || updated.Spec.Strategy.RollingUpdate.MaxUnavailable.String() != "0" {
+		t.Fatalf("rolling update = %#v", updated.Spec.Strategy.RollingUpdate)
+	}
+	if err := client.UpdateWorkloadRollout(context.Background(), "deployment", "prod", "api", domain.WorkloadRolloutUpdate{MaxSurge: "0", MaxUnavailable: "0"}); !errors.Is(err, domain.ErrInvalid) {
+		t.Fatalf("both zero error = %v", err)
+	}
+	if err := client.UpdateWorkloadRollout(context.Background(), "statefulset", "prod", "api", domain.WorkloadRolloutUpdate{Paused: &paused}); !errors.Is(err, domain.ErrUnsupported) {
+		t.Fatalf("unsupported kind error = %v", err)
 	}
 }
 

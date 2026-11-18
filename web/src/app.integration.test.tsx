@@ -1154,6 +1154,152 @@ describe("dosh application", () => {
     expect(createBody).toMatchObject({ kind: "cronjob", name: "backup", schedule: "0 * * * *", concurrencyPolicy: "Allow", suspend: false });
   });
 
+  it("creates a workload with multiple containers, init containers and scheduling controls", async () => {
+    let createBody: Record<string, unknown> | undefined;
+    server.use(
+      http.post("/api/v1/workloads/create/preview", async ({ request }) => {
+        createBody = await request.json() as Record<string, unknown>;
+        return HttpResponse.json({ yaml: "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: multi\n" });
+      }),
+      http.post("/api/v1/workloads/create", async ({ request }) => {
+        createBody = await request.json() as Record<string, unknown>;
+        return HttpResponse.json({ ...workload, name: "multi", images: ["nginx:alpine", "envoy:1"] }, { status: 201 });
+      }),
+      http.get("/api/v1/workloads/deployment/default/multi", () => HttpResponse.json({
+        ...configuredWorkload(), name: "multi", images: ["nginx:alpine", "envoy:1"],
+      })),
+    );
+    renderRoute("/workloads?namespace=default&kind=deployment");
+
+    fireEvent.click(await screen.findByRole("button", { name: "创建工作负载" }));
+    const dialog = await screen.findByRole("dialog", { name: "创建工作负载" });
+    fireEvent.change(within(dialog).getByLabelText("Deployment 名称"), { target: { value: "multi" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "下一步" }));
+    await within(dialog).findByLabelText("容器镜像");
+
+    fireEvent.click(within(dialog).getByRole("button", { name: "添加应用容器" }));
+    fireEvent.change(await within(dialog).findByLabelText("容器镜像 2"), { target: { value: "envoy:1" } });
+    const sidecarName = dialog.querySelector<HTMLInputElement>("#workload-1-container-name");
+    expect(sidecarName).not.toBeNull();
+    fireEvent.change(sidecarName!, { target: { value: "sidecar" } });
+
+    fireEvent.click(within(dialog).getByRole("button", { name: "添加 Init Container" }));
+    fireEvent.change(await within(dialog).findByLabelText("Init Container 容器镜像"), { target: { value: "busybox:1.37" } });
+    const initName = dialog.querySelector<HTMLInputElement>("#workload-init-0-container-name");
+    expect(initName).not.toBeNull();
+    fireEvent.change(initName!, { target: { value: "init-config" } });
+    const initCommand = dialog.querySelector<HTMLTextAreaElement>("#workload-init-0-command");
+    expect(initCommand).not.toBeNull();
+    fireEvent.change(initCommand!, { target: { value: "sh\n-c\nwait-for-db" } });
+
+    fireEvent.click(within(dialog).getByText("高级调度与 Pod 安全上下文"));
+    fireEvent.change(within(dialog).getByLabelText("PriorityClass"), { target: { value: "high-priority" } });
+    fireEvent.change(within(dialog).getByLabelText("ServiceAccount"), { target: { value: "multi-sa" } });
+    fireEvent.change(within(dialog).getByLabelText("NodeSelector"), { target: { value: "node-pool=gpu" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "添加规则" }));
+    fireEvent.change(within(dialog).getByLabelText("标签键"), { target: { value: "topology.kubernetes.io/zone" } });
+    fireEvent.change(within(dialog).getByLabelText("值"), { target: { value: "az-a,az-b" } });
+    fireEvent.change(within(dialog).getByLabelText("自定义标签"), { target: { value: "team=platform" } });
+
+    fireEvent.click(within(dialog).getByRole("button", { name: "下一步" }));
+    expect(await within(dialog).findByText(/kind: Deployment/)).toBeInTheDocument();
+    fireEvent.click(within(dialog).getByRole("button", { name: "创建 Deployment" }));
+    expect(await screen.findByRole("heading", { name: "multi" })).toBeInTheDocument();
+    expect(createBody).toMatchObject({
+      kind: "deployment",
+      name: "multi",
+      labels: { team: "platform" },
+      nodeSelector: { "node-pool": "gpu" },
+      priorityClassName: "high-priority",
+      serviceAccountName: "multi-sa",
+      nodeAffinity: [{ key: "topology.kubernetes.io/zone", operator: "In", values: ["az-a", "az-b"] }],
+    });
+    const containers = createBody?.containers as Array<Record<string, unknown>>;
+    const initContainers = createBody?.initContainers as Array<Record<string, unknown>>;
+    expect(containers).toHaveLength(2);
+    expect(containers[1]).toMatchObject({ name: "sidecar", image: "envoy:1" });
+    expect(initContainers[0]).toMatchObject({ name: "init-config", image: "busybox:1.37", command: ["sh", "-c", "wait-for-db"] });
+  });
+
+  it("shows rollout progress and sends deployment rollout controls", async () => {
+    let rolloutBody: Record<string, unknown> | undefined;
+    server.use(
+      http.get("/api/v1/workloads/deployment/default/web", () => HttpResponse.json({
+        ...configuredWorkload(),
+        rollout: { paused: false, strategy: "RollingUpdate", maxSurge: "25%", maxUnavailable: "0", observedGeneration: 8, updatedReplicas: 1, readyReplicas: 1, availableReplicas: 1, unavailableReplicas: 1 },
+        replicaSets: [{ name: "web-7d8f", revision: 2, current: true, desired: 2, ready: 1, available: 1, images: ["nginx:alpine"], createdAt: "2026-11-02T00:00:00Z" }],
+      })),
+      http.post("/api/v1/workloads/deployment/default/web/rollout", async ({ request }) => {
+        rolloutBody = await request.json() as Record<string, unknown>;
+        return HttpResponse.json({ status: "updated" });
+      }),
+    );
+    renderRoute("/workloads/deployment/default/web");
+
+    expect(await screen.findByText("发布进度")).toBeInTheDocument();
+    expect(screen.getByText("web-7d8f")).toBeInTheDocument();
+    fireEvent.click(await screen.findByRole("button", { name: "发布控制" }));
+    const dialog = await screen.findByRole("dialog", { name: "发布控制" });
+    fireEvent.click(within(dialog).getByRole("combobox", { name: "发布状态" }));
+    fireEvent.click(await screen.findByRole("option", { name: "暂停发布" }));
+    fireEvent.change(within(dialog).getByLabelText("maxSurge"), { target: { value: "50%" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "保存发布设置" }));
+
+    await waitFor(() => expect(rolloutBody).toMatchObject({ paused: true, maxSurge: "50%", maxUnavailable: "0", resourceVersion: "317754" }));
+    expect(await screen.findByText("Deployment 发布已暂停")).toBeInTheDocument();
+  });
+
+  it("shows batch status and runs a selected CronJob container with overrides", async () => {
+    const writableCapabilities = {
+      ...session.capabilities,
+      resourceActions: {
+        ...session.capabilities.resourceActions!,
+        jobs: { ...session.capabilities.resourceActions!.jobs, create: true },
+      },
+    };
+    let runBody: Record<string, unknown> | undefined;
+    const containers = [
+      { ...configuredWorkload().containers[0], name: "app", image: "backup:1" },
+      { ...configuredWorkload().containers[0], name: "worker", image: "worker:1" },
+    ];
+    server.use(
+      http.get("/api/v1/session", () => HttpResponse.json({ ...session, capabilities: writableCapabilities })),
+      http.get("/api/v1/capabilities", () => HttpResponse.json(writableCapabilities)),
+      http.get("/api/v1/workloads/cronjob/default/backup", () => HttpResponse.json({
+        ...workload,
+        kind: "CronJob", name: "backup", status: "Idle", ready: "0/0", desired: 0,
+        resourceVersion: "77", conditions: [], selector: {}, pods: [], volumes: [], containers,
+        batch: {
+          active: 1, succeeded: 4, failed: 1, completions: 1, parallelism: 1, backoffLimit: 3, ttlSecondsAfterFinished: 120,
+          failureReason: "BackoffLimitExceeded", failureMessage: "backup-2: job has reached the specified backoff limit",
+          activeJobs: [{ name: "backup-1", status: "Running", succeeded: 0, failed: 0, startTime: "2026-11-02T01:00:00Z" }],
+        },
+      })),
+      http.post("/api/v1/workloads/cronjob/default/backup/run", async ({ request }) => {
+        runBody = await request.json() as Record<string, unknown>;
+        return HttpResponse.json({ ...workload, kind: "Job", name: "backup-manual-test", namespace: "default" }, { status: 201 });
+      }),
+      http.get("/api/v1/workloads/job/default/backup-manual-test", () => HttpResponse.json({
+        ...workload, kind: "Job", name: "backup-manual-test", conditions: [], selector: {}, pods: [], volumes: [], containers,
+      })),
+    );
+    renderRoute("/workloads/cronjob/default/backup");
+
+    expect(await screen.findByText("批处理状态")).toBeInTheDocument();
+    expect(screen.getByText("BackoffLimitExceeded")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "backup-1" })).toBeInTheDocument();
+    fireEvent.click(await screen.findByRole("button", { name: "立即执行" }));
+    const dialog = await screen.findByRole("alertdialog", { name: "立即执行 backup？" });
+    fireEvent.click(within(dialog).getByRole("combobox", { name: "目标容器" }));
+    fireEvent.click(await screen.findByRole("option", { name: /worker/ }));
+    fireEvent.change(within(dialog).getByLabelText("Command 覆盖（可选）"), { target: { value: "/bin/sh\n-c" } });
+    fireEvent.change(within(dialog).getByLabelText("Args 覆盖（可选）"), { target: { value: "worker --once" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "确认执行" }));
+
+    await waitFor(() => expect(runBody).toMatchObject({ containerName: "worker", command: ["/bin/sh", "-c"], args: ["worker --once"] }));
+    expect(await screen.findByRole("heading", { name: "backup-manual-test" })).toBeInTheDocument();
+  });
+
   it("exports the filtered audit snapshot as CSV", async () => {
     let actionsRequested = false;
     let exportRequest: URL | undefined;

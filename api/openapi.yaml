@@ -702,7 +702,7 @@ paths:
     post:
       tags: [workloads]
       summary: Validate with API Server dry-run and create a workload
-      description: Creates one Deployment, StatefulSet, DaemonSet, Job or CronJob with a single application container. The request is validated locally, then submitted once with API Server dry-run before the real create request.
+      description: Creates one Deployment, StatefulSet, DaemonSet, Job or CronJob with one or more application containers and optional init containers. The request is validated locally, then submitted once with API Server dry-run before the real create request.
       security:
         - cookieAuth: []
           csrfToken: []
@@ -754,6 +754,11 @@ paths:
       parameters:
         - { $ref: "#/components/parameters/NamespacePath" }
         - { $ref: "#/components/parameters/Name" }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CronJobRunRequest" }
       responses:
         "201":
           description: Job created from the CronJob template
@@ -949,6 +954,36 @@ paths:
       responses:
         "200":
           description: CronJob scheduling state updated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OperationStatus" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "501": { $ref: "#/components/responses/NotSupported" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
+  /api/v1/workloads/{kind}/{namespace}/{name}/rollout:
+    post:
+      tags: [workloads]
+      summary: Pause, resume or tune a Deployment rolling update
+      description: Only Deployments are supported. Values may be integers or percentages.
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      parameters:
+        - { $ref: "#/components/parameters/KindPath" }
+        - { $ref: "#/components/parameters/NamespacePath" }
+        - { $ref: "#/components/parameters/Name" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/WorkloadRolloutUpdate" }
+      responses:
+        "200":
+          description: Rollout settings updated
           content:
             application/json:
               schema: { $ref: "#/components/schemas/OperationStatus" }
@@ -3451,7 +3486,7 @@ components:
         value: { type: string }
     WorkloadCreateRequest:
       type: object
-      required: [name, namespace, image, containerPort]
+      required: [name, namespace]
       properties:
         kind:
           type: string
@@ -3476,10 +3511,141 @@ components:
           type: array
           maxItems: 64
           items: { $ref: "#/components/schemas/DeploymentEnvVar" }
+        containers:
+          type: array
+          maxItems: 32
+          description: Preferred application-container list. Legacy image/containerPort fields are converted to one container when omitted.
+          items: { $ref: "#/components/schemas/WorkloadContainerSpec" }
+        initContainers:
+          type: array
+          maxItems: 32
+          items: { $ref: "#/components/schemas/WorkloadContainerSpec" }
+        command:
+          type: array
+          maxItems: 128
+          items: { type: string, maxLength: 4096 }
+        args:
+          type: array
+          maxItems: 128
+          items: { type: string, maxLength: 4096 }
+        nodeSelector:
+          type: object
+          maxProperties: 32
+          additionalProperties: { type: string }
+        tolerations:
+          type: array
+          maxItems: 32
+          items: { $ref: "#/components/schemas/WorkloadToleration" }
+        nodeAffinity:
+          type: array
+          maxItems: 32
+          items: { $ref: "#/components/schemas/WorkloadNodeSelectorRequirement" }
+        topologySpreadConstraints:
+          type: array
+          maxItems: 8
+          items: { $ref: "#/components/schemas/WorkloadTopologySpreadConstraint" }
+        priorityClassName: { type: string, maxLength: 63 }
+        serviceAccountName: { type: string, maxLength: 63 }
+        podSecurityContext: { $ref: "#/components/schemas/WorkloadPodSecurityContext" }
+        jobCompletions: { type: integer, minimum: 1, maximum: 10000 }
+        jobParallelism: { type: integer, minimum: 0, maximum: 10000 }
+        jobBackoffLimit: { type: integer, minimum: 0, maximum: 10000 }
+        jobActiveDeadlineSeconds: { type: integer, format: int64, minimum: 1, maximum: 604800 }
+        jobTtlSecondsAfterFinished: { type: integer, minimum: 0, maximum: 2592000 }
         labels:
           type: object
           maxProperties: 32
           additionalProperties: { type: string }
+    WorkloadContainerSpec:
+      type: object
+      required: [image]
+      properties:
+        name: { type: string, maxLength: 63 }
+        image: { type: string, minLength: 1, maxLength: 512 }
+        registryId: { type: string, maxLength: 128 }
+        containerPort: { type: integer, minimum: 0, maximum: 65535 }
+        cpuRequestMilli: { type: integer, minimum: 0, maximum: 128000 }
+        cpuLimitMilli: { type: integer, minimum: 0, maximum: 128000 }
+        memoryRequestBytes: { type: integer, minimum: 0, maximum: 1099511627776 }
+        memoryLimitBytes: { type: integer, minimum: 0, maximum: 1099511627776 }
+        env:
+          type: array
+          maxItems: 64
+          items: { $ref: "#/components/schemas/DeploymentEnvVar" }
+        command:
+          type: array
+          maxItems: 128
+          items: { type: string, maxLength: 4096 }
+        args:
+          type: array
+          maxItems: 128
+          items: { type: string, maxLength: 4096 }
+        securityContext: { $ref: "#/components/schemas/WorkloadContainerSecurityContext" }
+    WorkloadToleration:
+      type: object
+      properties:
+        key: { type: string }
+        operator: { type: string, enum: [Equal, Exists] }
+        value: { type: string }
+        effect: { type: string, enum: ["", NoSchedule, PreferNoSchedule, NoExecute] }
+        tolerationSeconds: { type: integer, format: int64, minimum: 0 }
+    WorkloadNodeSelectorRequirement:
+      type: object
+      required: [key, operator]
+      properties:
+        key: { type: string }
+        operator: { type: string, enum: [In, NotIn, Exists, DoesNotExist] }
+        values:
+          type: array
+          items: { type: string }
+    WorkloadTopologySpreadConstraint:
+      type: object
+      required: [maxSkew, topologyKey, whenUnsatisfiable]
+      properties:
+        maxSkew: { type: integer, minimum: 1, maximum: 100 }
+        topologyKey: { type: string }
+        whenUnsatisfiable: { type: string, enum: [DoNotSchedule, ScheduleAnyway] }
+    WorkloadPodSecurityContext:
+      type: object
+      properties:
+        runAsUser: { type: integer, format: int64, minimum: 0 }
+        runAsGroup: { type: integer, format: int64, minimum: 0 }
+        fsGroup: { type: integer, format: int64, minimum: 0 }
+        runAsNonRoot: { type: boolean }
+        seccompProfile: { type: string, enum: [RuntimeDefault, Localhost, Unconfined] }
+    WorkloadContainerSecurityContext:
+      type: object
+      properties:
+        runAsUser: { type: integer, format: int64, minimum: 0 }
+        runAsGroup: { type: integer, format: int64, minimum: 0 }
+        runAsNonRoot: { type: boolean }
+        readOnlyRootFilesystem: { type: boolean }
+        allowPrivilegeEscalation: { type: boolean }
+        capabilitiesAdd:
+          type: array
+          items: { type: string }
+        capabilitiesDrop:
+          type: array
+          items: { type: string }
+    CronJobRunRequest:
+      type: object
+      properties:
+        containerName: { type: string, maxLength: 63 }
+        command:
+          type: array
+          maxItems: 128
+          items: { type: string, maxLength: 4096 }
+        args:
+          type: array
+          maxItems: 128
+          items: { type: string, maxLength: 4096 }
+    WorkloadRolloutUpdate:
+      type: object
+      properties:
+        paused: { type: boolean }
+        maxSurge: { type: string, pattern: '^([0-9]+)(%?)$' }
+        maxUnavailable: { type: string, pattern: '^([0-9]+)(%?)$' }
+        resourceVersion: { type: string, maxLength: 256 }
     WorkloadCreateKindRequest:
       allOf:
         - { $ref: "#/components/schemas/WorkloadCreateRequest" }
@@ -3511,6 +3677,71 @@ components:
             containers:
               type: array
               items: { $ref: "#/components/schemas/WorkloadContainer" }
+            initContainers:
+              type: array
+              items: { $ref: "#/components/schemas/WorkloadContainer" }
+            rollout: { $ref: "#/components/schemas/WorkloadRolloutStatus" }
+            replicaSets:
+              type: array
+              items: { $ref: "#/components/schemas/WorkloadReplicaSet" }
+            batch: { $ref: "#/components/schemas/WorkloadBatchStatus" }
+    WorkloadRolloutStatus:
+      type: object
+      required: [paused, strategy, observedGeneration, updatedReplicas, readyReplicas, availableReplicas, unavailableReplicas]
+      properties:
+        paused: { type: boolean }
+        strategy: { type: string }
+        maxSurge: { type: string }
+        maxUnavailable: { type: string }
+        partition: { type: integer }
+        observedGeneration: { type: integer, format: int64 }
+        updatedReplicas: { type: integer }
+        readyReplicas: { type: integer }
+        availableReplicas: { type: integer }
+        unavailableReplicas: { type: integer }
+    WorkloadReplicaSet:
+      type: object
+      required: [name, revision, current, desired, ready, available, images, createdAt]
+      properties:
+        name: { type: string }
+        revision: { type: integer, format: int64 }
+        current: { type: boolean }
+        desired: { type: integer }
+        ready: { type: integer }
+        available: { type: integer }
+        images:
+          type: array
+          items: { type: string }
+        createdAt: { type: string, format: date-time }
+    WorkloadBatchStatus:
+      type: object
+      required: [active, succeeded, failed]
+      properties:
+        active: { type: integer }
+        succeeded: { type: integer }
+        failed: { type: integer }
+        completions: { type: integer }
+        parallelism: { type: integer }
+        backoffLimit: { type: integer }
+        activeDeadlineSeconds: { type: integer, format: int64 }
+        ttlSecondsAfterFinished: { type: integer }
+        lastScheduleTime: { type: string, format: date-time }
+        lastSuccessfulTime: { type: string, format: date-time }
+        failureReason: { type: string }
+        failureMessage: { type: string }
+        activeJobs:
+          type: array
+          items: { $ref: "#/components/schemas/WorkloadActiveJob" }
+    WorkloadActiveJob:
+      type: object
+      required: [name, status, succeeded, failed]
+      properties:
+        name: { type: string }
+        status: { type: string }
+        succeeded: { type: integer }
+        failed: { type: integer }
+        startTime: { type: string, format: date-time }
+        completionTime: { type: string, format: date-time }
     WorkloadContainer:
       type: object
       required: [name, image, ports, resources, env, volumeMounts]

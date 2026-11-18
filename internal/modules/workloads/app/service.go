@@ -29,7 +29,8 @@ type Repository interface {
 	UpdateWorkloadImage(ctx context.Context, kind, namespace, name string, update domain.WorkloadImageUpdate) error
 	UpdateWorkloadContainerConfig(ctx context.Context, kind, namespace, name string, update domain.WorkloadContainerConfigUpdate) error
 	SetCronJobSuspend(ctx context.Context, namespace, name string, update domain.CronJobSuspendUpdate) error
-	RunCronJobOnce(ctx context.Context, namespace, name string) (domain.WorkloadSummary, error)
+	UpdateWorkloadRollout(ctx context.Context, kind, namespace, name string, update domain.WorkloadRolloutUpdate) error
+	RunCronJobOnce(ctx context.Context, namespace, name string, input domain.CronJobRunInput) (domain.WorkloadSummary, error)
 	ListWorkloadRevisions(ctx context.Context, kind, namespace, name string) ([]domain.WorkloadRevision, error)
 	RollbackWorkload(ctx context.Context, kind, namespace, name string, revision int64) error
 	DeleteWorkload(ctx context.Context, kind, namespace, name string, propagation domain.DeletionPropagation) error
@@ -104,6 +105,16 @@ func (s *Service) applyImagePullSecret(ctx context.Context, actor domain.Actor, 
 		}
 	}
 	*secrets = append(*secrets, secret)
+	return nil
+}
+
+func (s *Service) applyWorkloadImagePullSecrets(ctx context.Context, actor domain.Actor, spec *domain.WorkloadCreateSpec) error {
+	all := append(append([]domain.WorkloadContainerSpec{}, spec.Containers...), spec.InitContainers...)
+	for _, container := range all {
+		if err := s.applyImagePullSecret(ctx, actor, container.RegistryID, container.Image, &spec.ImagePullSecrets); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 

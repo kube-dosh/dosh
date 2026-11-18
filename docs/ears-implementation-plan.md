@@ -6768,3 +6768,62 @@ v2.48 或更早候选的镜像 digest、浏览器、性能、集群验收和发�
   `default` 400 保护；审计记录 `create-service`、`update-service`、`delete-service`、
   `delete-namespace` success/failure 均带 requestId。
 - 生产 `dosh` 保持 App `0.1.2` / Chart `0.1.4` / revision 12 / 2/2 Ready / NodePort `32626`。
+
+## 30. N05–N08 工作负载 P0 里程碑
+
+本节覆盖多容器与调度、安全上下文、Deployment 发布控制和 Job/CronJob 运行闭环。它不继承更早候选的
+镜像 digest、生产部署和正式发布证据；本轮只完成代码、契约、自动化测试和浏览器验收。
+
+### 30.1 EARS 需求
+
+- **WL-MC-001**：当用户创建工作负载时，系统应允许提交 1–32 个应用容器和 0–32 个 Init Container，
+  每个容器独立包含镜像、可选镜像仓、端口、资源、Env、Command/Args 和容器 SecurityContext。
+- **WL-MC-002**：当多个容器同时存在时，容器名称必须在应用容器与 Init Container 之间全局唯一；
+  首个应用容器可省略名称并使用工作负载名称，其他容器必须显式提供合法 DNS-1123 名称。
+- **WL-MC-003**：当请求省略 `containers` 但提供旧版 `image/containerPort` 等标量字段时，系统应将其
+  规范化为单容器，保持旧客户端兼容；新前端应优先发送容器列表。
+- **WL-SCH-001**：当用户配置 NodeSelector、容忍、required 节点亲和性和拓扑分布时，系统应在写
+  Kubernetes 前校验标签键值、操作符、效果、tolerationSeconds、MaxSkew 和 whenUnsatisfiable，并将
+  完整调度约束写入 PodSpec。
+- **WL-SCH-002**：当用户配置 PriorityClass、ServiceAccount 和 Pod/容器 SecurityContext 时，系统应在
+  写前校验 DNS-1123 名称、非负 UID/GID、seccomp 枚举和能力名称，并写入对应 PodSpec 字段。
+- **WL-SCH-003**：当用户输入节点亲和性 label 值时，前端必须保留原始大小写；只有 Linux capability
+  名称允许进行大写归一化。
+- **WL-ROLL-001**：当用户查看 Deployment 时，系统应返回发布策略、maxSurge/maxUnavailable、
+  observedGeneration、更新/就绪/可用/不可用副本以及当前与历史 ReplicaSet。
+- **WL-ROLL-002**：当用户具备 `update deployments` 时，系统应允许暂停、恢复发布并调整滚动策略；
+  请求携带 `resourceVersion`，冲突返回 409，两个滚动参数不得同时为零。
+- **WL-ROLL-003**：当发布控制成功、失败或被拒绝时，系统应写入包含 actor、namespace、name、result
+  和 requestId 的审计，且现有 Pod 不得因暂停操作被删除。
+- **WL-BATCH-001**：当用户创建 Job 或 CronJob 时，系统应支持 completions、parallelism、backoffLimit、
+  activeDeadlineSeconds 和 ttlSecondsAfterFinished，并在写入前完成上下界校验。
+- **WL-BATCH-002**：当用户查看 Job/CronJob 详情时，系统应展示活动、成功、失败数量，最近调度/成功
+  时间、失败原因与消息，以及 CronJob 控制的有界近期 Job 列表。
+- **WL-BATCH-003**：当用户具备 `get cronjobs` 与 `create jobs` 时，系统应允许选择 CronJob 的任一应用
+  容器并临时覆盖 Command/Args 立即创建 Job；不得修改 CronJob 调度或补跑历史任务。
+- **WL-BATCH-004**：当目标容器不存在、Command/Args 超过 128 项或单项超过 4096 字节时，系统应在创建
+  Job 前拒绝并审计；CronJob Pod 模板没有应用容器时不得创建空 Job。
+
+### 30.2 实施落点
+
+| 层次 | 文件 | 职责 |
+|---|---|---|
+| 领域 | `internal/domain/deployment.go`、`internal/domain/types.go` | 多容器、调度、安全上下文、发布、批处理 DTO |
+| 应用 | `internal/modules/workloads/app/deployment.go`、`rollout.go`、`cronjob_run.go` | 输入规范化、校验、RBAC、审计和发布/批处理用例 |
+| HTTP | `internal/modules/workloads/http/handler.go` | 请求解码、rollout 路由、CronJob run 覆盖参数 |
+| Kubernetes | `internal/platform/kube/workload_create.go`、`workloads.go` | PodSpec 构造、详情聚合、ReplicaSet/Job 读取和条件写 |
+| 前端 | `web/src/features/workloads/workload-create-dialog.tsx`、`workload-detail-page.tsx` | 多容器/调度向导、发布控制、批处理详情和立即执行 |
+| 契约 | `api/openapi.yaml`、`web/src/api/schema.d.ts`、`web/src/api/types.ts` | 新字段、rollout 端点和 CronJob run 请求 |
+
+### 30.3 验收与结果
+
+1. 后端全量：`go test ./...`、`go vet ./...` 通过；应用、HTTP 和 kube 适配器覆盖多容器、Init Container、
+   调度/安全上下文、非法输入、发布冲突/策略、CronJob 覆盖参数和详情聚合。
+2. 前端契约与单测：`npm run api:check`、`npm run typecheck`、`npm test` 通过；集成测试覆盖创建请求体、
+   Deployment 发布控制、批处理详情和指定容器覆盖执行。
+3. 生产构建：`npm run build`、`npm run bundle:check` 通过，初始 JavaScript gzip 总量 `482.85 KiB`，
+   低于 `500 KiB` 预算。
+4. 浏览器验收：Chromium 全量 `98/98` 通过；Firefox N05–N08 定向 `4/4` 通过。新增用例在桌面和
+   320/360/390px 视口验证创建向导、动态容器卡片、发布控制弹窗和 CronJob 执行弹窗，断言页面级与
+   弹窗级无横向溢出。
+5. 未执行：本轮未提交、未推送、未构建新镜像、未部署生产。生产环境状态保持不变。

@@ -76,6 +76,10 @@ type workloadRepo struct {
 	imageErr          error
 	containerErr      error
 	suspendErr        error
+	rolloutErr        error
+	rolloutCalls      int
+	lastRollout       domain.WorkloadRolloutUpdate
+	lastRunInput      domain.CronJobRunInput
 	deleteErr         error
 	logsErr           error
 	logsErrors        map[string]error
@@ -87,6 +91,7 @@ type workloadRepo struct {
 	podDetail         domain.PodDetail
 	listWorkloadsErr  error
 	createCalls       []bool
+	lastCreateSpec    domain.WorkloadCreateSpec
 	previewCalls      int
 	createErr         error
 	previewYAML       string
@@ -126,6 +131,7 @@ func (r *workloadRepo) CreateDeployment(_ context.Context, spec domain.Deploymen
 
 func (r *workloadRepo) CreateWorkload(_ context.Context, spec domain.WorkloadCreateSpec, dryRun bool) (domain.WorkloadSummary, error) {
 	r.createCalls = append(r.createCalls, dryRun)
+	r.lastCreateSpec = spec
 	r.lastNamespace, r.lastName = spec.Namespace, spec.Name
 	if r.createErr != nil {
 		return domain.WorkloadSummary{}, r.createErr
@@ -143,9 +149,17 @@ func (r *workloadRepo) PreviewWorkload(_ context.Context, spec domain.WorkloadCr
 	return r.previewYAML, nil
 }
 
-func (r *workloadRepo) RunCronJobOnce(_ context.Context, namespace, name string) (domain.WorkloadSummary, error) {
+func (r *workloadRepo) RunCronJobOnce(_ context.Context, namespace, name string, input domain.CronJobRunInput) (domain.WorkloadSummary, error) {
 	r.lastNamespace, r.lastName = namespace, name
+	r.lastRunInput = input
 	return domain.WorkloadSummary{Kind: "Job", Name: name + "-manual", Namespace: namespace}, nil
+}
+
+func (r *workloadRepo) UpdateWorkloadRollout(_ context.Context, kind, namespace, name string, update domain.WorkloadRolloutUpdate) error {
+	r.rolloutCalls++
+	r.lastKind, r.lastNamespace, r.lastName = kind, namespace, name
+	r.lastRollout = update
+	return r.rolloutErr
 }
 
 func (r *workloadRepo) ScaleWorkload(_ context.Context, kind, namespace, name string, replicas int32, expectedResourceVersion string) error {
@@ -838,6 +852,56 @@ func TestGenericWorkloadCreatePreviewAndCronJobRunRoutes(t *testing.T) {
 	response = performWorkloadJSON(server.router, http.MethodPost, "/api/v1/workloads/cronjob/prod/backup/run", ``, server.authHeaders())
 	if response.Code != http.StatusCreated || server.repo.lastName != "backup" || server.repo.lastNamespace != "prod" {
 		t.Fatalf("run status=%d resource=%s/%s body=%s", response.Code, server.repo.lastNamespace, server.repo.lastName, response.Body.String())
+	}
+}
+
+func TestWorkloadCreateDecodesMultiContainerSchedulingAndRunOverrides(t *testing.T) {
+	server := newWorkloadTestServer(t)
+	payload := `{
+		"kind":"job","name":"migrate","namespace":"prod",
+		"containers":[
+			{"name":"app","image":"registry.test/app:2","containerPort":8080,"command":["/app"],"args":["serve"],"securityContext":{"readOnlyRootFilesystem":true}},
+			{"name":"sidecar","image":"registry.test/sidecar:1","env":[{"name":"MODE","value":"proxy"}]}
+		],
+		"initContainers":[{"name":"init-db","image":"busybox:1.37","command":["sh","-c","wait-db"]}],
+		"nodeSelector":{"node-pool":"gpu"},
+		"tolerations":[{"key":"dedicated","operator":"Equal","value":"gpu","effect":"NoSchedule"}],
+		"nodeAffinity":[{"key":"topology.kubernetes.io/zone","operator":"In","values":["az-a"]}],
+		"topologySpreadConstraints":[{"maxSkew":1,"topologyKey":"kubernetes.io/hostname","whenUnsatisfiable":"ScheduleAnyway"}],
+		"priorityClassName":"high-priority","serviceAccountName":"migrator",
+		"podSecurityContext":{"runAsNonRoot":true,"seccompProfile":"RuntimeDefault"},
+		"jobCompletions":3,"jobParallelism":2,"jobBackoffLimit":4,"jobActiveDeadlineSeconds":300,"jobTtlSecondsAfterFinished":120
+	}`
+	response := performWorkloadJSON(server.router, http.MethodPost, "/api/v1/workloads/create", payload, server.authHeaders())
+	if response.Code != http.StatusCreated {
+		t.Fatalf("create status = %d, body = %s", response.Code, response.Body.String())
+	}
+	spec := server.repo.lastCreateSpec
+	if len(spec.Containers) != 2 || len(spec.InitContainers) != 1 || spec.Containers[1].Name != "sidecar" || spec.NodeSelector["node-pool"] != "gpu" {
+		t.Fatalf("decoded spec = %#v", spec)
+	}
+	if spec.PodSecurityContext == nil || spec.PodSecurityContext.RunAsNonRoot == nil || !*spec.PodSecurityContext.RunAsNonRoot || spec.JobCompletions == nil || *spec.JobCompletions != 3 {
+		t.Fatalf("decoded security/batch = %#v", spec)
+	}
+
+	response = performWorkloadJSON(server.router, http.MethodPost, "/api/v1/workloads/cronjob/prod/backup/run", `{"containerName":"worker","command":["/bin/sh","-c"],"args":["backup --once"]}`, server.authHeaders())
+	if response.Code != http.StatusCreated || server.repo.lastRunInput.ContainerName != "worker" || len(server.repo.lastRunInput.Command) != 2 || server.repo.lastRunInput.Args[0] != "backup --once" {
+		t.Fatalf("run status=%d input=%#v body=%s", response.Code, server.repo.lastRunInput, response.Body.String())
+	}
+}
+
+func TestUpdateRolloutRouteValidatesAndPassesResourceVersion(t *testing.T) {
+	server := newWorkloadTestServer(t)
+	response := performWorkloadJSON(server.router, http.MethodPost, "/api/v1/workloads/deployment/prod/api/rollout", `{"paused":true,"maxSurge":"25%","maxUnavailable":"0","resourceVersion":"42"}`, server.authHeaders())
+	if response.Code != http.StatusOK {
+		t.Fatalf("rollout status = %d, body = %s", response.Code, response.Body.String())
+	}
+	if server.repo.rolloutCalls != 1 || server.repo.lastKind != "deployment" || server.repo.lastRollout.Paused == nil || !*server.repo.lastRollout.Paused || server.repo.lastRollout.ResourceVersion != "42" {
+		t.Fatalf("rollout call = %d kind=%q update=%#v", server.repo.rolloutCalls, server.repo.lastKind, server.repo.lastRollout)
+	}
+	response = performWorkloadJSON(server.router, http.MethodPost, "/api/v1/workloads/deployment/prod/api/rollout", `{"maxSurge":"-1"}`, server.authHeaders())
+	if response.Code != http.StatusBadRequest || server.repo.rolloutCalls != 1 {
+		t.Fatalf("invalid rollout status=%d calls=%d body=%s", response.Code, server.repo.rolloutCalls, response.Body.String())
 	}
 }
 

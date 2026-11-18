@@ -181,6 +181,29 @@ const workloadDetail: WorkloadDetail = {
     volumeMounts: [{ name: "config", mountPath: "/etc/web", readOnly: true }],
     readinessProbe: { type: "httpGet", path: "/ready", port: "80", scheme: "HTTP", command: [], initialDelaySeconds: 5, periodSeconds: 10, timeoutSeconds: 1, successThreshold: 1, failureThreshold: 3 },
   }],
+  initContainers: [{
+    name: "init-config",
+    image: "busybox:1.37",
+    ports: [],
+    resources: { cpuRequestMilli: 10, cpuLimitMilli: 50, memoryRequestBytes: 16777216, memoryLimitBytes: 33554432 },
+    env: [],
+    volumeMounts: [],
+  }],
+  rollout: {
+    paused: false,
+    strategy: "RollingUpdate",
+    maxSurge: "25%",
+    maxUnavailable: "0",
+    observedGeneration: 8,
+    updatedReplicas: 1,
+    readyReplicas: 2,
+    availableReplicas: 2,
+    unavailableReplicas: 0,
+  },
+  replicaSets: [
+    { name: "web-7d8f9c6b5", revision: 4, current: true, desired: 2, ready: 2, available: 2, images: ["nginx:alpine"], createdAt: "2026-11-02T00:00:00Z" },
+    { name: "web-64c8b7d9f", revision: 3, current: false, desired: 0, ready: 0, available: 0, images: ["nginx:1.24"], createdAt: "2026-10-20T00:00:00Z" },
+  ],
 };
 
 const mockContainerRegistries: ContainerRegistry[] = [
@@ -282,7 +305,28 @@ const cronJobDetail: WorkloadDetail = {
   selector: {},
   pods: [],
   volumes: [],
-  containers: [],
+  containers: [
+    { ...workloadDetail.containers[0], name: "app", image: "backup:1" },
+    { ...workloadDetail.containers[0], name: "worker", image: "worker:1" },
+  ],
+  batch: {
+    active: 1,
+    succeeded: 4,
+    failed: 1,
+    completions: 1,
+    parallelism: 1,
+    backoffLimit: 3,
+    activeDeadlineSeconds: 900,
+    ttlSecondsAfterFinished: 120,
+    lastScheduleTime: "2026-11-02T01:00:00Z",
+    lastSuccessfulTime: "2026-11-02T00:30:00Z",
+    failureReason: "BackoffLimitExceeded",
+    failureMessage: "backup-2: job has reached the specified backoff limit",
+    activeJobs: [
+      { name: "backup-1", status: "Running", succeeded: 0, failed: 0, startTime: "2026-11-02T01:00:00Z" },
+      { name: "backup-2", status: "Failed", succeeded: 0, failed: 1, startTime: "2026-11-02T00:30:00Z", completionTime: "2026-11-02T00:35:00Z" },
+    ],
+  },
 };
 
 const podDetail: PodDetail = {
@@ -626,8 +670,9 @@ type NodeSchedulingRequest = { method: string; path: string; csrf: string | null
 type NodeMetadataRequest = { method: string; path: string; csrf: string | null; body: Record<string, unknown> };
 type PreferenceRequest = { method: string; body: UserPreferences };
 type RegistryRequest = { method: string; path: string; body?: ContainerRegistryUpsertInput };
+type WorkloadRequestBody = Record<string, unknown>;
 
-async function installApiMocks(page: Page, options: { authenticated?: boolean; authMode?: "local" | "token"; overview?: Overview; overviewStatus?: number; nodeSchedulingRequests?: NodeSchedulingRequest[]; nodeMetadataRequests?: NodeMetadataRequest[]; preferenceRequests?: PreferenceRequest[]; registryRequests?: RegistryRequest[]; containerRegistries?: ContainerRegistry[]; registryFailures?: { repositories?: boolean; tags?: boolean }; expireSessionOnNodes?: boolean; noIngressController?: boolean; podName?: string; podExec?: boolean; podEphemeralDebug?: boolean; emptyDiscovery?: boolean; ephemeralRequests?: Array<{ image: string; targetContainerName?: string; shell?: string }>; diagnosis?: Diagnosis; workloadCreate?: boolean } = {}) {
+async function installApiMocks(page: Page, options: { authenticated?: boolean; authMode?: "local" | "token"; overview?: Overview; overviewStatus?: number; nodeSchedulingRequests?: NodeSchedulingRequest[]; nodeMetadataRequests?: NodeMetadataRequest[]; preferenceRequests?: PreferenceRequest[]; registryRequests?: RegistryRequest[]; containerRegistries?: ContainerRegistry[]; registryFailures?: { repositories?: boolean; tags?: boolean }; expireSessionOnNodes?: boolean; noIngressController?: boolean; podName?: string; podExec?: boolean; podEphemeralDebug?: boolean; emptyDiscovery?: boolean; ephemeralRequests?: Array<{ image: string; targetContainerName?: string; shell?: string }>; diagnosis?: Diagnosis; workloadCreate?: boolean; workloadCreateRequests?: WorkloadRequestBody[]; workloadRolloutRequests?: WorkloadRequestBody[]; cronJobRunRequests?: WorkloadRequestBody[] } = {}) {
   const authenticated = options.authenticated ?? true;
   const authMode = options.authMode ?? "local";
   const resourceActions = session.capabilities.resourceActions!;
@@ -992,8 +1037,12 @@ async function installApiMocks(page: Page, options: { authenticated?: boolean; a
     }
     if (path === "/api/v1/workloads/create" && method === "POST") {
       const body = request.postDataJSON() as { kind: string; name: string; namespace: string };
+      options.workloadCreateRequests?.push(body as WorkloadRequestBody);
       const kind = body.kind === "cronjob" ? "CronJob" : body.kind === "statefulset" ? "StatefulSet" : body.kind === "daemonset" ? "DaemonSet" : body.kind === "job" ? "Job" : "Deployment";
       return json(route, { ...workloadSummary, kind, name: body.name, namespace: body.namespace, images: ["nginx:alpine"] }, 201);
+    }
+    if (path === "/api/v1/workloads/deployment/default/multi" && method === "GET") {
+      return json(route, { ...workloadDetail, name: "multi", images: ["nginx:alpine", "envoy:1"] });
     }
     if (path === "/api/v1/workloads/statefulset/default/db" && method === "GET") {
       return json(route, { ...workloadDetail, kind: "StatefulSet", name: "db", images: ["nginx:alpine"] });
@@ -1064,11 +1113,16 @@ async function installApiMocks(page: Page, options: { authenticated?: boolean; a
     }
     if (path === "/api/v1/workloads/deployment/default/web/revisions" && method === "GET") return json(route, { items: workloadRevisions });
     if (path === "/api/v1/workloads/deployment/default/web/rollback" && method === "POST") return json(route, { status: "updated" });
+    if (path === "/api/v1/workloads/deployment/default/web/rollout" && method === "POST") {
+      options.workloadRolloutRequests?.push(request.postDataJSON() as WorkloadRequestBody);
+      return json(route, { status: "updated" });
+    }
     if (path === "/api/v1/workloads/cronjob/default/backup" && method === "GET") return json(route, cronJobDetail);
     if (path === "/api/v1/workloads/cronjob/default/backup/suspend" && method === "POST") {
       return json(route, { status: "updated" });
     }
     if (path === "/api/v1/workloads/cronjob/default/backup/run" && method === "POST") {
+      options.cronJobRunRequests?.push(request.postDataJSON() as WorkloadRequestBody);
       return json(route, { ...workloadSummary, kind: "Job", name: "backup-manual-demo", namespace: "default" }, 201);
     }
     if (path === "/api/v1/workloads/job/default/backup-manual-demo" && method === "GET") {
@@ -1303,6 +1357,14 @@ async function expectElementInsideViewport(page: Page, locator: ReturnType<Page[
   expect(box!.y, `${context} must not start above the viewport`).toBeGreaterThanOrEqual(-1);
   expect(box!.x + box!.width, `${context} must not extend right of the viewport`).toBeLessThanOrEqual(viewport!.width + 1);
   expect(box!.y + box!.height, `${context} must not extend below the viewport`).toBeLessThanOrEqual(viewport!.height + 1);
+}
+
+async function expectNoHorizontalOverflowInside(locator: ReturnType<Page["locator"]>, context: string) {
+  const sizes = await locator.evaluate((element) => ({
+    clientWidth: element.clientWidth,
+    scrollWidth: element.scrollWidth,
+  }));
+  expect(sizes.scrollWidth, `${context} must not overflow horizontally`).toBeLessThanOrEqual(sizes.clientWidth + 1);
 }
 
 async function expectNoSeriousAccessibilityViolations(page: Page, context: string) {
@@ -2482,6 +2544,133 @@ test("创建工作负载支持 StatefulSet 与 Headless Service", async ({ page 
   await expect(page.getByRole("heading", { name: "db", exact: true })).toBeVisible();
 });
 
+test("创建工作负载支持多容器、Init Container 与高级调度", async ({ page }) => {
+  test.setTimeout(120_000);
+  const createRequests: WorkloadRequestBody[] = [];
+  await installApiMocks(page, { workloadCreate: true, workloadCreateRequests: createRequests });
+  await page.goto("/workloads?namespace=default&kind=deployment");
+  await page.getByRole("button", { name: "创建工作负载" }).click();
+  const dialog = page.getByRole("dialog", { name: "创建工作负载" });
+  await expect(dialog).toBeVisible();
+  await dialog.getByLabel("Deployment 名称").fill("multi");
+  await dialog.getByRole("button", { name: "下一步" }).click();
+  await expect(dialog.getByLabel("容器镜像")).toBeVisible();
+
+  await dialog.getByRole("button", { name: "添加应用容器" }).click();
+  await dialog.locator("#workload-1-container-name").fill("sidecar");
+  await dialog.getByLabel("容器镜像 2").fill("envoy:1");
+
+  await dialog.getByRole("button", { name: "添加 Init Container" }).click();
+  await dialog.locator("#workload-init-0-container-name").fill("init-config");
+  await dialog.getByLabel("Init Container 容器镜像").fill("busybox:1.37");
+  await dialog.locator("#workload-init-0-command").fill("sh\n-c\nwait-for-db");
+
+  await dialog.getByText("容器安全上下文（可选）").first().click();
+  await dialog.locator("#workload-run-as-user").fill("1000");
+  await dialog.locator("#workload-capabilities-drop").fill("ALL");
+  await dialog.getByLabel("只读根文件系统").first().check();
+
+  await dialog.getByText("高级调度与 Pod 安全上下文").click();
+  await dialog.getByLabel("PriorityClass").fill("high-priority");
+  await dialog.getByLabel("ServiceAccount").fill("multi-sa");
+  await dialog.getByLabel("NodeSelector").fill("node-pool=gpu");
+
+  await dialog.getByRole("button", { name: "添加容忍" }).click();
+  await dialog.locator('input[placeholder="dedicated"]').fill("dedicated");
+  await dialog.locator('input[placeholder="gpu"]').fill("gpu");
+  await dialog.getByLabel("效果").click();
+  await page.getByRole("option", { name: "NoSchedule", exact: true }).click();
+
+  await dialog.getByRole("button", { name: "添加规则" }).click();
+  await dialog.locator('input[placeholder="topology.kubernetes.io/zone"]').fill("topology.kubernetes.io/zone");
+  await dialog.locator('input[placeholder="az-a,az-b"]').fill("az-a,az-b");
+
+  await dialog.getByRole("button", { name: "添加约束" }).click();
+  await dialog.getByLabel("无法满足时").click();
+  await page.getByRole("option", { name: "DoNotSchedule" }).click();
+
+  await dialog.locator("#workload-pod-run-as-user").fill("1001");
+  await dialog.locator("#workload-pod-run-as-group").fill("1001");
+  await dialog.locator("#workload-pod-fs-group").fill("2000");
+  await dialog.getByLabel("runAsNonRoot").last().click();
+  await page.getByRole("option", { name: "是", exact: true }).click();
+  await dialog.getByLabel("seccompProfile").click();
+  await page.getByRole("option", { name: "RuntimeDefault" }).click();
+
+  await dialog.getByRole("button", { name: "下一步" }).click();
+  await expect(dialog.getByText(/kind: Deployment/)).toBeVisible();
+  await dialog.getByRole("button", { name: "创建 Deployment" }).click();
+  await expect.poll(() => createRequests.length).toBe(1);
+  await expect(page.getByRole("heading", { name: "multi", exact: true })).toBeVisible();
+
+  const body = createRequests[0];
+  expect(body).toMatchObject({
+    kind: "deployment",
+    name: "multi",
+    namespace: "default",
+    nodeSelector: { "node-pool": "gpu" },
+    priorityClassName: "high-priority",
+    serviceAccountName: "multi-sa",
+    tolerations: [{ key: "dedicated", operator: "Equal", value: "gpu", effect: "NoSchedule" }],
+    nodeAffinity: [{ key: "topology.kubernetes.io/zone", operator: "In", values: ["az-a", "az-b"] }],
+    topologySpreadConstraints: [{ maxSkew: 1, topologyKey: "topology.kubernetes.io/zone", whenUnsatisfiable: "DoNotSchedule" }],
+    podSecurityContext: { runAsUser: 1001, runAsGroup: 1001, fsGroup: 2000, runAsNonRoot: true, seccompProfile: "RuntimeDefault" },
+  });
+  const containers = body.containers as Array<Record<string, unknown>>;
+  const initContainers = body.initContainers as Array<Record<string, unknown>>;
+  expect(containers).toHaveLength(2);
+  expect(containers[0]).toMatchObject({ image: "nginx:alpine", securityContext: { runAsUser: 1000, readOnlyRootFilesystem: true, capabilitiesDrop: ["ALL"] } });
+  expect(containers[1]).toMatchObject({ name: "sidecar", image: "envoy:1" });
+  expect(initContainers[0]).toMatchObject({ name: "init-config", image: "busybox:1.37", command: ["sh", "-c", "wait-for-db"] });
+});
+
+test("Deployment 发布进度与发布控制提交资源版本和滚动策略", async ({ page }) => {
+  const rolloutRequests: WorkloadRequestBody[] = [];
+  await installApiMocks(page, { workloadRolloutRequests: rolloutRequests });
+  await page.goto("/workloads/deployment/default/web");
+  await expect(page.getByRole("heading", { name: "web", exact: true })).toBeVisible();
+  await expect(page.getByText("发布进度")).toBeVisible();
+  await expect(page.getByText("web-7d8f9c6b5")).toBeVisible();
+  await expect(page.getByText("当前版本")).toBeVisible();
+
+  await page.getByRole("button", { name: "发布控制" }).click();
+  const dialog = page.getByRole("dialog", { name: "发布控制" });
+  await expect(dialog).toBeVisible();
+  await dialog.getByLabel("发布状态").click();
+  await page.getByRole("option", { name: "暂停发布" }).click();
+  await dialog.getByLabel("maxSurge").fill("50%");
+  await dialog.getByLabel("maxUnavailable").fill("0");
+  await dialog.getByRole("button", { name: "保存发布设置" }).click();
+  await expect.poll(() => rolloutRequests.length).toBe(1);
+
+  expect(rolloutRequests[0]).toEqual({ paused: true, maxSurge: "50%", maxUnavailable: "0", resourceVersion: "42" });
+  await expect(page.getByText("Deployment 发布已暂停")).toBeVisible();
+});
+
+test("CronJob 批处理详情可选择容器并覆盖 Command 与 Args 立即执行", async ({ page }) => {
+  const runRequests: WorkloadRequestBody[] = [];
+  await installApiMocks(page, { workloadCreate: true, cronJobRunRequests: runRequests });
+  await page.goto("/workloads/cronjob/default/backup");
+  await expect(page.getByRole("heading", { name: "backup", exact: true })).toBeVisible();
+  await expect(page.getByText("批处理状态")).toBeVisible();
+  await expect(page.getByText("BackoffLimitExceeded")).toBeVisible();
+  await expect(page.getByText("backup-2: job has reached the specified backoff limit")).toBeVisible();
+  await expect(page.getByRole("link", { name: "backup-1" })).toBeVisible();
+
+  await page.getByRole("button", { name: "立即执行" }).click();
+  const dialog = page.getByRole("alertdialog", { name: "立即执行 backup？" });
+  await expect(dialog).toBeVisible();
+  await dialog.getByRole("combobox", { name: "目标容器" }).click();
+  await page.getByRole("option", { name: /worker/ }).click();
+  await dialog.getByLabel("Command 覆盖（可选）").fill("/bin/sh\n-c");
+  await dialog.getByLabel("Args 覆盖（可选）").fill("worker --once");
+  await dialog.getByRole("button", { name: "确认执行" }).click();
+  await expect.poll(() => runRequests.length).toBe(1);
+
+  expect(runRequests[0]).toEqual({ containerName: "worker", command: ["/bin/sh", "-c"], args: ["worker --once"] });
+  await expect(page.getByRole("heading", { name: "backup-manual-demo", exact: true })).toBeVisible();
+});
+
 test("CronJob 立即执行后打开一次性 Job", async ({ page }) => {
   await installApiMocks(page, { workloadCreate: true });
   await page.goto("/workloads/cronjob/default/backup");
@@ -3362,6 +3551,62 @@ test("移动端关键弹窗与确认框保持在视口内", async ({ page }) => 
   await expectElementInsideViewport(page, alert, "node scheduling dialog");
   await page.screenshot({ path: "test-results/mobile-interactions/node-scheduling-dialog.png", fullPage: true });
   await page.getByRole("button", { name: "取消" }).click();
+});
+
+test("移动端多容器创建、发布控制与 CronJob 执行弹窗无横向溢出", async ({ page }) => {
+  test.setTimeout(180_000);
+  await installApiMocks(page, { workloadCreate: true });
+
+  for (const viewport of [{ width: 320, height: 720 }, { width: 360, height: 800 }, { width: 390, height: 844 }]) {
+    await page.setViewportSize(viewport);
+
+    await page.goto("/workloads");
+    await page.getByRole("button", { name: "创建工作负载" }).click();
+    let dialog = page.getByRole("dialog", { name: "创建工作负载" });
+    await expect(dialog).toBeVisible();
+    await dialog.getByLabel("Deployment 名称").fill("mobile-multi");
+    await dialog.getByRole("button", { name: "下一步" }).click();
+    await dialog.getByRole("button", { name: "添加应用容器" }).click();
+    await dialog.getByRole("button", { name: "添加 Init Container" }).click();
+    await expect(dialog.getByRole("region", { name: "应用容器 (2)" })).toBeVisible();
+    await expect(dialog.getByRole("region", { name: "Init Container (1)" })).toBeVisible();
+    await expectElementInsideViewport(page, dialog, `${viewport.width}px workload create dialog`);
+    await expectNoPageOverflow(page, `${viewport.width}px workload create dialog`);
+    await expectNoHorizontalOverflowInside(dialog, `${viewport.width}px workload create dialog`);
+    await expectNoHorizontalOverflowInside(dialog.getByRole("region", { name: "应用容器 (2)" }), `${viewport.width}px dynamic application containers`);
+    await expectNoHorizontalOverflowInside(dialog.getByRole("region", { name: "Init Container (1)" }), `${viewport.width}px dynamic init containers`);
+    await page.screenshot({ path: `test-results/mobile-workloads/multi-create-${viewport.width}.png`, fullPage: true });
+
+    await dialog.getByText("高级调度与 Pod 安全上下文").click();
+    await expect(dialog.getByLabel("PriorityClass")).toBeVisible();
+    await expectNoPageOverflow(page, `${viewport.width}px workload create advanced scheduling`);
+    await expectNoHorizontalOverflowInside(dialog, `${viewport.width}px workload create advanced scheduling`);
+    await page.screenshot({ path: `test-results/mobile-workloads/multi-create-scheduling-${viewport.width}.png`, fullPage: true });
+    await page.keyboard.press("Escape");
+
+    await page.goto("/workloads/deployment/default/web");
+    await expect(page.getByRole("heading", { name: "web", exact: true })).toBeVisible();
+    await expect(page.getByText("发布进度")).toBeVisible();
+    await page.getByRole("button", { name: "发布控制" }).click();
+    dialog = page.getByRole("dialog", { name: "发布控制" });
+    await expect(dialog).toBeVisible();
+    await expectElementInsideViewport(page, dialog, `${viewport.width}px rollout dialog`);
+    await expectNoPageOverflow(page, `${viewport.width}px rollout dialog`);
+    await expectNoHorizontalOverflowInside(dialog, `${viewport.width}px rollout dialog`);
+    await page.screenshot({ path: `test-results/mobile-workloads/rollout-${viewport.width}.png`, fullPage: true });
+    await page.keyboard.press("Escape");
+
+    await page.goto("/workloads/cronjob/default/backup");
+    await expect(page.getByRole("heading", { name: "backup", exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "立即执行" }).click();
+    const runDialog = page.getByRole("alertdialog", { name: "立即执行 backup？" });
+    await expect(runDialog).toBeVisible();
+    await expectElementInsideViewport(page, runDialog, `${viewport.width}px cronjob run dialog`);
+    await expectNoPageOverflow(page, `${viewport.width}px cronjob run dialog`);
+    await expectNoHorizontalOverflowInside(runDialog, `${viewport.width}px cronjob run dialog`);
+    await page.screenshot({ path: `test-results/mobile-workloads/cronjob-run-${viewport.width}.png`, fullPage: true });
+    await page.keyboard.press("Escape");
+  }
 });
 
 test("移动端节点排空与回滚预览不产生横向溢出", async ({ page }) => {

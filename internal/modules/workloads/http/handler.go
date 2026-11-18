@@ -178,24 +178,40 @@ func containerProbe(request *containerProbeRequest) *domain.WorkloadProbe {
 }
 
 type deploymentCreateRequest struct {
-	Kind               string                    `json:"kind"`
-	Name               string                    `json:"name"`
-	Namespace          string                    `json:"namespace"`
-	Replicas           int32                     `json:"replicas"`
-	ServiceName        string                    `json:"serviceName"`
-	Schedule           string                    `json:"schedule"`
-	ConcurrencyPolicy  string                    `json:"concurrencyPolicy"`
-	Suspend            bool                      `json:"suspend"`
-	ContainerName      string                    `json:"containerName"`
-	Image              string                    `json:"image"`
-	RegistryID         string                    `json:"registryId"`
-	ContainerPort      int32                     `json:"containerPort"`
-	CPURequestMilli    int64                     `json:"cpuRequestMilli"`
-	CPULimitMilli      int64                     `json:"cpuLimitMilli"`
-	MemoryRequestBytes int64                     `json:"memoryRequestBytes"`
-	MemoryLimitBytes   int64                     `json:"memoryLimitBytes"`
-	Env                []deploymentEnvVarRequest `json:"env"`
-	Labels             map[string]string         `json:"labels"`
+	Kind                       string                                    `json:"kind"`
+	Name                       string                                    `json:"name"`
+	Namespace                  string                                    `json:"namespace"`
+	Replicas                   int32                                     `json:"replicas"`
+	ServiceName                string                                    `json:"serviceName"`
+	Schedule                   string                                    `json:"schedule"`
+	ConcurrencyPolicy          string                                    `json:"concurrencyPolicy"`
+	Suspend                    bool                                      `json:"suspend"`
+	ContainerName              string                                    `json:"containerName"`
+	Image                      string                                    `json:"image"`
+	RegistryID                 string                                    `json:"registryId"`
+	ContainerPort              int32                                     `json:"containerPort"`
+	CPURequestMilli            int64                                     `json:"cpuRequestMilli"`
+	CPULimitMilli              int64                                     `json:"cpuLimitMilli"`
+	MemoryRequestBytes         int64                                     `json:"memoryRequestBytes"`
+	MemoryLimitBytes           int64                                     `json:"memoryLimitBytes"`
+	Env                        []deploymentEnvVarRequest                 `json:"env"`
+	Labels                     map[string]string                         `json:"labels"`
+	Containers                 []domain.WorkloadContainerSpec            `json:"containers"`
+	InitContainers             []domain.WorkloadContainerSpec            `json:"initContainers"`
+	Command                    []string                                  `json:"command"`
+	Args                       []string                                  `json:"args"`
+	NodeSelector               map[string]string                         `json:"nodeSelector"`
+	Tolerations                []domain.WorkloadToleration               `json:"tolerations"`
+	NodeAffinity               []domain.WorkloadNodeSelectorRequirement  `json:"nodeAffinity"`
+	TopologySpreadConstraints  []domain.WorkloadTopologySpreadConstraint `json:"topologySpreadConstraints"`
+	PriorityClassName          string                                    `json:"priorityClassName"`
+	ServiceAccountName         string                                    `json:"serviceAccountName"`
+	PodSecurityContext         *domain.WorkloadPodSecurityContext        `json:"podSecurityContext"`
+	JobCompletions             *int32                                    `json:"jobCompletions"`
+	JobParallelism             *int32                                    `json:"jobParallelism"`
+	JobBackoffLimit            *int32                                    `json:"jobBackoffLimit"`
+	JobActiveDeadlineSeconds   *int64                                    `json:"jobActiveDeadlineSeconds"`
+	JobTTLSecondsAfterFinished *int32                                    `json:"jobTtlSecondsAfterFinished"`
 }
 
 func (request deploymentCreateRequest) spec() domain.WorkloadCreateSpec {
@@ -210,6 +226,15 @@ func (request deploymentCreateRequest) spec() domain.WorkloadCreateSpec {
 		CPURequestMilli: request.CPURequestMilli, CPULimitMilli: request.CPULimitMilli,
 		MemoryRequestBytes: request.MemoryRequestBytes, MemoryLimitBytes: request.MemoryLimitBytes,
 		Env: env, Labels: request.Labels,
+		Containers: request.Containers, InitContainers: request.InitContainers,
+		Command: request.Command, Args: request.Args,
+		NodeSelector: request.NodeSelector, Tolerations: request.Tolerations, NodeAffinity: request.NodeAffinity,
+		TopologySpreadConstraints: request.TopologySpreadConstraints,
+		PriorityClassName:         request.PriorityClassName, ServiceAccountName: request.ServiceAccountName,
+		PodSecurityContext: request.PodSecurityContext,
+		JobCompletions:     request.JobCompletions, JobParallelism: request.JobParallelism,
+		JobBackoffLimit: request.JobBackoffLimit, JobActiveDeadlineSeconds: request.JobActiveDeadlineSeconds,
+		JobTTLSecondsAfterFinished: request.JobTTLSecondsAfterFinished,
 	}
 }
 
@@ -274,13 +299,31 @@ func (h *Handler) PreviewWorkload(w stdhttp.ResponseWriter, r *stdhttp.Request) 
 }
 
 func (h *Handler) RunCronJob(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	var request domain.CronJobRunInput
+	if r.ContentLength != 0 && !httpx.DecodeJSON(w, r, &request) {
+		return
+	}
 	actor, _ := domain.ActorFromContext(r.Context())
-	item, err := h.service.RunCronJobOnce(r.Context(), actor, chi.URLParam(r, "namespace"), chi.URLParam(r, "name"))
+	item, err := h.service.RunCronJobOnce(r.Context(), actor, chi.URLParam(r, "namespace"), chi.URLParam(r, "name"), request)
 	if err != nil {
 		httpx.Error(w, r, err)
 		return
 	}
 	httpx.JSON(w, stdhttp.StatusCreated, item)
+}
+
+func (h *Handler) UpdateRollout(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	var request domain.WorkloadRolloutUpdate
+	if !httpx.DecodeJSON(w, r, &request) {
+		return
+	}
+	actor, _ := domain.ActorFromContext(r.Context())
+	err := h.service.UpdateRollout(r.Context(), actor, chi.URLParam(r, "kind"), chi.URLParam(r, "namespace"), chi.URLParam(r, "name"), request)
+	if err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	httpx.JSON(w, stdhttp.StatusOK, map[string]string{"status": "updated"})
 }
 
 func (h *Handler) Scale(w stdhttp.ResponseWriter, r *stdhttp.Request) {
@@ -640,6 +683,7 @@ func (h *Handler) Mount(r chi.Router) {
 	r.Post("/workloads/{kind}/{namespace}/{name}/image", h.UpdateImage)
 	r.Put("/workloads/{kind}/{namespace}/{name}/containers/{container}/config", h.UpdateContainerConfig)
 	r.Post("/workloads/{kind}/{namespace}/{name}/suspend", h.SetSuspend)
+	r.Post("/workloads/{kind}/{namespace}/{name}/rollout", h.UpdateRollout)
 	r.Post("/workloads/cronjob/{namespace}/{name}/run", h.RunCronJob)
 	r.Get("/workloads/{kind}/{namespace}/{name}/revisions", h.Revisions)
 	r.Post("/workloads/{kind}/{namespace}/{name}/rollback", h.Rollback)
