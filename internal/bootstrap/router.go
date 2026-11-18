@@ -19,6 +19,7 @@ import (
 	preferenceshttp "dosh/internal/modules/preferences/http"
 	registrieshttp "dosh/internal/modules/registries/http"
 	releaseshttp "dosh/internal/modules/releases/http"
+	resiliencehttp "dosh/internal/modules/resilience/http"
 	resourceshttp "dosh/internal/modules/resources/http"
 	storagehttp "dosh/internal/modules/storage/http"
 	workloadshttp "dosh/internal/modules/workloads/http"
@@ -39,6 +40,7 @@ type routerDependencies struct {
 	overview      *overviewhttp.Handler
 	preferences   *preferenceshttp.Handler
 	registries    *registrieshttp.Handler
+	resilience    *resiliencehttp.Handler
 	resources     *resourceshttp.Handler
 	clusterConfig *clusterconfighttp.Handler
 	nodes         *nodeshttp.Handler
@@ -89,6 +91,7 @@ func buildRouter(deps routerDependencies) (stdhttp.Handler, error) {
 			deps.overview.Mount(r)
 			deps.preferences.Mount(r)
 			deps.registries.Mount(r)
+			deps.resilience.Mount(r)
 			deps.resources.Mount(r)
 			deps.clusterConfig.Mount(r)
 			deps.nodes.Mount(r)

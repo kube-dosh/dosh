@@ -26,6 +26,7 @@ tags:
   - name: preferences
   - name: registries
   - name: diagnostics
+  - name: resilience
 security:
   - cookieAuth: []
 paths:
@@ -2791,6 +2792,194 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
         "501": { $ref: "#/components/responses/NotSupported" }
         "503": { $ref: "#/components/responses/DependencyUnavailable" }
+  /api/v1/resilience/autoscalers:
+    get:
+      tags: [resilience]
+      summary: List HorizontalPodAutoscalers with scaling status and metric explanations
+      parameters:
+        - $ref: "#/components/parameters/Namespace"
+      responses:
+        "200":
+          description: Autoscalers visible to the current identity
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, meta]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/AutoscalerSummary" }
+                  meta: { $ref: "#/components/schemas/ListMeta" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
+    post:
+      tags: [resilience]
+      summary: Create a CPU or memory HorizontalPodAutoscaler after API Server dry-run
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AutoscalerInput" }
+      responses:
+        "201":
+          description: Created autoscaler
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AutoscalerSummary" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
+  /api/v1/resilience/autoscalers/{namespace}/{name}:
+    put:
+      tags: [resilience]
+      summary: Update an autoscaler using resourceVersion conflict protection
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      parameters:
+        - { $ref: "#/components/parameters/NamespacePath" }
+        - { $ref: "#/components/parameters/Name" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AutoscalerInput" }
+      responses:
+        "200":
+          description: Updated autoscaler
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AutoscalerSummary" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
+    delete:
+      tags: [resilience]
+      summary: Delete an autoscaler with optional resourceVersion precondition
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      parameters:
+        - { $ref: "#/components/parameters/NamespacePath" }
+        - { $ref: "#/components/parameters/Name" }
+        - { name: resourceVersion, in: query, schema: { type: string, maxLength: 256 } }
+      responses:
+        "202":
+          description: Autoscaler deletion accepted
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OperationStatus" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
+  /api/v1/resilience/disruption-budgets:
+    get:
+      tags: [resilience]
+      summary: List PodDisruptionBudgets with eviction protection status
+      parameters:
+        - $ref: "#/components/parameters/Namespace"
+      responses:
+        "200":
+          description: Disruption budgets visible to the current identity
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, meta]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/DisruptionBudgetSummary" }
+                  meta: { $ref: "#/components/schemas/ListMeta" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
+    post:
+      tags: [resilience]
+      summary: Create a PodDisruptionBudget after API Server dry-run
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/DisruptionBudgetInput" }
+      responses:
+        "201":
+          description: Created disruption budget
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DisruptionBudgetSummary" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
+  /api/v1/resilience/disruption-budgets/{namespace}/{name}:
+    put:
+      tags: [resilience]
+      summary: Update a disruption budget using resourceVersion conflict protection
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      parameters:
+        - { $ref: "#/components/parameters/NamespacePath" }
+        - { $ref: "#/components/parameters/Name" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/DisruptionBudgetInput" }
+      responses:
+        "200":
+          description: Updated disruption budget
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DisruptionBudgetSummary" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
+    delete:
+      tags: [resilience]
+      summary: Delete a disruption budget with optional resourceVersion precondition
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      parameters:
+        - { $ref: "#/components/parameters/NamespacePath" }
+        - { $ref: "#/components/parameters/Name" }
+        - { name: resourceVersion, in: query, schema: { type: string, maxLength: 256 } }
+      responses:
+        "202":
+          description: Disruption budget deletion accepted
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OperationStatus" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
 components:
   securitySchemes:
     cookieAuth:
@@ -3510,7 +3699,15 @@ components:
         env:
           type: array
           maxItems: 64
-          items: { $ref: "#/components/schemas/DeploymentEnvVar" }
+          items: { $ref: "#/components/schemas/WorkloadEnvVar" }
+        imagePullSecrets:
+          type: array
+          maxItems: 16
+          items: { type: string, maxLength: 253 }
+        volumes:
+          type: array
+          maxItems: 64
+          items: { $ref: "#/components/schemas/WorkloadVolumeSpec" }
         containers:
           type: array
           maxItems: 32
@@ -3547,6 +3744,8 @@ components:
         priorityClassName: { type: string, maxLength: 63 }
         serviceAccountName: { type: string, maxLength: 63 }
         podSecurityContext: { $ref: "#/components/schemas/WorkloadPodSecurityContext" }
+        runtimeClassName: { type: string, maxLength: 253, description: Optional RuntimeClass for the Pod template. }
+        terminationGracePeriodSeconds: { type: integer, format: int64, minimum: 0, maximum: 86400 }
         jobCompletions: { type: integer, minimum: 1, maximum: 10000 }
         jobParallelism: { type: integer, minimum: 0, maximum: 10000 }
         jobBackoffLimit: { type: integer, minimum: 0, maximum: 10000 }
@@ -3571,7 +3770,7 @@ components:
         env:
           type: array
           maxItems: 64
-          items: { $ref: "#/components/schemas/DeploymentEnvVar" }
+          items: { $ref: "#/components/schemas/WorkloadEnvVar" }
         command:
           type: array
           maxItems: 128
@@ -3581,6 +3780,21 @@ components:
           maxItems: 128
           items: { type: string, maxLength: 4096 }
         securityContext: { $ref: "#/components/schemas/WorkloadContainerSecurityContext" }
+        volumeMounts:
+          type: array
+          maxItems: 64
+          items: { $ref: "#/components/schemas/WorkloadVolumeMount" }
+        livenessProbe: { $ref: "#/components/schemas/WorkloadProbe" }
+        readinessProbe: { $ref: "#/components/schemas/WorkloadProbe" }
+        startupProbe: { $ref: "#/components/schemas/WorkloadProbe" }
+    WorkloadVolumeSpec:
+      type: object
+      required: [name, type, source]
+      properties:
+        name: { type: string, maxLength: 63 }
+        type: { type: string, enum: [configMap, secret, persistentVolumeClaim] }
+        source: { type: string, maxLength: 253 }
+        optional: { type: boolean, description: Only valid for ConfigMap and Secret sources. }
     WorkloadToleration:
       type: object
       properties:
@@ -3645,6 +3859,7 @@ components:
         paused: { type: boolean }
         maxSurge: { type: string, pattern: '^([0-9]+)(%?)$' }
         maxUnavailable: { type: string, pattern: '^([0-9]+)(%?)$' }
+        partition: { type: integer, format: int32, minimum: 0, maximum: 100000, description: StatefulSet only. Zero updates all replicas. }
         resourceVersion: { type: string, maxLength: 256 }
     WorkloadCreateKindRequest:
       allOf:
@@ -3844,6 +4059,89 @@ components:
         livenessProbe: { $ref: "#/components/schemas/WorkloadProbe" }
         readinessProbe: { $ref: "#/components/schemas/WorkloadProbe" }
         startupProbe: { $ref: "#/components/schemas/WorkloadProbe" }
+        resourceVersion: { type: string, maxLength: 256 }
+    AutoscalerMetric:
+      type: object
+      required: [type]
+      properties:
+        type: { type: string }
+        resource: { type: string }
+        current: { type: string }
+        target: { type: string }
+        currentUtilization: { type: integer, format: int32 }
+        targetUtilization: { type: integer, format: int32 }
+    AutoscalerSummary:
+      type: object
+      required: [name, namespace, targetKind, targetName, minReplicas, maxReplicas, currentReplicas, desiredReplicas, status, metrics, conditions, createdAt]
+      properties:
+        name: { type: string }
+        namespace: { type: string }
+        resourceVersion: { type: string }
+        targetKind: { type: string, enum: [Deployment, StatefulSet] }
+        targetName: { type: string }
+        minReplicas: { type: integer, format: int32 }
+        maxReplicas: { type: integer, format: int32 }
+        currentReplicas: { type: integer, format: int32 }
+        desiredReplicas: { type: integer, format: int32 }
+        status: { type: string, enum: [Ready, Scaling, Idle, Degraded] }
+        metrics:
+          type: array
+          items: { $ref: "#/components/schemas/AutoscalerMetric" }
+        conditions:
+          type: array
+          items: { $ref: "#/components/schemas/Condition" }
+        lastScaleTime: { type: string, format: date-time }
+        createdAt: { type: string, format: date-time }
+    AutoscalerInput:
+      type: object
+      required: [name, namespace, targetKind, targetName, minReplicas, maxReplicas]
+      description: At least one of cpuUtilization and memoryUtilization is required.
+      properties:
+        name: { type: string, maxLength: 63 }
+        namespace: { type: string, maxLength: 63 }
+        targetKind: { type: string, enum: [Deployment, StatefulSet] }
+        targetName: { type: string, maxLength: 63 }
+        minReplicas: { type: integer, format: int32, minimum: 1, maximum: 1000 }
+        maxReplicas: { type: integer, format: int32, minimum: 1, maximum: 1000 }
+        cpuUtilization: { type: integer, format: int32, minimum: 1, maximum: 100, description: Target average CPU utilization percentage. }
+        memoryUtilization: { type: integer, format: int32, minimum: 1, maximum: 100, description: Target average memory utilization percentage. }
+        resourceVersion: { type: string, maxLength: 256 }
+    DisruptionBudgetSummary:
+      type: object
+      required: [name, namespace, selector, currentHealthy, desiredHealthy, disruptionsAllowed, expectedPods, observedGeneration, status, conditions, createdAt]
+      properties:
+        name: { type: string }
+        namespace: { type: string }
+        resourceVersion: { type: string }
+        minAvailable: { type: string }
+        maxUnavailable: { type: string }
+        selector:
+          type: object
+          additionalProperties: { type: string }
+        currentHealthy: { type: integer, format: int32 }
+        desiredHealthy: { type: integer, format: int32 }
+        disruptionsAllowed: { type: integer, format: int32 }
+        expectedPods: { type: integer, format: int32 }
+        observedGeneration: { type: integer, format: int64 }
+        status: { type: string, enum: [Ready, Protected, Blocked] }
+        conditions:
+          type: array
+          items: { $ref: "#/components/schemas/Condition" }
+        createdAt: { type: string, format: date-time }
+    DisruptionBudgetInput:
+      type: object
+      required: [name, namespace, selector]
+      description: Exactly one of minAvailable and maxUnavailable is required.
+      properties:
+        name: { type: string, maxLength: 63 }
+        namespace: { type: string, maxLength: 63 }
+        minAvailable: { type: string, pattern: '^([0-9]+)(%?)$' }
+        maxUnavailable: { type: string, pattern: '^([0-9]+)(%?)$' }
+        selector:
+          type: object
+          minProperties: 1
+          maxProperties: 16
+          additionalProperties: { type: string }
         resourceVersion: { type: string, maxLength: 256 }
     PodSummary:
       type: object

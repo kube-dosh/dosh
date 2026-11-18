@@ -5210,6 +5210,314 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/resilience/autoscalers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List HorizontalPodAutoscalers with scaling status and metric explanations */
+        get: {
+            parameters: {
+                query?: {
+                    namespace?: components["parameters"]["Namespace"];
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Autoscalers visible to the current identity */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            items: components["schemas"]["AutoscalerSummary"][];
+                            meta: components["schemas"]["ListMeta"];
+                        };
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+                503: components["responses"]["DependencyUnavailable"];
+            };
+        };
+        put?: never;
+        /** Create a CPU or memory HorizontalPodAutoscaler after API Server dry-run */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["AutoscalerInput"];
+                };
+            };
+            responses: {
+                /** @description Created autoscaler */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["AutoscalerSummary"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+                409: components["responses"]["Conflict"];
+                503: components["responses"]["DependencyUnavailable"];
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/resilience/autoscalers/{namespace}/{name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Update an autoscaler using resourceVersion conflict protection */
+        put: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    namespace: components["parameters"]["NamespacePath"];
+                    name: components["parameters"]["Name"];
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["AutoscalerInput"];
+                };
+            };
+            responses: {
+                /** @description Updated autoscaler */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["AutoscalerSummary"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+                404: components["responses"]["NotFound"];
+                409: components["responses"]["Conflict"];
+                503: components["responses"]["DependencyUnavailable"];
+            };
+        };
+        post?: never;
+        /** Delete an autoscaler with optional resourceVersion precondition */
+        delete: {
+            parameters: {
+                query?: {
+                    resourceVersion?: string;
+                };
+                header?: never;
+                path: {
+                    namespace: components["parameters"]["NamespacePath"];
+                    name: components["parameters"]["Name"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Autoscaler deletion accepted */
+                202: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["OperationStatus"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+                404: components["responses"]["NotFound"];
+                409: components["responses"]["Conflict"];
+                503: components["responses"]["DependencyUnavailable"];
+            };
+        };
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/resilience/disruption-budgets": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List PodDisruptionBudgets with eviction protection status */
+        get: {
+            parameters: {
+                query?: {
+                    namespace?: components["parameters"]["Namespace"];
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Disruption budgets visible to the current identity */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            items: components["schemas"]["DisruptionBudgetSummary"][];
+                            meta: components["schemas"]["ListMeta"];
+                        };
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+                503: components["responses"]["DependencyUnavailable"];
+            };
+        };
+        put?: never;
+        /** Create a PodDisruptionBudget after API Server dry-run */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["DisruptionBudgetInput"];
+                };
+            };
+            responses: {
+                /** @description Created disruption budget */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["DisruptionBudgetSummary"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+                409: components["responses"]["Conflict"];
+                503: components["responses"]["DependencyUnavailable"];
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/resilience/disruption-budgets/{namespace}/{name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Update a disruption budget using resourceVersion conflict protection */
+        put: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    namespace: components["parameters"]["NamespacePath"];
+                    name: components["parameters"]["Name"];
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["DisruptionBudgetInput"];
+                };
+            };
+            responses: {
+                /** @description Updated disruption budget */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["DisruptionBudgetSummary"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+                404: components["responses"]["NotFound"];
+                409: components["responses"]["Conflict"];
+                503: components["responses"]["DependencyUnavailable"];
+            };
+        };
+        post?: never;
+        /** Delete a disruption budget with optional resourceVersion precondition */
+        delete: {
+            parameters: {
+                query?: {
+                    resourceVersion?: string;
+                };
+                header?: never;
+                path: {
+                    namespace: components["parameters"]["NamespacePath"];
+                    name: components["parameters"]["Name"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Disruption budget deletion accepted */
+                202: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["OperationStatus"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+                404: components["responses"]["NotFound"];
+                409: components["responses"]["Conflict"];
+                503: components["responses"]["DependencyUnavailable"];
+            };
+        };
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -5685,7 +5993,9 @@ export interface components {
             cpuLimitMilli?: number;
             memoryRequestBytes?: number;
             memoryLimitBytes?: number;
-            env?: components["schemas"]["DeploymentEnvVar"][];
+            env?: components["schemas"]["WorkloadEnvVar"][];
+            imagePullSecrets?: string[];
+            volumes?: components["schemas"]["WorkloadVolumeSpec"][];
             /** @description Preferred application-container list. Legacy image/containerPort fields are converted to one container when omitted. */
             containers?: components["schemas"]["WorkloadContainerSpec"][];
             initContainers?: components["schemas"]["WorkloadContainerSpec"][];
@@ -5700,6 +6010,10 @@ export interface components {
             priorityClassName?: string;
             serviceAccountName?: string;
             podSecurityContext?: components["schemas"]["WorkloadPodSecurityContext"];
+            /** @description Optional RuntimeClass for the Pod template. */
+            runtimeClassName?: string;
+            /** Format: int64 */
+            terminationGracePeriodSeconds?: number;
             jobCompletions?: number;
             jobParallelism?: number;
             jobBackoffLimit?: number;
@@ -5719,10 +6033,22 @@ export interface components {
             cpuLimitMilli?: number;
             memoryRequestBytes?: number;
             memoryLimitBytes?: number;
-            env?: components["schemas"]["DeploymentEnvVar"][];
+            env?: components["schemas"]["WorkloadEnvVar"][];
             command?: string[];
             args?: string[];
             securityContext?: components["schemas"]["WorkloadContainerSecurityContext"];
+            volumeMounts?: components["schemas"]["WorkloadVolumeMount"][];
+            livenessProbe?: components["schemas"]["WorkloadProbe"];
+            readinessProbe?: components["schemas"]["WorkloadProbe"];
+            startupProbe?: components["schemas"]["WorkloadProbe"];
+        };
+        WorkloadVolumeSpec: {
+            name: string;
+            /** @enum {string} */
+            type: "configMap" | "secret" | "persistentVolumeClaim";
+            source: string;
+            /** @description Only valid for ConfigMap and Secret sources. */
+            optional?: boolean;
         };
         WorkloadToleration: {
             key?: string;
@@ -5777,6 +6103,11 @@ export interface components {
             paused?: boolean;
             maxSurge?: string;
             maxUnavailable?: string;
+            /**
+             * Format: int32
+             * @description StatefulSet only. Zero updates all replicas.
+             */
+            partition?: number;
             resourceVersion?: string;
         };
         WorkloadCreateKindRequest: components["schemas"]["WorkloadCreateRequest"] & Record<string, never>;
@@ -5921,6 +6252,99 @@ export interface components {
             livenessProbe?: components["schemas"]["WorkloadProbe"];
             readinessProbe?: components["schemas"]["WorkloadProbe"];
             startupProbe?: components["schemas"]["WorkloadProbe"];
+            resourceVersion?: string;
+        };
+        AutoscalerMetric: {
+            type: string;
+            resource?: string;
+            current?: string;
+            target?: string;
+            /** Format: int32 */
+            currentUtilization?: number;
+            /** Format: int32 */
+            targetUtilization?: number;
+        };
+        AutoscalerSummary: {
+            name: string;
+            namespace: string;
+            resourceVersion?: string;
+            /** @enum {string} */
+            targetKind: "Deployment" | "StatefulSet";
+            targetName: string;
+            /** Format: int32 */
+            minReplicas: number;
+            /** Format: int32 */
+            maxReplicas: number;
+            /** Format: int32 */
+            currentReplicas: number;
+            /** Format: int32 */
+            desiredReplicas: number;
+            /** @enum {string} */
+            status: "Ready" | "Scaling" | "Idle" | "Degraded";
+            metrics: components["schemas"]["AutoscalerMetric"][];
+            conditions: components["schemas"]["Condition"][];
+            /** Format: date-time */
+            lastScaleTime?: string;
+            /** Format: date-time */
+            createdAt: string;
+        };
+        /** @description At least one of cpuUtilization and memoryUtilization is required. */
+        AutoscalerInput: {
+            name: string;
+            namespace: string;
+            /** @enum {string} */
+            targetKind: "Deployment" | "StatefulSet";
+            targetName: string;
+            /** Format: int32 */
+            minReplicas: number;
+            /** Format: int32 */
+            maxReplicas: number;
+            /**
+             * Format: int32
+             * @description Target average CPU utilization percentage.
+             */
+            cpuUtilization?: number;
+            /**
+             * Format: int32
+             * @description Target average memory utilization percentage.
+             */
+            memoryUtilization?: number;
+            resourceVersion?: string;
+        };
+        DisruptionBudgetSummary: {
+            name: string;
+            namespace: string;
+            resourceVersion?: string;
+            minAvailable?: string;
+            maxUnavailable?: string;
+            selector: {
+                [key: string]: string;
+            };
+            /** Format: int32 */
+            currentHealthy: number;
+            /** Format: int32 */
+            desiredHealthy: number;
+            /** Format: int32 */
+            disruptionsAllowed: number;
+            /** Format: int32 */
+            expectedPods: number;
+            /** Format: int64 */
+            observedGeneration: number;
+            /** @enum {string} */
+            status: "Ready" | "Protected" | "Blocked";
+            conditions: components["schemas"]["Condition"][];
+            /** Format: date-time */
+            createdAt: string;
+        };
+        /** @description Exactly one of minAvailable and maxUnavailable is required. */
+        DisruptionBudgetInput: {
+            name: string;
+            namespace: string;
+            minAvailable?: string;
+            maxUnavailable?: string;
+            selector: {
+                [key: string]: string;
+            };
             resourceVersion?: string;
         };
         PodSummary: {

@@ -74,6 +74,7 @@ export function WorkloadDetailPage() {
   const [rolloutPaused, setRolloutPaused] = useState(false);
   const [maxSurge, setMaxSurge] = useState("");
   const [maxUnavailable, setMaxUnavailable] = useState("");
+  const [partition, setPartition] = useState("0");
   const [runContainer, setRunContainer] = useState("");
   const [runCommand, setRunCommand] = useState("");
   const [runArgs, setRunArgs] = useState("");
@@ -120,7 +121,7 @@ export function WorkloadDetailPage() {
   const canUpdateContainerConfig = workloadCaps.update && ["deployment", "statefulset", "daemonset"].includes(kind);
   const canSuspend = workloadCaps.update && kind === "cronjob";
   const canRunNow = kind === "cronjob" && resourceCapabilities(capabilities, "jobs").create;
-  const canRollout = workloadCaps.update && kind === "deployment";
+  const canRollout = workloadCaps.update && ["deployment", "statefulset", "daemonset"].includes(kind);
   const canRollback = workloadCaps.update && supportsRevisions;
   const canDelete = workloadCaps.delete;
   const invalidate = async () => {
@@ -140,19 +141,21 @@ export function WorkloadDetailPage() {
   });
   const updateRollout = useMutation({
     mutationFn: () => api.updateWorkloadRollout(kind, params.namespace, params.name, {
-      paused: rolloutPaused,
-      maxSurge: maxSurge.trim() || undefined,
-      maxUnavailable: maxUnavailable.trim() || undefined,
+      paused: kind === "deployment" ? rolloutPaused : undefined,
+      maxSurge: kind === "deployment" || kind === "daemonset" ? maxSurge.trim() || undefined : undefined,
+      maxUnavailable: kind === "deployment" || kind === "daemonset" ? maxUnavailable.trim() || undefined : undefined,
+      partition: kind === "statefulset" ? Number(partition) : undefined,
       resourceVersion: query.data?.resourceVersion,
     }),
     onSuccess: async () => {
-      toast.success(rolloutPaused ? "Deployment 发布已暂停" : "Deployment 发布控制已更新");
+      const message = kind === "deployment" && rolloutPaused ? "Deployment 发布已暂停" : `${kindLabel} 发布控制已更新`;
+      toast.success(message);
       setRolloutOpen(false);
       await invalidate();
     },
     onError: (error) => {
       if (error instanceof ApiError && error.status === 409) {
-        toast.error("Deployment 已被其他操作更新，请刷新后重试");
+        toast.error(`${kindLabel} 已被其他操作更新，请刷新后重试`);
         void invalidate();
         return;
       }
@@ -237,6 +240,7 @@ export function WorkloadDetailPage() {
     setRolloutPaused(Boolean(workload.rollout?.paused));
     setMaxSurge(workload.rollout?.maxSurge ?? "");
     setMaxUnavailable(workload.rollout?.maxUnavailable ?? "");
+    setPartition(String(workload.rollout?.partition ?? 0));
     setRolloutOpen(true);
   };
   const openRunDialog = () => {
@@ -246,6 +250,10 @@ export function WorkloadDetailPage() {
     setRunOpen(true);
   };
   const rolloutValueValid = (value: string) => value.trim() === "" || /^\d+%?$/.test(value.trim());
+  const partitionValid = /^\d+$/.test(partition.trim()) && Number(partition) >= 0 && Number(partition) <= 100000;
+  const rolloutFormValid = kind === "statefulset"
+    ? partitionValid
+    : rolloutValueValid(maxSurge) && rolloutValueValid(maxUnavailable) && (kind === "deployment" || maxSurge.trim() !== "" || maxUnavailable.trim() !== "");
 
   return (
     <>
@@ -355,10 +363,12 @@ export function WorkloadDetailPage() {
         <DialogContent className="max-w-lg">
           <DialogHeader>
             <DialogTitle>发布控制</DialogTitle>
-            <DialogDescription>{workload.namespace}/{workload.name} · 暂停只会冻结 Pod 模板变更，不影响现有 Pod；maxSurge 和 maxUnavailable 支持整数或百分比。</DialogDescription>
+            <DialogDescription>
+              {kind === "deployment" ? "暂停只会冻结 Deployment Pod 模板变更，不影响现有 Pod；maxSurge 和 maxUnavailable 支持整数或百分比。" : kind === "statefulset" ? "Partition 之前的序号保持当前版本；Partition 为 0 时所有副本滚动更新。" : "DaemonSet 发布期间可配置滚动超量节点和不可用节点数量，支持整数或百分比。"}
+            </DialogDescription>
           </DialogHeader>
           <div className="grid min-w-0 gap-4 sm:grid-cols-2">
-            <div className="min-w-0 space-y-2 sm:col-span-2">
+            {kind === "deployment" ? <div className="min-w-0 space-y-2 sm:col-span-2">
               <Label htmlFor="rollout-state">发布状态</Label>
               <Select value={rolloutPaused ? "paused" : "running"} onValueChange={(value) => setRolloutPaused(value === "paused")}>
                 <SelectTrigger id="rollout-state"><SelectValue /></SelectTrigger>
@@ -367,22 +377,31 @@ export function WorkloadDetailPage() {
                   <SelectItem value="paused"><Pause className="mr-2 inline h-4 w-4" />暂停发布</SelectItem>
                 </SelectContent>
               </Select>
-            </div>
-            <div className="min-w-0 space-y-2">
-              <Label htmlFor="rollout-max-surge">maxSurge</Label>
-              <Input id="rollout-max-surge" value={maxSurge} onChange={(event) => setMaxSurge(event.target.value)} placeholder="25%" className="font-mono" />
-              <p className="text-xs text-muted-foreground">滚动期间允许超过期望副本的数量。</p>
-            </div>
-            <div className="min-w-0 space-y-2">
-              <Label htmlFor="rollout-max-unavailable">maxUnavailable</Label>
-              <Input id="rollout-max-unavailable" value={maxUnavailable} onChange={(event) => setMaxUnavailable(event.target.value)} placeholder="25%" className="font-mono" />
-              <p className="text-xs text-muted-foreground">滚动期间允许不可用的副本数量。</p>
-            </div>
-            {!rolloutValueValid(maxSurge) || !rolloutValueValid(maxUnavailable) ? <p role="alert" className="text-xs text-destructive-strong sm:col-span-2">请输入非负整数或 0% 到 100% 的百分比。</p> : null}
+            </div> : null}
+            {kind === "statefulset" ? <div className="min-w-0 space-y-2 sm:col-span-2">
+              <Label htmlFor="rollout-partition">Partition</Label>
+              <Input id="rollout-partition" type="number" min={0} max={100000} step={1} value={partition} onChange={(event) => setPartition(event.target.value)} className="font-mono" />
+              <p className="text-xs text-muted-foreground">只更新序号大于等于 Partition 的 Pod。设置为 0 表示更新全部副本。</p>
+              {!partitionValid ? <p role="alert" className="text-xs text-destructive-strong">Partition 必须是 0 到 100000 的整数。</p> : null}
+            </div> : null}
+            {kind === "deployment" || kind === "daemonset" ? <>
+              <div className="min-w-0 space-y-2">
+                <Label htmlFor="rollout-max-surge">maxSurge</Label>
+                <Input id="rollout-max-surge" value={maxSurge} onChange={(event) => setMaxSurge(event.target.value)} placeholder="25%" className="font-mono" />
+                <p className="text-xs text-muted-foreground">滚动期间允许超过期望副本的数量。</p>
+              </div>
+              <div className="min-w-0 space-y-2">
+                <Label htmlFor="rollout-max-unavailable">maxUnavailable</Label>
+                <Input id="rollout-max-unavailable" value={maxUnavailable} onChange={(event) => setMaxUnavailable(event.target.value)} placeholder="25%" className="font-mono" />
+                <p className="text-xs text-muted-foreground">滚动期间允许不可用的副本数量。</p>
+              </div>
+              {!rolloutValueValid(maxSurge) || !rolloutValueValid(maxUnavailable) ? <p role="alert" className="text-xs text-destructive-strong sm:col-span-2">请输入非负整数或 0% 到 100% 的百分比。</p> : null}
+              {kind === "daemonset" && !maxSurge.trim() && !maxUnavailable.trim() ? <p role="alert" className="text-xs text-destructive-strong sm:col-span-2">maxSurge 和 maxUnavailable 至少填写一项。</p> : null}
+            </> : null}
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setRolloutOpen(false)} disabled={updateRollout.isPending}>取消</Button>
-            <Button onClick={() => updateRollout.mutate()} disabled={updateRollout.isPending || !rolloutValueValid(maxSurge) || !rolloutValueValid(maxUnavailable)}>
+            <Button onClick={() => updateRollout.mutate()} disabled={updateRollout.isPending || !rolloutFormValid}>
               {updateRollout.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : rolloutPaused ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
               保存发布设置
             </Button>
@@ -513,7 +532,7 @@ function RolloutPanel({ rollout, desired, canEdit, onEdit }: {
         <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
           <CardTitle>发布进度</CardTitle>
           <div className="flex flex-wrap items-center gap-2">
-            <Badge variant={rollout.paused ? "warning" : "secondary"}>{rollout.paused ? "已暂停" : "进行中"}</Badge>
+            <Badge variant={rollout.paused ? "warning" : "secondary"}>{rollout.paused ? "已暂停" : rollout.partition !== undefined ? `Partition ${rollout.partition}` : "进行中"}</Badge>
             {canEdit ? <Button variant="outline" size="sm" onClick={onEdit}><Pause className="h-4 w-4" />调整策略</Button> : null}
           </div>
         </div>
@@ -530,7 +549,7 @@ function RolloutPanel({ rollout, desired, canEdit, onEdit }: {
           <DetailItem label="maxUnavailable" value={rollout.maxUnavailable || "—"} mono />
           <DetailItem label="已更新 / 就绪" value={`${rollout.updatedReplicas} / ${rollout.readyReplicas}`} />
           <DetailItem label="可用 / 不可用" value={`${rollout.availableReplicas} / ${rollout.unavailableReplicas}`} />
-          {rollout.partition ? <DetailItem label="StatefulSet Partition" value={String(rollout.partition)} /> : null}
+          {rollout.partition !== undefined ? <DetailItem label="StatefulSet Partition" value={String(rollout.partition)} /> : null}
           <DetailItem label="Observed Generation" value={String(rollout.observedGeneration)} mono />
         </dl>
       </CardContent>

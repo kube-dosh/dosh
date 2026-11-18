@@ -1,5 +1,7 @@
 import type {
   AccessReview,
+  AutoscalerInput,
+  AutoscalerSummary,
   AuditExportParams,
   AuditRecord,
   AuthConfig,
@@ -17,6 +19,8 @@ import type {
   DeploymentCreateInput,
   DeploymentPreview,
   Diagnosis,
+  DisruptionBudgetInput,
+  DisruptionBudgetSummary,
   EventItem,
   GenericResourceDetail,
   GenericResourceMutationInput,
@@ -456,6 +460,28 @@ export const api = {
       method: "POST",
       body: JSON.stringify(input),
     }),
+  autoscalers: (namespace: string, params?: ListParams) =>
+    listRequest<AutoscalerSummary>(`/api/v1/resilience/autoscalers${query({ ...params, namespace })}`),
+  upsertAutoscaler: (input: AutoscalerInput) =>
+    request<AutoscalerSummary>(input.resourceVersion
+      ? `/api/v1/resilience/autoscalers/${encodeURIComponent(input.namespace)}/${encodeURIComponent(input.name)}`
+      : "/api/v1/resilience/autoscalers", {
+      method: input.resourceVersion ? "PUT" : "POST",
+      body: JSON.stringify(input),
+    }),
+  deleteAutoscaler: (namespace: string, name: string, resourceVersion?: string) =>
+    request<{ status: string }>(`/api/v1/resilience/autoscalers/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}${resourceVersion ? `?resourceVersion=${encodeURIComponent(resourceVersion)}` : ""}`, { method: "DELETE" }),
+  disruptionBudgets: (namespace: string, params?: ListParams) =>
+    listRequest<DisruptionBudgetSummary>(`/api/v1/resilience/disruption-budgets${query({ ...params, namespace })}`),
+  upsertDisruptionBudget: (input: DisruptionBudgetInput) =>
+    request<DisruptionBudgetSummary>(input.resourceVersion
+      ? `/api/v1/resilience/disruption-budgets/${encodeURIComponent(input.namespace)}/${encodeURIComponent(input.name)}`
+      : "/api/v1/resilience/disruption-budgets", {
+      method: input.resourceVersion ? "PUT" : "POST",
+      body: JSON.stringify(input),
+    }),
+  deleteDisruptionBudget: (namespace: string, name: string, resourceVersion?: string) =>
+    request<{ status: string }>(`/api/v1/resilience/disruption-budgets/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}${resourceVersion ? `?resourceVersion=${encodeURIComponent(resourceVersion)}` : ""}`, { method: "DELETE" }),
   scaleWorkload: (kind: string, namespace: string, name: string, replicas: number) =>
     request<{ status: string }>(`/api/v1/workloads/${kind}/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}/scale`, {
       method: "POST",

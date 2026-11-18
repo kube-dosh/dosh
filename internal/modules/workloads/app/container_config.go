@@ -122,12 +122,15 @@ func validateContainerConfigUpdate(namespace, name string, update *domain.Worklo
 }
 
 func validateEnvValueFrom(index int, variable *domain.WorkloadEnvVar) error {
+	return validateEnvValueFromField(fmt.Sprintf("env.%d.valueFrom", index), variable)
+}
+
+func validateEnvValueFromField(field string, variable *domain.WorkloadEnvVar) error {
 	source := variable.ValueFrom
 	source.Kind = strings.TrimSpace(source.Kind)
 	source.Name = strings.TrimSpace(source.Name)
 	source.Key = strings.TrimSpace(source.Key)
 	variable.Value = ""
-	field := fmt.Sprintf("env.%d.valueFrom", index)
 	switch source.Kind {
 	case "configMapKeyRef", "secretKeyRef":
 		if len(source.Name) == 0 || len(source.Name) > 253 || !dnsSubdomainPattern.MatchString(source.Name) {

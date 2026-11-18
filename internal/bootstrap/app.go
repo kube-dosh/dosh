@@ -38,6 +38,8 @@ import (
 	registrieshttp "dosh/internal/modules/registries/http"
 	releasesapp "dosh/internal/modules/releases/app"
 	releaseshttp "dosh/internal/modules/releases/http"
+	resilienceapp "dosh/internal/modules/resilience/app"
+	resiliencehttp "dosh/internal/modules/resilience/http"
 	resourcesapp "dosh/internal/modules/resources/app"
 	resourceshttp "dosh/internal/modules/resources/http"
 	storageapp "dosh/internal/modules/storage/app"
@@ -149,6 +151,7 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 	overviewService := overviewapp.New(kubeClient, cfg.ClusterName)
 	preferencesService := preferencesapp.New(kubeClient, auditLogger)
 	resourcesService := resourcesapp.New(kubeClient, authorizer, auditLogger)
+	resilienceService := resilienceapp.New(kubeClient, authorizer, auditLogger)
 	clusterConfigService := clusterconfigapp.New(kubeClient)
 	nodesService := nodesapp.New(kubeClient, authorizer, auditLogger)
 	terminalLimits := domain.TerminalLimits{
@@ -179,6 +182,7 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 		overview:      overviewhttp.New(overviewService),
 		preferences:   preferenceshttp.New(preferencesService),
 		registries:    registrieshttp.New(registriesService),
+		resilience:    resiliencehttp.New(resilienceService),
 		resources:     resourceshttp.New(resourcesService),
 		clusterConfig: clusterconfighttp.New(clusterConfigService),
 		nodes:         nodeshttp.New(nodesService),

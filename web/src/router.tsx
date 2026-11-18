@@ -29,6 +29,7 @@ import { HelmReleasesPage } from "@/features/helm/helm-releases-page";
 import { HelmReleaseDetailPage } from "@/features/helm/helm-release-detail-page";
 import { AccessReviewPage } from "@/features/access/access-review-page";
 import { RegistriesPage } from "@/features/registries/registries-page";
+import { ResiliencePage } from "@/features/resilience/resilience-page";
 import { Button } from "@/components/ui/button";
 import { Link } from "@tanstack/react-router";
 import { parseListSearch } from "@/lib/list-search";
@@ -73,6 +74,7 @@ const resourcesRoute = createRoute({ getParentRoute: () => appRoute, path: "/res
 const resourceListRoute = createRoute({ getParentRoute: () => appRoute, path: "/resources/$group/$version/$resource", component: ResourceListPage, validateSearch: parseListSearch });
 const resourceDetailRoute = createRoute({ getParentRoute: () => appRoute, path: "/resources/$group/$version/$resource/$name", component: ResourceDetailPage, validateSearch: parseListSearch });
 const governanceRoute = createRoute({ getParentRoute: () => appRoute, path: "/governance", component: GovernancePage, validateSearch: parseListSearch });
+const resilienceRoute = createRoute({ getParentRoute: () => appRoute, path: "/resilience", component: ResiliencePage, validateSearch: parseListSearch });
 const accessReviewRoute = createRoute({ getParentRoute: () => appRoute, path: "/access", component: AccessReviewPage, validateSearch: parseListSearch });
 const registriesRoute = createRoute({ getParentRoute: () => appRoute, path: "/registries", component: RegistriesPage });
 const helmReleasesRoute = createRoute({ getParentRoute: () => appRoute, path: "/helm/releases", component: HelmReleasesPage, validateSearch: parseListSearch });
@@ -106,6 +108,7 @@ export const routeTree = rootRoute.addChildren([
     resourceListRoute,
     resourceDetailRoute,
     governanceRoute,
+    resilienceRoute,
     accessReviewRoute,
     registriesRoute,
     helmReleasesRoute,

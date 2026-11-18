@@ -144,7 +144,7 @@ func normalizeCreateContainers(spec *domain.WorkloadCreateSpec) {
 			Name: spec.ContainerName, Image: spec.Image, RegistryID: spec.RegistryID, ContainerPort: spec.ContainerPort,
 			CPURequestMilli: spec.CPURequestMilli, CPULimitMilli: spec.CPULimitMilli,
 			MemoryRequestBytes: spec.MemoryRequestBytes, MemoryLimitBytes: spec.MemoryLimitBytes,
-			Env: spec.Env, Command: spec.Command, Args: spec.Args,
+			Env: createEnvVarsFromDeployment(spec.Env), Command: spec.Command, Args: spec.Args,
 		}}
 	}
 	for i := range spec.Containers {
@@ -169,25 +169,30 @@ func podTemplateForCreate(spec domain.WorkloadCreateSpec) corev1.PodTemplateSpec
 	return corev1.PodTemplateSpec{
 		ObjectMeta: metav1.ObjectMeta{Labels: labels},
 		Spec: corev1.PodSpec{
-			ImagePullSecrets:          workloadImagePullSecrets(spec.ImagePullSecrets),
-			InitContainers:            initContainers,
-			Containers:                containers,
-			NodeSelector:              spec.NodeSelector,
-			Tolerations:               workloadTolerations(spec.Tolerations),
-			Affinity:                  workloadAffinity(spec.NodeAffinity),
-			TopologySpreadConstraints: workloadTopologySpread(spec),
-			PriorityClassName:         spec.PriorityClassName,
-			ServiceAccountName:        spec.ServiceAccountName,
-			SecurityContext:           workloadPodSecurityContext(spec.PodSecurityContext),
+			Volumes:                       workloadVolumesForCreate(spec.Volumes),
+			ImagePullSecrets:              workloadImagePullSecrets(spec.ImagePullSecrets),
+			InitContainers:                initContainers,
+			Containers:                    containers,
+			NodeSelector:                  spec.NodeSelector,
+			Tolerations:                   workloadTolerations(spec.Tolerations),
+			Affinity:                      workloadAffinity(spec.NodeAffinity),
+			TopologySpreadConstraints:     workloadTopologySpread(spec),
+			PriorityClassName:             spec.PriorityClassName,
+			ServiceAccountName:            spec.ServiceAccountName,
+			SecurityContext:               workloadPodSecurityContext(spec.PodSecurityContext),
+			RuntimeClassName:              workloadRuntimeClassName(spec.RuntimeClassName),
+			TerminationGracePeriodSeconds: spec.TerminationGracePeriod,
 		},
 	}
 }
 
 func containerForCreate(spec domain.WorkloadContainerSpec) corev1.Container {
 	container := corev1.Container{
-		Name: spec.Name, Image: spec.Image, Env: workloadEnv(spec.Env),
+		Name: spec.Name, Image: spec.Image, Env: coreEnvVars(spec.Env),
 		Command: append([]string(nil), spec.Command...), Args: append([]string(nil), spec.Args...),
 		Resources: resourcesForContainer(spec), SecurityContext: workloadContainerSecurityContext(spec.SecurityContext),
+		VolumeMounts:  coreVolumeMounts(spec.VolumeMounts),
+		LivenessProbe: coreProbe(spec.LivenessProbe), ReadinessProbe: coreProbe(spec.ReadinessProbe), StartupProbe: coreProbe(spec.StartupProbe),
 	}
 	if spec.ContainerPort > 0 {
 		container.Ports = []corev1.ContainerPort{{ContainerPort: spec.ContainerPort, Protocol: corev1.ProtocolTCP}}
@@ -342,15 +347,43 @@ func mergedWorkloadLabels(name string, custom map[string]string) map[string]stri
 	return labels
 }
 
-func workloadEnv(env []domain.DeploymentEnvVar) []corev1.EnvVar {
+func createEnvVarsFromDeployment(env []domain.DeploymentEnvVar) []domain.WorkloadEnvVar {
 	if len(env) == 0 {
 		return nil
 	}
-	out := make([]corev1.EnvVar, 0, len(env))
+	out := make([]domain.WorkloadEnvVar, 0, len(env))
 	for _, item := range env {
-		out = append(out, corev1.EnvVar{Name: item.Name, Value: item.Value})
+		out = append(out, domain.WorkloadEnvVar{Name: item.Name, Value: item.Value})
 	}
 	return out
+}
+
+func workloadVolumesForCreate(volumes []domain.WorkloadVolumeSpec) []corev1.Volume {
+	if len(volumes) == 0 {
+		return nil
+	}
+	out := make([]corev1.Volume, 0, len(volumes))
+	for _, volume := range volumes {
+		optional := volume.Optional
+		item := corev1.Volume{Name: volume.Name}
+		switch volume.Type {
+		case "configMap":
+			item.ConfigMap = &corev1.ConfigMapVolumeSource{LocalObjectReference: corev1.LocalObjectReference{Name: volume.Source}, Optional: &optional}
+		case "secret":
+			item.Secret = &corev1.SecretVolumeSource{SecretName: volume.Source, Optional: &optional}
+		case "persistentVolumeClaim":
+			item.PersistentVolumeClaim = &corev1.PersistentVolumeClaimVolumeSource{ClaimName: volume.Source}
+		}
+		out = append(out, item)
+	}
+	return out
+}
+
+func workloadRuntimeClassName(name string) *string {
+	if name == "" {
+		return nil
+	}
+	return &name
 }
 
 func resourcesForContainer(spec domain.WorkloadContainerSpec) corev1.ResourceRequirements {

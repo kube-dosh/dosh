@@ -195,9 +195,11 @@ type deploymentCreateRequest struct {
 	MemoryRequestBytes         int64                                     `json:"memoryRequestBytes"`
 	MemoryLimitBytes           int64                                     `json:"memoryLimitBytes"`
 	Env                        []deploymentEnvVarRequest                 `json:"env"`
+	ImagePullSecrets           []string                                  `json:"imagePullSecrets"`
 	Labels                     map[string]string                         `json:"labels"`
 	Containers                 []domain.WorkloadContainerSpec            `json:"containers"`
 	InitContainers             []domain.WorkloadContainerSpec            `json:"initContainers"`
+	Volumes                    []domain.WorkloadVolumeSpec               `json:"volumes"`
 	Command                    []string                                  `json:"command"`
 	Args                       []string                                  `json:"args"`
 	NodeSelector               map[string]string                         `json:"nodeSelector"`
@@ -207,6 +209,8 @@ type deploymentCreateRequest struct {
 	PriorityClassName          string                                    `json:"priorityClassName"`
 	ServiceAccountName         string                                    `json:"serviceAccountName"`
 	PodSecurityContext         *domain.WorkloadPodSecurityContext        `json:"podSecurityContext"`
+	RuntimeClassName           string                                    `json:"runtimeClassName"`
+	TerminationGracePeriod     *int64                                    `json:"terminationGracePeriodSeconds"`
 	JobCompletions             *int32                                    `json:"jobCompletions"`
 	JobParallelism             *int32                                    `json:"jobParallelism"`
 	JobBackoffLimit            *int32                                    `json:"jobBackoffLimit"`
@@ -225,14 +229,16 @@ func (request deploymentCreateRequest) spec() domain.WorkloadCreateSpec {
 		ContainerName: request.ContainerName, Image: request.Image, RegistryID: request.RegistryID, ContainerPort: request.ContainerPort,
 		CPURequestMilli: request.CPURequestMilli, CPULimitMilli: request.CPULimitMilli,
 		MemoryRequestBytes: request.MemoryRequestBytes, MemoryLimitBytes: request.MemoryLimitBytes,
-		Env: env, Labels: request.Labels,
+		Env: env, ImagePullSecrets: request.ImagePullSecrets, Labels: request.Labels,
 		Containers: request.Containers, InitContainers: request.InitContainers,
+		Volumes: request.Volumes,
 		Command: request.Command, Args: request.Args,
 		NodeSelector: request.NodeSelector, Tolerations: request.Tolerations, NodeAffinity: request.NodeAffinity,
 		TopologySpreadConstraints: request.TopologySpreadConstraints,
 		PriorityClassName:         request.PriorityClassName, ServiceAccountName: request.ServiceAccountName,
-		PodSecurityContext: request.PodSecurityContext,
-		JobCompletions:     request.JobCompletions, JobParallelism: request.JobParallelism,
+		PodSecurityContext: request.PodSecurityContext, RuntimeClassName: request.RuntimeClassName,
+		TerminationGracePeriod: request.TerminationGracePeriod,
+		JobCompletions:         request.JobCompletions, JobParallelism: request.JobParallelism,
 		JobBackoffLimit: request.JobBackoffLimit, JobActiveDeadlineSeconds: request.JobActiveDeadlineSeconds,
 		JobTTLSecondsAfterFinished: request.JobTTLSecondsAfterFinished,
 	}

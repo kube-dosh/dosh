@@ -2,9 +2,11 @@ import { devices, expect, test, type Page, type Route } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
 import type {
   AccessReview,
+  AutoscalerSummary,
   ContainerRegistry,
   ContainerRegistryUpsertInput,
   Diagnosis,
+  DisruptionBudgetSummary,
   HelmReleaseDetail,
   HelmReleaseDiff,
   HelmReleaseRollbackResult,
@@ -90,6 +92,8 @@ const session: SessionResponse = {
       storageclasses: { create: false, update: false, delete: false, scale: false },
       nodes: { create: false, update: true, delete: false, scale: false },
       namespaces: { create: true, update: false, delete: true, scale: false },
+      horizontalpodautoscalers: { create: true, update: true, delete: true, scale: false },
+      poddisruptionbudgets: { create: true, update: true, delete: true, scale: false },
     },
   },
 };
@@ -696,6 +700,17 @@ async function installApiMocks(page: Page, options: { authenticated?: boolean; a
   let widgetRevision = 1;
   let preferences = { ...emptyPreferences };
   let containerRegistries = structuredClone(options.containerRegistries ?? mockContainerRegistries);
+  let autoscalers: AutoscalerSummary[] = [{
+    name: "web-api", namespace: "default", resourceVersion: "31", targetKind: "Deployment", targetName: "web",
+    minReplicas: 2, maxReplicas: 8, currentReplicas: 3, desiredReplicas: 3, status: "Ready",
+    metrics: [{ type: "Resource", resource: "cpu", current: "45%", target: "80%", currentUtilization: 45, targetUtilization: 80 }],
+    conditions: [{ type: "AbleToScale", status: "True", reason: "ReadyForNewScale" }], createdAt: "2026-11-02T00:00:00Z",
+  }];
+  let disruptionBudgets: DisruptionBudgetSummary[] = [{
+    name: "web-api", namespace: "default", resourceVersion: "41", minAvailable: "2", selector: { app: "web" },
+    currentHealthy: 3, desiredHealthy: 2, disruptionsAllowed: 1, expectedPods: 3, observedGeneration: 2, status: "Ready",
+    conditions: [{ type: "DisruptionAllowed", status: "True", reason: "SufficientPods" }], createdAt: "2026-11-02T00:00:00Z",
+  }];
   const currentNodeDetail = () => ({
     ...nodeDetail,
     unschedulable: nodeSchedulingDisabled,
@@ -968,6 +983,50 @@ async function installApiMocks(page: Page, options: { authenticated?: boolean; a
     }
     if (path === "/api/v1/cluster/config") return json(route, clusterConfiguration);
     if (path === "/api/v1/capabilities") return json(route, sessionResponse.capabilities);
+    if (path === "/api/v1/resilience/autoscalers" && method === "GET") return json(route, list(autoscalers));
+    if (path === "/api/v1/resilience/autoscalers" && method === "POST") {
+      const body = request.postDataJSON() as { name: string; namespace: string; targetKind: string; targetName: string; minReplicas: number; maxReplicas: number; cpuUtilization?: number; memoryUtilization?: number };
+      const created: AutoscalerSummary = {
+        ...autoscalers[0], name: body.name, namespace: body.namespace, targetKind: body.targetKind, targetName: body.targetName,
+        minReplicas: body.minReplicas, maxReplicas: body.maxReplicas, resourceVersion: "32", currentReplicas: body.minReplicas,
+        desiredReplicas: body.minReplicas, metrics: [
+          ...(body.cpuUtilization ? [{ type: "Resource", resource: "cpu", current: "35%", target: `${body.cpuUtilization}%`, currentUtilization: 35, targetUtilization: body.cpuUtilization }] : []),
+          ...(body.memoryUtilization ? [{ type: "Resource", resource: "memory", current: "40%", target: `${body.memoryUtilization}%`, currentUtilization: 40, targetUtilization: body.memoryUtilization }] : []),
+        ],
+      };
+      autoscalers = [...autoscalers, created];
+      return json(route, created, 201);
+    }
+    if (path === "/api/v1/resilience/autoscalers/default/web-api" && method === "PUT") {
+      const body = request.postDataJSON() as { minReplicas: number; maxReplicas: number; cpuUtilization?: number; memoryUtilization?: number };
+      const updated: AutoscalerSummary = { ...autoscalers[0], minReplicas: body.minReplicas, maxReplicas: body.maxReplicas, resourceVersion: "33" };
+      autoscalers = [updated, ...autoscalers.slice(1)];
+      return json(route, updated);
+    }
+    if (path === "/api/v1/resilience/autoscalers/default/web-api" && method === "DELETE") {
+      autoscalers = autoscalers.filter((item) => item.name !== "web-api");
+      return json(route, { status: "deleting" }, 202);
+    }
+    if (path === "/api/v1/resilience/disruption-budgets" && method === "GET") return json(route, list(disruptionBudgets));
+    if (path === "/api/v1/resilience/disruption-budgets" && method === "POST") {
+      const body = request.postDataJSON() as { name: string; namespace: string; minAvailable?: string; maxUnavailable?: string; selector: Record<string, string> };
+      const created: DisruptionBudgetSummary = {
+        ...disruptionBudgets[0], name: body.name, namespace: body.namespace, minAvailable: body.minAvailable,
+        maxUnavailable: body.maxUnavailable, selector: body.selector, resourceVersion: "42",
+      };
+      disruptionBudgets = [...disruptionBudgets, created];
+      return json(route, created, 201);
+    }
+    if (path === "/api/v1/resilience/disruption-budgets/default/web-api" && method === "PUT") {
+      const body = request.postDataJSON() as { minAvailable?: string; maxUnavailable?: string; selector: Record<string, string> };
+      const updated: DisruptionBudgetSummary = { ...disruptionBudgets[0], minAvailable: body.minAvailable, maxUnavailable: body.maxUnavailable, selector: body.selector, resourceVersion: "43" };
+      disruptionBudgets = [updated, ...disruptionBudgets.slice(1)];
+      return json(route, updated);
+    }
+    if (path === "/api/v1/resilience/disruption-budgets/default/web-api" && method === "DELETE") {
+      disruptionBudgets = disruptionBudgets.filter((item) => item.name !== "web-api");
+      return json(route, { status: "deleting" }, 202);
+    }
     if (path === "/api/v1/capabilities/review" && method === "GET") {
       const params = new URL(request.url()).searchParams;
       const resource = params.get("resource") ?? "pods";
@@ -1045,7 +1104,22 @@ async function installApiMocks(page: Page, options: { authenticated?: boolean; a
       return json(route, { ...workloadDetail, name: "multi", images: ["nginx:alpine", "envoy:1"] });
     }
     if (path === "/api/v1/workloads/statefulset/default/db" && method === "GET") {
-      return json(route, { ...workloadDetail, kind: "StatefulSet", name: "db", images: ["nginx:alpine"] });
+      return json(route, {
+        ...workloadDetail, kind: "StatefulSet", name: "db", images: ["nginx:alpine"],
+        rollout: { strategy: "RollingUpdate", partition: 1, observedGeneration: 4, updatedReplicas: 1, readyReplicas: 2, availableReplicas: 2, unavailableReplicas: 0 },
+      });
+    }
+    if (path === "/api/v1/workloads/statefulset/default/db/rollout" && method === "POST") {
+      return json(route, { status: "updated" });
+    }
+    if (path === "/api/v1/workloads/daemonset/default/agent" && method === "GET") {
+      return json(route, {
+        ...workloadDetail, kind: "DaemonSet", name: "agent", images: ["agent:2"],
+        rollout: { strategy: "RollingUpdate", maxSurge: "0", maxUnavailable: "1", observedGeneration: 7, updatedReplicas: 3, readyReplicas: 3, availableReplicas: 3, unavailableReplicas: 0 },
+      });
+    }
+    if (path === "/api/v1/workloads/daemonset/default/agent/rollout" && method === "POST") {
+      return json(route, { status: "updated" });
     }
     if (path === "/api/v1/namespaces") {
       const query = new URL(request.url()).searchParams.get("q")?.trim() ?? "";
@@ -3180,6 +3254,7 @@ test("移动端逐页布局无页面级横向溢出", async ({ page }) => {
     { path: "/resources/example.io/v1/widgets/sample-widget?namespace=default", name: "resource-detail" },
     { path: "/governance", name: "governance" },
     { path: "/governance?namespace=default", name: "governance-namespace" },
+    { path: "/resilience?namespace=default", name: "resilience" },
     { path: "/access", name: "access-review" },
     { path: "/registries", name: "container-registries" },
     { path: "/helm/releases?namespace=default", name: "helm-releases" },
@@ -3269,6 +3344,7 @@ test("320px 窄屏关键页面无横向溢出", async ({ page }) => {
     { path: "/audit", name: "audit" },
     { path: "/governance", name: "governance" },
     { path: "/governance?namespace=default", name: "governance-namespace" },
+    { path: "/resilience?namespace=default", name: "resilience" },
     { path: "/access", name: "access-review" },
     { path: "/registries", name: "container-registries" },
     { path: "/helm/releases?namespace=default", name: "helm-releases" },
@@ -3352,6 +3428,7 @@ test("320px 大字体缩放时页面不产生横向溢出", async ({ page }) => 
     { path: "/resources/example.io/v1/widgets", name: "resource-list" },
     { path: "/resources/example.io/v1/widgets/sample-widget?namespace=default", name: "resource-detail" },
     { path: "/governance", name: "governance" },
+    { path: "/resilience?namespace=default", name: "resilience" },
   ]) {
     await page.goto(route.path);
     await page.locator("main h1").waitFor({ state: "visible" });
@@ -3386,6 +3463,7 @@ test.describe("Android Chrome 视口", () => {
       { path: "/resources/example.io/v1/widgets", name: "resource-list" },
       { path: "/resources/example.io/v1/widgets/sample-widget?namespace=default", name: "resource-detail" },
       { path: "/governance", name: "governance" },
+      { path: "/resilience?namespace=default", name: "resilience" },
     ]) {
       await page.goto(route.path);
       await page.locator("main h1").waitFor({ state: "visible" });
@@ -3551,6 +3629,78 @@ test("移动端关键弹窗与确认框保持在视口内", async ({ page }) => 
   await expectElementInsideViewport(page, alert, "node scheduling dialog");
   await page.screenshot({ path: "test-results/mobile-interactions/node-scheduling-dialog.png", fullPage: true });
   await page.getByRole("button", { name: "取消" }).click();
+});
+
+test("弹性与可用性及高级工作负载配置在桌面和移动端无溢出", async ({ page }) => {
+  test.setTimeout(180_000);
+  await installApiMocks(page, { workloadCreate: true });
+
+  for (const viewport of [
+    { width: 1440, height: 900 },
+    { width: 390, height: 844 },
+    { width: 360, height: 800 },
+    { width: 320, height: 720 },
+  ]) {
+    await page.setViewportSize(viewport);
+
+    await page.goto("/resilience?namespace=default");
+    await expect(page.getByRole("heading", { name: "弹性与可用性", exact: true })).toBeVisible();
+    await expect(page.getByText("当前 45% · 目标 80%")).toBeVisible();
+    await expectNoPageOverflow(page, `${viewport.width}px resilience HPA`);
+    await expect(page.getByRole("button", { name: "创建 HPA", exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "创建 HPA", exact: true }).click();
+    let dialog = page.getByRole("dialog", { name: "创建 HPA" });
+    await expect(dialog).toBeVisible();
+    await expect(dialog.getByRole("combobox", { name: "选择目标工作负载" })).toBeVisible();
+    await expectElementInsideViewport(page, dialog, `${viewport.width}px HPA dialog`);
+    await expectNoPageOverflow(page, `${viewport.width}px HPA dialog`);
+    await expectNoHorizontalOverflowInside(dialog, `${viewport.width}px HPA dialog`);
+    await page.keyboard.press("Escape");
+
+    await page.getByRole("tab", { name: /PDB 中断预算/ }).click();
+    await expect(page.getByText("健康 / 期望")).toBeVisible();
+    await expect(page.getByText("当前允许驱逐 1 个 Pod；节点维护会遵守该上限逐个处理。")).toBeVisible();
+    await expectNoPageOverflow(page, `${viewport.width}px resilience PDB`);
+    await page.getByRole("button", { name: "创建 PDB", exact: true }).click();
+    dialog = page.getByRole("dialog", { name: "创建 PDB" });
+    await expect(dialog).toBeVisible();
+    await expectElementInsideViewport(page, dialog, `${viewport.width}px PDB dialog`);
+    await expectNoPageOverflow(page, `${viewport.width}px PDB dialog`);
+    await expectNoHorizontalOverflowInside(dialog, `${viewport.width}px PDB dialog`);
+    await page.screenshot({ path: `test-results/resilience/resilience-${viewport.width}.png`, fullPage: true });
+    await page.keyboard.press("Escape");
+
+    await page.goto("/workloads");
+    await page.getByRole("button", { name: "创建工作负载" }).click();
+    dialog = page.getByRole("dialog", { name: "创建工作负载" });
+    await dialog.getByLabel("Deployment 名称").fill("advanced-mobile");
+    await dialog.getByRole("button", { name: "下一步" }).click();
+    await expect(dialog.getByRole("heading", { name: /存储卷 \(0\)/ })).toBeVisible();
+    await expect(dialog.getByText("健康探针")).toBeVisible();
+    await expect(dialog.getByText("环境变量来源（Secret / ConfigMap / FieldRef）")).toBeVisible();
+    await expectElementInsideViewport(page, dialog, `${viewport.width}px advanced workload dialog`);
+    await expectNoPageOverflow(page, `${viewport.width}px advanced workload dialog`);
+    await expectNoHorizontalOverflowInside(dialog, `${viewport.width}px advanced workload dialog`);
+    await page.screenshot({ path: `test-results/resilience/workload-advanced-${viewport.width}.png`, fullPage: true });
+    await page.keyboard.press("Escape");
+
+    await page.goto("/workloads/statefulset/default/db");
+    await page.getByRole("button", { name: "发布控制", exact: true }).click();
+    dialog = page.getByRole("dialog", { name: "发布控制" });
+    await expect(dialog.getByLabel("Partition")).toHaveValue("1");
+    await expectElementInsideViewport(page, dialog, `${viewport.width}px StatefulSet rollout dialog`);
+    await expectNoPageOverflow(page, `${viewport.width}px StatefulSet rollout dialog`);
+    await page.keyboard.press("Escape");
+
+    await page.goto("/workloads/daemonset/default/agent");
+    await page.getByRole("button", { name: "发布控制", exact: true }).click();
+    dialog = page.getByRole("dialog", { name: "发布控制" });
+    await expect(dialog.getByLabel("maxSurge")).toHaveValue("0");
+    await expect(dialog.getByLabel("maxUnavailable")).toHaveValue("1");
+    await expectElementInsideViewport(page, dialog, `${viewport.width}px DaemonSet rollout dialog`);
+    await expectNoPageOverflow(page, `${viewport.width}px DaemonSet rollout dialog`);
+    await page.keyboard.press("Escape");
+  }
 });
 
 test("移动端多容器创建、发布控制与 CronJob 执行弹窗无横向溢出", async ({ page }) => {

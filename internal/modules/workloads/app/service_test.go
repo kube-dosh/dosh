@@ -897,6 +897,78 @@ func TestCreateWorkloadRejectsKindSpecificInvalidInput(t *testing.T) {
 	}
 }
 
+func TestCreateWorkloadSupportsVolumesEnvSourcesProbesAndRuntimeSettings(t *testing.T) {
+	t.Parallel()
+	repo := &fakeRepository{}
+	service := New(repo, fakeGuard{allow: true}, &fakeAuditor{})
+	spec := validDeploymentSpec()
+	spec.Kind = "deployment"
+	grace := int64(30)
+	optional := true
+	spec.ImagePullSecrets = []string{" registry-pull ", "registry-pull"}
+	spec.RuntimeClassName = "gvisor"
+	spec.TerminationGracePeriod = &grace
+	spec.Volumes = []domain.WorkloadVolumeSpec{
+		{Name: "config", Type: "configMap", Source: "web-config", Optional: optional},
+		{Name: "data", Type: "persistentVolumeClaim", Source: "web-data"},
+	}
+	spec.Containers = []domain.WorkloadContainerSpec{{
+		Name: "api", Image: "registry.test/api:1", ContainerPort: 8080,
+		CPURequestMilli: 100, CPULimitMilli: 500, MemoryRequestBytes: 128 << 20, MemoryLimitBytes: 512 << 20,
+		Env: []domain.WorkloadEnvVar{
+			{Name: "MODE", Value: "production"},
+			{Name: "TOKEN", ValueFrom: &domain.WorkloadEnvValueFrom{Kind: "secretKeyRef", Name: "api-secret", Key: "token", Optional: optional}},
+			{Name: "POD_NAME", ValueFrom: &domain.WorkloadEnvValueFrom{Kind: "fieldRef", Name: "metadata.name"}},
+		},
+		VolumeMounts: []domain.WorkloadVolumeMount{
+			{Name: "config", MountPath: "/etc/api", SubPath: "config.yaml", ReadOnly: true},
+			{Name: "data", MountPath: "/var/lib/api"},
+		},
+		LivenessProbe:  &domain.WorkloadProbe{Type: "httpGet", Path: "/healthz", Port: "8080", Scheme: "HTTP", PeriodSeconds: 10, TimeoutSeconds: 1, SuccessThreshold: 1, FailureThreshold: 3},
+		ReadinessProbe: &domain.WorkloadProbe{Type: "exec", Command: []string{"cat", "/tmp/ready"}, PeriodSeconds: 5, TimeoutSeconds: 1, SuccessThreshold: 1, FailureThreshold: 3},
+	}}
+	if _, err := service.CreateWorkload(context.Background(), domain.Actor{Username: "alice"}, spec); err != nil {
+		t.Fatalf("CreateWorkload() error = %v", err)
+	}
+	if len(repo.createCalls) != 2 || !repo.createCalls[0] || repo.createCalls[1] {
+		t.Fatalf("create calls = %#v", repo.createCalls)
+	}
+	got := repo.lastCreateSpec
+	if len(got.ImagePullSecrets) != 1 || got.ImagePullSecrets[0] != "registry-pull" || got.RuntimeClassName != "gvisor" || got.TerminationGracePeriod == nil || *got.TerminationGracePeriod != 30 {
+		t.Fatalf("runtime settings = %#v", got)
+	}
+	if len(got.Volumes) != 2 || len(got.Containers) != 1 || len(got.Containers[0].Env) != 3 || len(got.Containers[0].VolumeMounts) != 2 || got.Containers[0].LivenessProbe == nil || got.Containers[0].ReadinessProbe == nil {
+		t.Fatalf("container configuration = %#v", got)
+	}
+	if got.Containers[0].Env[1].ValueFrom == nil || got.Containers[0].Env[1].ValueFrom.Kind != "secretKeyRef" || !optional {
+		t.Fatalf("env source = %#v", got.Containers[0].Env[1])
+	}
+}
+
+func TestCreateWorkloadRejectsUndeclaredVolumeMount(t *testing.T) {
+	t.Parallel()
+	repo := &fakeRepository{}
+	service := New(repo, fakeGuard{allow: true}, &fakeAuditor{})
+	spec := validDeploymentSpec()
+	spec.Kind = "deployment"
+	spec.Containers = []domain.WorkloadContainerSpec{{
+		Name: "api", Image: "registry.test/api:1", ContainerPort: 8080,
+		CPURequestMilli: 100, CPULimitMilli: 500, MemoryRequestBytes: 128 << 20, MemoryLimitBytes: 512 << 20,
+		VolumeMounts: []domain.WorkloadVolumeMount{{Name: "missing", MountPath: "/etc/config"}},
+	}}
+	_, err := service.CreateWorkload(context.Background(), domain.Actor{Username: "alice"}, spec)
+	if !errors.Is(err, domain.ErrInvalid) {
+		t.Fatalf("error = %v, want ErrInvalid", err)
+	}
+	var validation *domain.ValidationError
+	if !errors.As(err, &validation) || validation.Field != "containers.0.volumeMounts.0.name" {
+		t.Fatalf("validation = %#v", validation)
+	}
+	if len(repo.createCalls) != 0 {
+		t.Fatalf("repository called for invalid mount: %#v", repo.createCalls)
+	}
+}
+
 func TestRunCronJobOnceRequiresGetAndJobCreateAndAudits(t *testing.T) {
 	t.Parallel()
 	repo := &fakeRepository{}
@@ -1384,7 +1456,7 @@ func TestCreateWorkloadSupportsMultiContainerSchedulingAndBatchParameters(t *tes
 		Kind: "job", Name: "migrate", Namespace: "prod",
 		Containers: []domain.WorkloadContainerSpec{
 			{Name: "app", Image: "registry.test/app:2", ContainerPort: 8080, Command: []string{"/app"}, Args: []string{"serve"}},
-			{Name: "sidecar", Image: "registry.test/sidecar:1", Env: []domain.DeploymentEnvVar{{Name: "MODE", Value: "proxy"}}},
+			{Name: "sidecar", Image: "registry.test/sidecar:1", Env: []domain.WorkloadEnvVar{{Name: "MODE", Value: "proxy"}}},
 		},
 		InitContainers:            []domain.WorkloadContainerSpec{{Name: "init-db", Image: "busybox:1.37", Command: []string{"sh", "-c", "wait-db"}}},
 		NodeSelector:              map[string]string{"node-pool": "gpu"},
@@ -1487,8 +1559,24 @@ func TestUpdateRolloutValidatesAuthorizesAndAudits(t *testing.T) {
 			t.Fatalf("UpdateRollout(%#v) error = %v", update, err)
 		}
 	}
-	if err := service.UpdateRollout(context.Background(), domain.Actor{Username: "admin"}, "statefulset", "prod", "db", domain.WorkloadRolloutUpdate{Paused: &paused}); !errors.Is(err, domain.ErrUnsupported) {
+	if err := service.UpdateRollout(context.Background(), domain.Actor{Username: "admin"}, "statefulset", "prod", "db", domain.WorkloadRolloutUpdate{Paused: &paused}); !errors.Is(err, domain.ErrInvalid) {
 		t.Fatalf("statefulset error = %v", err)
+	}
+	partition := int32(2)
+	if err := service.UpdateRollout(context.Background(), domain.Actor{Username: "admin"}, "statefulset", "prod", "db", domain.WorkloadRolloutUpdate{Partition: &partition}); err != nil {
+		t.Fatalf("statefulset partition error = %v", err)
+	}
+	if repo.lastRollout.Partition == nil || *repo.lastRollout.Partition != 2 || repo.lastRollout.Paused != nil || repo.lastRollout.MaxSurge != "" {
+		t.Fatalf("statefulset rollout = %#v", repo.lastRollout)
+	}
+	if err := service.UpdateRollout(context.Background(), domain.Actor{Username: "admin"}, "daemonset", "prod", "agent", domain.WorkloadRolloutUpdate{MaxSurge: "1", MaxUnavailable: "0"}); err != nil {
+		t.Fatalf("daemonset rollout error = %v", err)
+	}
+	if repo.lastRollout.MaxSurge != "1" || repo.lastRollout.MaxUnavailable != "0" || repo.lastRollout.Partition != nil {
+		t.Fatalf("daemonset rollout = %#v", repo.lastRollout)
+	}
+	if err := service.UpdateRollout(context.Background(), domain.Actor{Username: "admin"}, "daemonset", "prod", "agent", domain.WorkloadRolloutUpdate{MaxSurge: "0", MaxUnavailable: "0"}); !errors.Is(err, domain.ErrInvalid) {
+		t.Fatalf("daemonset both zero error = %v", err)
 	}
 	deniedRepo := &fakeRepository{}
 	denied := New(deniedRepo, fakeGuard{allow: false}, &fakeAuditor{})

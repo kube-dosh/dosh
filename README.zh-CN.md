@@ -47,13 +47,14 @@ Dosh 不替代 Kubernetes，也不绕过 Kubernetes。所有身份、权限和�
 |---|---|
 | 集群总览 | 集群版本、CNI、节点与 Pod 健康度、工作负载数量、CPU/内存使用和调度容量；Metrics API 不可用时自动回退到 requests 数据 |
 | 节点管理 | 节点状态、角色、容量、标签、污点、Pod 分布、事件和日志；按权限执行停止/恢复调度，以及带 PodDisruptionBudget 预检的排空计划与执行 |
-| 工作负载 | Deployment、StatefulSet、DaemonSet、Job、CronJob；详情、实例、多应用容器、Init Container、容器配置、关联 Service、事件、日志和 YAML；Deployment 展示发布进度与 ReplicaSet，Job/CronJob 展示批处理结果与近期 Job |
-| 工作负载操作 | 创建 Deployment、StatefulSet、DaemonSet、Job、CronJob，支持多应用容器、Init Container、NodeSelector、容忍、节点亲和性、拓扑分布、ServiceAccount、PriorityClass 和 Pod/容器 SecurityContext；扩缩容、滚动重启、更新镜像、暂停/恢复 CronJob 或 Deployment 发布并调整 maxSurge/maxUnavailable、指定容器并覆盖 Command/Args 从 CronJob 立即执行一次性 Job、完成 Job 参数配置、删除、查看发布历史及回滚前 Pod 模板 Diff 并回滚，以及按资源级权限编辑 YAML |
+| 工作负载 | Deployment、StatefulSet、DaemonSet、Job、CronJob；详情、实例、多应用容器、Init Container、容器配置、关联 Service、事件、日志和 YAML；Deployment 展示发布进度与 ReplicaSet，StatefulSet 展示 Partition，DaemonSet 展示滚动发布状态，Job/CronJob 展示批处理结果与近期 Job |
+| 工作负载操作 | 创建 Deployment、StatefulSet、DaemonSet、Job、CronJob，支持多应用容器、Init Container、ConfigMap/Secret/PVC 存储卷与挂载、Secret/ConfigMap/FieldRef 环境变量来源、HTTP/TCP/Exec/gRPC 探针、ImagePullSecrets、RuntimeClass、优雅终止时间、NodeSelector、容忍、节点亲和性、拓扑分布、ServiceAccount、PriorityClass 和 Pod/容器 SecurityContext；扩缩容、滚动重启、更新镜像、暂停/恢复 CronJob、调整 Deployment 的暂停状态与 maxSurge/maxUnavailable、设置 StatefulSet Partition、配置 DaemonSet maxSurge/maxUnavailable、指定容器并覆盖 Command/Args 从 CronJob 立即执行一次性 Job、完成 Job 参数配置、删除、查看发布历史及回滚前 Pod 模板 Diff 并回滚，以及按资源级权限编辑 YAML |
 | Pod | 状态、普通/Init/Ephemeral Container、重启次数、资源、归属控制器与节点深链、事件、日志和 YAML；在具备 `pods/exec` 权限时提供经审计的浏览器交互终端，并允许有权限的用户为无 Shell 镜像创建受控的 Ephemeral 调试容器；具备 `pods/portforward` 权限时可创建回环、限时、自动回收的 Pod/Service 临时 HTTP 隧道 |
 | 一键故障诊断 | 对 Pod、Deployment、StatefulSet、DaemonSet、Job、CronJob、Service、Ingress、PVC 和 Node 提供只读、确定性、证据驱动的诊断；按严重程度展示检查项、原因、证据、相关资源与可复制的 `kubectl` 命令，不自动执行修复。事件和有界近期日志受 Kubernetes RBAC 约束，权限不足时会明确降级为“跳过”，不会中断其余检查 |
 | 日志 | 单 Pod 实时日志，以及最多 20 条 Pod/容器流的受控工作负载级聚合；支持容器、上一实例、行数、时间戳、时间范围、来源前缀、关键词过滤和逐流权限 warning |
 | Helm | 从 Helm Secret 查看 Release、values、渲染清单、Notes、warning、revision 历史、任意两个 revision 间的 values/清单 Diff，以及受控回滚和增量 Values 升级；常见敏感键与 Secret 载荷在服务端遮蔽。回滚和升级需要输入 Release 名称确认并具备 `secrets/create`、`secrets/update`，升级会先 Dry Run 全部对象，二者都会跳过 Helm Hook，且不会删除目标清单中不存在的旧对象。 |
 | 权限检查 | 解释当前身份的 SubjectAccessReview 结果，区分 Dosh 只读模式与 RBAC 拒绝，并生成对应的 `kubectl auth can-i` 命令 |
+| 弹性与可用性 | 独立的 HPA 与 PDB 管理流程：CPU/内存扩缩目标、副本上下限、当前指标与 Condition 解释、minAvailable/maxUnavailable 中断预算、允许驱逐与健康副本说明、可搜索工作负载选择、创建前 Dry Run、基于 resourceVersion 的并发保护、按 RBAC 显隐操作，以及带审计的创建/更新/删除 |
 | 网络 | Service 与 Ingress 列表和详情；按权限创建、编辑、删除 ClusterIP、NodePort、LoadBalancer 和 Ingress |
 | 配置与密钥 | ConfigMap、Secret 的查看、创建、编辑、删除、数据查看和 YAML；Secret 数据仅对有权限且经过审计的请求返回 |
 | 存储 | PVC 创建与管理；PV、StorageClass 查看与关联关系导航 |

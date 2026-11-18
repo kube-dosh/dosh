@@ -24,6 +24,7 @@ const nav: Array<{ href: string; label: string; icon: LucideIcon; adminOnly?: bo
   { href: "/cluster/config", label: "集群配置", icon: CloudCog, match: (path: string) => path.startsWith("/cluster/config") },
   { href: "/nodes", label: "节点管理", icon: Server, match: (path: string) => path.startsWith("/nodes") },
   { href: "/workloads", label: "工作负载", icon: Boxes, match: (path: string) => path.startsWith("/workloads") || path.startsWith("/pods") },
+  { href: "/resilience", label: "弹性与可用性", icon: Activity, match: (path: string) => path.startsWith("/resilience") },
   { href: "/network", label: "服务与路由", icon: Network, match: (path: string) => path.startsWith("/network") },
   { href: "/configuration", label: "配置与密钥", icon: Settings2, match: (path: string) => path.startsWith("/configuration") },
   { href: "/storage", label: "存储", icon: Database, match: (path: string) => path.startsWith("/storage") },

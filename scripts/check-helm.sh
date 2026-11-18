@@ -132,6 +132,8 @@ require "$OUT/dosh-local.yaml" 'verbs: \["get", "create", "update"\]' 'local log
 require "$OUT/dosh-local.yaml" 'resources: \["endpointslices"\]' 'local EndpointSlice read RBAC'
 require "$OUT/dosh-local.yaml" 'resources: \["ingresses", "ingressclasses"\]' 'local IngressClass read RBAC'
 require "$OUT/dosh-local.yaml" 'resources: \["resourcequotas", "limitranges"\]' 'local namespace quota and limit read RBAC'
+require "$OUT/dosh-local.yaml" 'resources: \["horizontalpodautoscalers"\]' 'local HPA RBAC'
+require "$OUT/dosh-local.yaml" 'resources: \["poddisruptionbudgets"\]' 'local PDB RBAC'
 require "$OUT/dosh-local.yaml" 'apiGroups: \["\*"\]' 'local generic resource read-all RBAC group'
 require "$OUT/dosh-local.yaml" 'resources: \["\*"\]' 'local generic resource read-all RBAC resources'
 require "$OUT/dosh-local.yaml" 'nonResourceURLs: \["/api", "/api/\*", "/apis", "/apis/\*"' 'local API discovery non-resource RBAC'
@@ -185,6 +187,8 @@ reject "$OUT/dosh-oidc.yaml" 'name: DOSH_ADMIN_PASSWORD_HASH' 'OIDC local admin 
 reject "$OUT/dosh-oidc.yaml" 'name: DOSH_LOGIN_RATE_LIMIT_MODE' 'OIDC local login limiter env'
 reject "$OUT/dosh-oidc.yaml" 'resources: \["leases"\]' 'OIDC local login limiter RBAC'
 reject "$OUT/dosh-oidc.yaml" 'resources: \["endpointslices"\]' 'OIDC direct EndpointSlice RBAC'
+reject "$OUT/dosh-oidc.yaml" 'resources: \["horizontalpodautoscalers"\]' 'OIDC direct HPA RBAC'
+reject "$OUT/dosh-oidc.yaml" 'resources: \["poddisruptionbudgets"\]' 'OIDC direct PDB RBAC'
 reject "$OUT/dosh-oidc.yaml" 'resources: \["deployments", "statefulsets", "daemonsets"\]' 'OIDC business resource RBAC'
 reject "$OUT/dosh-oidc.yaml" 'resources: \["pods", "pods/log"' 'OIDC pod resource RBAC'
 

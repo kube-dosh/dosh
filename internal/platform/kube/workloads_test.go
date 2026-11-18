@@ -780,6 +780,52 @@ func TestWorkloadCreateObjectsCoverAllSupportedKinds(t *testing.T) {
 	}
 }
 
+func TestWorkloadCreateObjectsApplyVolumesEnvSourcesProbesAndRuntimeSettings(t *testing.T) {
+	grace := int64(45)
+	spec := domain.WorkloadCreateSpec{
+		Kind: "deployment", Name: "api", Namespace: "prod", Replicas: 2,
+		ImagePullSecrets: []string{"registry-pull"}, RuntimeClassName: "gvisor", TerminationGracePeriod: &grace,
+		Volumes: []domain.WorkloadVolumeSpec{
+			{Name: "config", Type: "configMap", Source: "api-config", Optional: true},
+			{Name: "secret", Type: "secret", Source: "api-secret"},
+			{Name: "data", Type: "persistentVolumeClaim", Source: "api-data"},
+		},
+		Containers: []domain.WorkloadContainerSpec{{
+			Name: "api", Image: "registry.test/api:1", ContainerPort: 8080, CPURequestMilli: 100, CPULimitMilli: 500,
+			MemoryRequestBytes: 128 << 20, MemoryLimitBytes: 512 << 20,
+			Env: []domain.WorkloadEnvVar{
+				{Name: "MODE", Value: "production"},
+				{Name: "TOKEN", ValueFrom: &domain.WorkloadEnvValueFrom{Kind: "secretKeyRef", Name: "api-secret", Key: "token", Optional: true}},
+				{Name: "POD_NAME", ValueFrom: &domain.WorkloadEnvValueFrom{Kind: "fieldRef", Name: "metadata.name"}},
+			},
+			VolumeMounts: []domain.WorkloadVolumeMount{
+				{Name: "config", MountPath: "/etc/api", SubPath: "config.yaml", ReadOnly: true},
+				{Name: "data", MountPath: "/var/lib/api"},
+			},
+			LivenessProbe:  &domain.WorkloadProbe{Type: "httpGet", Path: "/healthz", Port: "8080", Scheme: "HTTP", InitialDelaySeconds: 5, PeriodSeconds: 10, TimeoutSeconds: 1, SuccessThreshold: 1, FailureThreshold: 3},
+			ReadinessProbe: &domain.WorkloadProbe{Type: "exec", Command: []string{"cat", "/tmp/ready"}, InitialDelaySeconds: 1, PeriodSeconds: 5, TimeoutSeconds: 1, SuccessThreshold: 1, FailureThreshold: 3},
+		}},
+	}
+	deployment := deploymentForCreate(spec)
+	podSpec := deployment.Spec.Template.Spec
+	if len(podSpec.ImagePullSecrets) != 1 || podSpec.ImagePullSecrets[0].Name != "registry-pull" || podSpec.RuntimeClassName == nil || *podSpec.RuntimeClassName != "gvisor" || podSpec.TerminationGracePeriodSeconds == nil || *podSpec.TerminationGracePeriodSeconds != 45 {
+		t.Fatalf("pod runtime settings = %#v", podSpec)
+	}
+	if len(podSpec.Volumes) != 3 || podSpec.Volumes[0].ConfigMap == nil || !*podSpec.Volumes[0].ConfigMap.Optional || podSpec.Volumes[1].Secret == nil || podSpec.Volumes[2].PersistentVolumeClaim == nil {
+		t.Fatalf("pod volumes = %#v", podSpec.Volumes)
+	}
+	container := podSpec.Containers[0]
+	if len(container.VolumeMounts) != 2 || container.VolumeMounts[0].SubPath != "config.yaml" || !container.VolumeMounts[0].ReadOnly {
+		t.Fatalf("volume mounts = %#v", container.VolumeMounts)
+	}
+	if len(container.Env) != 3 || container.Env[1].ValueFrom == nil || container.Env[1].ValueFrom.SecretKeyRef == nil || container.Env[1].ValueFrom.SecretKeyRef.Name != "api-secret" || container.Env[2].ValueFrom == nil || container.Env[2].ValueFrom.FieldRef == nil {
+		t.Fatalf("env = %#v", container.Env)
+	}
+	if container.LivenessProbe == nil || container.LivenessProbe.HTTPGet == nil || container.LivenessProbe.HTTPGet.Path != "/healthz" || container.ReadinessProbe == nil || container.ReadinessProbe.Exec == nil {
+		t.Fatalf("probes = liveness %#v readiness %#v", container.LivenessProbe, container.ReadinessProbe)
+	}
+}
+
 func TestRunCronJobOnceCopiesTemplateAndAddsManagementMetadata(t *testing.T) {
 	cronJob := &batchv1.CronJob{
 		ObjectMeta: metav1.ObjectMeta{Name: "backup", Namespace: "prod"},
@@ -914,7 +960,7 @@ func TestWorkloadCreateObjectsIncludeContainersSchedulingSecurityAndBatchOptions
 		Kind: "job", Name: "migrate", Namespace: "prod",
 		Containers: []domain.WorkloadContainerSpec{
 			{Name: "app", Image: "registry.test/app:2", ContainerPort: 8080, Command: []string{"/app"}, Args: []string{"serve"}, CPURequestMilli: 100},
-			{Name: "sidecar", Image: "registry.test/sidecar:1", Env: []domain.DeploymentEnvVar{{Name: "MODE", Value: "proxy"}}, SecurityContext: &domain.WorkloadContainerSecurityContext{RunAsUser: &runAsUser, ReadOnlyRootFilesystem: &readOnly}},
+			{Name: "sidecar", Image: "registry.test/sidecar:1", Env: []domain.WorkloadEnvVar{{Name: "MODE", Value: "proxy"}}, SecurityContext: &domain.WorkloadContainerSecurityContext{RunAsUser: &runAsUser, ReadOnlyRootFilesystem: &readOnly}},
 		},
 		InitContainers:            []domain.WorkloadContainerSpec{{Name: "init-db", Image: "busybox:1.37", Command: []string{"sh", "-c", "wait-db"}}},
 		NodeSelector:              map[string]string{"node-pool": "gpu"},
@@ -1064,8 +1110,47 @@ func TestUpdateWorkloadRolloutPausesAndTunesStrategy(t *testing.T) {
 	if err := client.UpdateWorkloadRollout(context.Background(), "deployment", "prod", "api", domain.WorkloadRolloutUpdate{MaxSurge: "0", MaxUnavailable: "0"}); !errors.Is(err, domain.ErrInvalid) {
 		t.Fatalf("both zero error = %v", err)
 	}
-	if err := client.UpdateWorkloadRollout(context.Background(), "statefulset", "prod", "api", domain.WorkloadRolloutUpdate{Paused: &paused}); !errors.Is(err, domain.ErrUnsupported) {
+	if err := client.UpdateWorkloadRollout(context.Background(), "statefulset", "prod", "api", domain.WorkloadRolloutUpdate{Paused: &paused}); !errors.Is(err, domain.ErrInvalid) {
 		t.Fatalf("unsupported kind error = %v", err)
+	}
+}
+
+func TestUpdateWorkloadRolloutSupportsStatefulSetPartitionAndDaemonSetStrategy(t *testing.T) {
+	statefulSet := &appsv1.StatefulSet{
+		ObjectMeta: metav1.ObjectMeta{Name: "db", Namespace: "prod", ResourceVersion: "14"},
+		Spec: appsv1.StatefulSetSpec{
+			Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": "db"}},
+			Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "db", Image: "postgres:17"}}}},
+		},
+	}
+	daemonSet := &appsv1.DaemonSet{
+		ObjectMeta: metav1.ObjectMeta{Name: "agent", Namespace: "prod", ResourceVersion: "21"},
+		Spec: appsv1.DaemonSetSpec{
+			Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": "agent"}},
+			Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "agent", Image: "agent:2"}}}},
+		},
+	}
+	client, clientset := newFakeKubeClient(statefulSet, daemonSet)
+	partition := int32(2)
+	if err := client.UpdateWorkloadRollout(context.Background(), "statefulset", "prod", "db", domain.WorkloadRolloutUpdate{Partition: &partition, ResourceVersion: "14"}); err != nil {
+		t.Fatalf("UpdateWorkloadRollout(statefulset) error = %v", err)
+	}
+	updatedStatefulSet, err := clientset.AppsV1().StatefulSets("prod").Get(context.Background(), "db", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("get statefulset: %v", err)
+	}
+	if updatedStatefulSet.Spec.UpdateStrategy.Type != appsv1.RollingUpdateStatefulSetStrategyType || updatedStatefulSet.Spec.UpdateStrategy.RollingUpdate == nil || updatedStatefulSet.Spec.UpdateStrategy.RollingUpdate.Partition == nil || *updatedStatefulSet.Spec.UpdateStrategy.RollingUpdate.Partition != 2 {
+		t.Fatalf("statefulset strategy = %#v", updatedStatefulSet.Spec.UpdateStrategy)
+	}
+	if err := client.UpdateWorkloadRollout(context.Background(), "daemonset", "prod", "agent", domain.WorkloadRolloutUpdate{MaxSurge: "1", MaxUnavailable: "0", ResourceVersion: "21"}); err != nil {
+		t.Fatalf("UpdateWorkloadRollout(daemonset) error = %v", err)
+	}
+	updatedDaemonSet, err := clientset.AppsV1().DaemonSets("prod").Get(context.Background(), "agent", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("get daemonset: %v", err)
+	}
+	if updatedDaemonSet.Spec.UpdateStrategy.Type != appsv1.RollingUpdateDaemonSetStrategyType || updatedDaemonSet.Spec.UpdateStrategy.RollingUpdate == nil || updatedDaemonSet.Spec.UpdateStrategy.RollingUpdate.MaxSurge.String() != "1" || updatedDaemonSet.Spec.UpdateStrategy.RollingUpdate.MaxUnavailable.String() != "0" {
+		t.Fatalf("daemonset strategy = %#v", updatedDaemonSet.Spec.UpdateStrategy)
 	}
 }
 

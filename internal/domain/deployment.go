@@ -17,7 +17,7 @@ type WorkloadCreateSpec struct {
 	ContainerName      string                  `json:"containerName"`
 	Image              string                  `json:"image"`
 	RegistryID         string                  `json:"registryId,omitempty"`
-	ImagePullSecrets   []string                `json:"-"`
+	ImagePullSecrets   []string                `json:"imagePullSecrets,omitempty"`
 	ContainerPort      int32                   `json:"containerPort"`
 	CPURequestMilli    int64                   `json:"cpuRequestMilli"`
 	CPULimitMilli      int64                   `json:"cpuLimitMilli"`
@@ -27,6 +27,7 @@ type WorkloadCreateSpec struct {
 	Labels             map[string]string       `json:"labels,omitempty"`
 	Containers         []WorkloadContainerSpec `json:"containers,omitempty"`
 	InitContainers     []WorkloadContainerSpec `json:"initContainers,omitempty"`
+	Volumes            []WorkloadVolumeSpec    `json:"volumes,omitempty"`
 
 	Command []string `json:"command,omitempty"`
 	Args    []string `json:"args,omitempty"`
@@ -38,6 +39,8 @@ type WorkloadCreateSpec struct {
 	PriorityClassName         string                             `json:"priorityClassName,omitempty"`
 	ServiceAccountName        string                             `json:"serviceAccountName,omitempty"`
 	PodSecurityContext        *WorkloadPodSecurityContext        `json:"podSecurityContext,omitempty"`
+	RuntimeClassName          string                             `json:"runtimeClassName,omitempty"`
+	TerminationGracePeriod    *int64                             `json:"terminationGracePeriodSeconds,omitempty"`
 
 	JobCompletions             *int32 `json:"jobCompletions,omitempty"`
 	JobParallelism             *int32 `json:"jobParallelism,omitempty"`
@@ -67,10 +70,24 @@ type WorkloadContainerSpec struct {
 	CPULimitMilli      int64                             `json:"cpuLimitMilli,omitempty"`
 	MemoryRequestBytes int64                             `json:"memoryRequestBytes,omitempty"`
 	MemoryLimitBytes   int64                             `json:"memoryLimitBytes,omitempty"`
-	Env                []DeploymentEnvVar                `json:"env,omitempty"`
+	Env                []WorkloadEnvVar                  `json:"env,omitempty"`
 	Command            []string                          `json:"command,omitempty"`
 	Args               []string                          `json:"args,omitempty"`
 	SecurityContext    *WorkloadContainerSecurityContext `json:"securityContext,omitempty"`
+	VolumeMounts       []WorkloadVolumeMount             `json:"volumeMounts,omitempty"`
+	LivenessProbe      *WorkloadProbe                    `json:"livenessProbe,omitempty"`
+	ReadinessProbe     *WorkloadProbe                    `json:"readinessProbe,omitempty"`
+	StartupProbe       *WorkloadProbe                    `json:"startupProbe,omitempty"`
+}
+
+// WorkloadVolumeSpec describes the supported pod-template volume sources in
+// the guided create workflow. Mount points are declared per container so one
+// volume can be shared by multiple containers.
+type WorkloadVolumeSpec struct {
+	Name     string `json:"name"`
+	Type     string `json:"type"`
+	Source   string `json:"source"`
+	Optional bool   `json:"optional,omitempty"`
 }
 
 type WorkloadToleration struct {
@@ -115,6 +132,7 @@ type WorkloadRolloutUpdate struct {
 	Paused          *bool  `json:"paused,omitempty"`
 	MaxSurge        string `json:"maxSurge,omitempty"`
 	MaxUnavailable  string `json:"maxUnavailable,omitempty"`
+	Partition       *int32 `json:"partition,omitempty"`
 	ResourceVersion string `json:"resourceVersion,omitempty"`
 }
 

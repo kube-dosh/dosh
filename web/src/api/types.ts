@@ -620,10 +620,21 @@ export interface WorkloadContainerSpec {
   cpuLimitMilli?: number;
   memoryRequestBytes?: number;
   memoryLimitBytes?: number;
-  env?: DeploymentEnvVar[];
+  env?: WorkloadEnvVar[];
   command?: string[];
   args?: string[];
   securityContext?: WorkloadContainerSecurityContext;
+  volumeMounts?: WorkloadVolumeMount[];
+  livenessProbe?: WorkloadProbe;
+  readinessProbe?: WorkloadProbe;
+  startupProbe?: WorkloadProbe;
+}
+
+export interface WorkloadVolumeSpec {
+  name: string;
+  type: "configMap" | "secret" | "persistentVolumeClaim";
+  source: string;
+  optional?: boolean;
 }
 
 export interface WorkloadToleration {
@@ -664,9 +675,11 @@ export interface WorkloadCreateInput {
   memoryRequestBytes?: number;
   memoryLimitBytes?: number;
   env?: DeploymentEnvVar[];
+  imagePullSecrets?: string[];
   labels?: Record<string, string>;
   containers?: WorkloadContainerSpec[];
   initContainers?: WorkloadContainerSpec[];
+  volumes?: WorkloadVolumeSpec[];
   command?: string[];
   args?: string[];
   nodeSelector?: Record<string, string>;
@@ -676,6 +689,8 @@ export interface WorkloadCreateInput {
   priorityClassName?: string;
   serviceAccountName?: string;
   podSecurityContext?: WorkloadPodSecurityContext;
+  runtimeClassName?: string;
+  terminationGracePeriodSeconds?: number;
   jobCompletions?: number;
   jobParallelism?: number;
   jobBackoffLimit?: number;
@@ -693,6 +708,7 @@ export interface WorkloadRolloutInput {
   paused?: boolean;
   maxSurge?: string;
   maxUnavailable?: string;
+  partition?: number;
   resourceVersion?: string;
 }
 
@@ -1323,5 +1339,69 @@ export interface ListParams {
   cursor?: string;
   sort?: string;
   order?: "asc" | "desc";
+}
+
+export interface AutoscalerMetric {
+  type: string;
+  resource?: string;
+  current?: string;
+  target?: string;
+  currentUtilization?: number;
+  targetUtilization?: number;
+}
+
+export interface AutoscalerSummary {
+  name: string;
+  namespace: string;
+  resourceVersion?: string;
+  targetKind: string;
+  targetName: string;
+  minReplicas: number;
+  maxReplicas: number;
+  currentReplicas: number;
+  desiredReplicas: number;
+  status: string;
+  metrics: AutoscalerMetric[];
+  conditions: Condition[];
+  lastScaleTime?: string;
+  createdAt: string;
+}
+
+export interface AutoscalerInput {
+  name: string;
+  namespace: string;
+  targetKind: "Deployment" | "StatefulSet";
+  targetName: string;
+  minReplicas: number;
+  maxReplicas: number;
+  cpuUtilization?: number;
+  memoryUtilization?: number;
+  resourceVersion?: string;
+}
+
+export interface DisruptionBudgetSummary {
+  name: string;
+  namespace: string;
+  resourceVersion?: string;
+  minAvailable?: string;
+  maxUnavailable?: string;
+  selector: Record<string, string>;
+  currentHealthy: number;
+  desiredHealthy: number;
+  disruptionsAllowed: number;
+  expectedPods: number;
+  observedGeneration: number;
+  status: string;
+  conditions: Condition[];
+  createdAt: string;
+}
+
+export interface DisruptionBudgetInput {
+  name: string;
+  namespace: string;
+  minAvailable?: string;
+  maxUnavailable?: string;
+  selector: Record<string, string>;
+  resourceVersion?: string;
 }
 

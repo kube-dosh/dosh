@@ -11,10 +11,14 @@ import type {
   WorkloadContainerSpec,
   WorkloadCreateInput,
   WorkloadCreateKind,
+  WorkloadEnvVar,
   WorkloadNodeSelectorRequirement,
   WorkloadPodSecurityContext,
+  WorkloadProbe,
   WorkloadToleration,
   WorkloadTopologySpreadConstraint,
+  WorkloadVolumeMount,
+  WorkloadVolumeSpec,
 } from "@/api/types";
 import { NamespaceSelect } from "@/components/layout/namespace-select";
 import { Button } from "@/components/ui/button";
@@ -28,6 +32,7 @@ import { workloadCapabilities } from "@/lib/capabilities";
 import { cn } from "@/lib/utils";
 
 const DNS_LABEL = /^[a-z0-9]([-a-z0-9]*[a-z0-9])?$/;
+const DNS_SUBDOMAIN = /^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$/;
 const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const CAPABILITY = /^[A-Z][A-Z0-9_]*$/;
 const RESERVED_LABELS = new Set(["app.kubernetes.io/name", "app.kubernetes.io/managed-by"]);
@@ -50,6 +55,46 @@ const kindDescriptions: Record<WorkloadCreateKind, string> = {
 type TriState = "" | "true" | "false";
 type ContainerKind = "containers" | "initContainers";
 type TolerationEffect = "" | "NoSchedule" | "PreferNoSchedule" | "NoExecute";
+type ProbeKind = "disabled" | "httpGet" | "tcpSocket" | "exec" | "grpc";
+type EnvSourceKind = NonNullable<NonNullable<WorkloadEnvVar["valueFrom"]>["kind"]>;
+
+type EnvSourceForm = {
+  id: string;
+  name: string;
+  kind: EnvSourceKind;
+  source: string;
+  key: string;
+  optional: boolean;
+};
+
+type VolumeForm = {
+  id: string;
+  name: string;
+  type: WorkloadVolumeSpec["type"];
+  source: string;
+  optional: boolean;
+};
+
+type VolumeMountForm = {
+  id: string;
+  name: string;
+  mountPath: string;
+  subPath: string;
+  readOnly: boolean;
+};
+
+type ProbeForm = {
+  kind: ProbeKind;
+  path: string;
+  port: string;
+  scheme: "HTTP" | "HTTPS";
+  command: string;
+  initialDelaySeconds: string;
+  periodSeconds: string;
+  timeoutSeconds: string;
+  successThreshold: string;
+  failureThreshold: string;
+};
 
 type ContainerForm = {
   id: string;
@@ -62,6 +107,11 @@ type ContainerForm = {
   memoryRequestMi: string;
   memoryLimitMi: string;
   env: string;
+  envSources: EnvSourceForm[];
+  volumeMounts: VolumeMountForm[];
+  livenessProbe: ProbeForm;
+  readinessProbe: ProbeForm;
+  startupProbe: ProbeForm;
   command: string;
   args: string;
   runAsUser: string;
@@ -106,8 +156,12 @@ type FormState = {
   concurrencyPolicy: "Allow" | "Forbid" | "Replace";
   suspend: boolean;
   labels: string;
+  imagePullSecrets: string;
+  runtimeClassName: string;
+  terminationGracePeriodSeconds: string;
   containers: ContainerForm[];
   initContainers: ContainerForm[];
+  volumes: VolumeForm[];
   nodeSelector: string;
   tolerations: TolerationForm[];
   nodeAffinity: NodeAffinityForm[];
@@ -146,6 +200,11 @@ function newContainer(primary = false, init = false): ContainerForm {
     memoryRequestMi: primary ? "128" : "0",
     memoryLimitMi: primary ? "512" : "0",
     env: "",
+    envSources: [],
+    volumeMounts: [],
+    livenessProbe: newProbe(),
+    readinessProbe: newProbe(),
+    startupProbe: newProbe(),
     command: "",
     args: "",
     runAsUser: "",
@@ -156,6 +215,33 @@ function newContainer(primary = false, init = false): ContainerForm {
     capabilitiesAdd: "",
     capabilitiesDrop: "",
   };
+}
+
+function newProbe(kind: ProbeKind = "disabled"): ProbeForm {
+  return {
+    kind,
+    path: "/",
+    port: "",
+    scheme: "HTTP",
+    command: "",
+    initialDelaySeconds: "0",
+    periodSeconds: "10",
+    timeoutSeconds: "1",
+    successThreshold: "1",
+    failureThreshold: "3",
+  };
+}
+
+function newEnvSource(): EnvSourceForm {
+  return { id: nextID("env-source"), name: "", kind: "secretKeyRef", source: "", key: "", optional: false };
+}
+
+function newVolume(): VolumeForm {
+  return { id: nextID("volume"), name: "", type: "configMap", source: "", optional: false };
+}
+
+function newVolumeMount(volumeName = ""): VolumeMountForm {
+  return { id: nextID("mount"), name: volumeName, mountPath: "", subPath: "", readOnly: false };
 }
 
 function newToleration(): TolerationForm {
@@ -180,8 +266,12 @@ const initialForm = (namespace: string, kind: WorkloadCreateKind): FormState => 
   concurrencyPolicy: "Allow",
   suspend: false,
   labels: "",
+  imagePullSecrets: "",
+  runtimeClassName: "",
+  terminationGracePeriodSeconds: "",
   containers: [newContainer(true)],
   initContainers: [],
+  volumes: [],
   nodeSelector: "",
   tolerations: [],
   nodeAffinity: [],
@@ -325,7 +415,22 @@ export function WorkloadCreateDialog({ open, onOpenChange, initialNamespace, ini
         const memoryLimit = parseMiB(container.memoryLimitMi);
         if (memoryRequest === null || memoryLimit === null) next[`${prefix}.memoryRequestMi`] = "内存必须是非负 MiB 整数";
         else if (memoryLimit > 0 && memoryLimit < memoryRequest) next[`${prefix}.memoryLimitMi`] = "内存上限不能小于请求";
-        if (parseEnv(container.env) === null) next[`${prefix}.env`] = "环境变量格式应为每行 KEY=value";
+        const literalEnv = parseEnv(container.env);
+        if (literalEnv === null) next[`${prefix}.env`] = "环境变量格式应为每行 KEY=value";
+        const sourcedEnv = parseEnvSources(container.envSources);
+        if (sourcedEnv === null) next[`${prefix}.envSources`] = "请完整填写来源变量名称、来源和目标 Key";
+        else if (literalEnv) {
+          const seen = new Set(literalEnv.map((item) => item.name));
+          container.envSources.forEach((source, sourceIndex) => {
+            if (!ENV_NAME.test(source.name.trim())) next[`${prefix}.envSources.${sourceIndex}.name`] = "环境变量名称无效";
+            else if (seen.has(source.name.trim())) next[`${prefix}.envSources.${sourceIndex}.name`] = `变量 ${source.name.trim()} 与字面量环境变量重复`;
+            seen.add(source.name.trim());
+          });
+        }
+        validateContainerMountForms(container, prefix, form.volumes, next);
+        validateProbeForm(next, `${prefix}.livenessProbe`, container.livenessProbe);
+        validateProbeForm(next, `${prefix}.readinessProbe`, container.readinessProbe);
+        validateProbeForm(next, `${prefix}.startupProbe`, container.startupProbe);
         const command = parseLines(container.command);
         const args = parseLines(container.args);
         if (command === null || command.length > 128 || command.some((value) => value.length > 4096)) next[`${prefix}.command`] = "命令最多 128 行，每行不超过 4096 字符";
@@ -343,6 +448,18 @@ export function WorkloadCreateDialog({ open, onOpenChange, initialNamespace, ini
       names.add(item.name);
     });
     if (parseKeyValues(form.labels, true) === null) next.labels = "标签格式应为每行 key=value，且不能覆盖 dosh 管理标签";
+    const volumeNames = new Set<string>();
+    form.volumes.forEach((volume, index) => {
+      if (!volume.name.trim() || volume.name.length > 63 || !DNS_LABEL.test(volume.name)) next[`volumes.${index}.name`] = "存储卷名称必须是 DNS-1123 标签";
+      else if (volumeNames.has(volume.name)) next[`volumes.${index}.name`] = "存储卷名称重复";
+      volumeNames.add(volume.name);
+      if (!volume.source.trim() || volume.source.length > 253 || !DNS_SUBDOMAIN.test(volume.source)) next[`volumes.${index}.source`] = "来源名称必须是 DNS-1123 子域名";
+    });
+    const secretNames = parseSecretNames(form.imagePullSecrets);
+    if (secretNames === null || secretNames.some((name) => name.length > 253 || !DNS_SUBDOMAIN.test(name))) next.imagePullSecrets = "每行一个合法的 Secret 名称";
+    if (form.runtimeClassName && (form.runtimeClassName.length > 253 || !DNS_SUBDOMAIN.test(form.runtimeClassName.trim()))) next.runtime = "RuntimeClass 必须是 DNS-1123 子域名";
+    const terminationGrace = parseOptionalInteger(form.terminationGracePeriodSeconds, 0, 86400);
+    if (terminationGrace === null) next.runtime = "优雅终止时间必须是 0 到 86400 秒";
     if (parseKeyValues(form.nodeSelector) === null) next.nodeSelector = "节点选择器格式应为每行 key=value";
     if ((form.priorityClassName && (form.priorityClassName.length > 63 || !DNS_LABEL.test(form.priorityClassName))) ||
       (form.serviceAccountName && (form.serviceAccountName.length > 63 || !DNS_LABEL.test(form.serviceAccountName)))) {
@@ -468,6 +585,7 @@ export function WorkloadCreateDialog({ open, onOpenChange, initialNamespace, ini
 
         {step === 1 ? (
           <div className="min-w-0 space-y-5">
+            <VolumesEditor form={form} errors={errors} update={update} />
             <section className="min-w-0 space-y-3" aria-labelledby="workload-containers-heading">
               <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
                 <div className="min-w-0">
@@ -483,6 +601,7 @@ export function WorkloadCreateDialog({ open, onOpenChange, initialNamespace, ini
                   index={index}
                   container={container}
                   errors={errors}
+                  volumes={form.volumes}
                   placeholderName={index === 0 ? form.name : ""}
                   onChange={(patch) => updateContainer("containers", index, patch)}
                   onRemove={form.containers.length > 1 ? () => removeContainer("containers", index) : undefined}
@@ -505,6 +624,7 @@ export function WorkloadCreateDialog({ open, onOpenChange, initialNamespace, ini
                   index={index}
                   container={container}
                   errors={errors}
+                  volumes={form.volumes}
                   onChange={(patch) => updateContainer("initContainers", index, patch)}
                   onRemove={() => removeContainer("initContainers", index)}
                 />
@@ -574,11 +694,12 @@ export function WorkloadCreateDialog({ open, onOpenChange, initialNamespace, ini
   );
 }
 
-function ContainerEditor({ list, index, container, errors, placeholderName, onChange, onRemove }: {
+function ContainerEditor({ list, index, container, errors, volumes, placeholderName, onChange, onRemove }: {
   list: ContainerKind;
   index: number;
   container: ContainerForm;
   errors: FormErrors;
+  volumes: VolumeForm[];
   placeholderName?: string;
   onChange: (patch: Partial<ContainerForm>) => void;
   onRemove?: () => void;
@@ -626,6 +747,16 @@ function ContainerEditor({ list, index, container, errors, placeholderName, onCh
         <Field label="环境变量" htmlFor={`${idBase}-env`} error={errors[`${prefix}.env`]} hint="每行一个 KEY=value，值可包含等号。" className="sm:col-span-2">
           <Textarea id={`${idBase}-env`} value={container.env} onChange={(event) => onChange({ env: event.target.value })} placeholder={"MODE=production\nLOG_LEVEL=info"} className="min-h-24 font-mono text-xs" />
         </Field>
+        <EnvSourceEditor prefix={prefix} values={container.envSources} errors={errors} onChange={(envSources) => onChange({ envSources })} />
+        <VolumeMountEditor prefix={prefix} values={container.volumeMounts} volumes={volumes} errors={errors} onChange={(volumeMounts) => onChange({ volumeMounts })} />
+        <div className="min-w-0 space-y-2 sm:col-span-2">
+          <h4 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">健康探针</h4>
+          <div className="grid min-w-0 gap-3 xl:grid-cols-3">
+            <ProbeEditor title="Liveness" field="livenessProbe" prefix={prefix} value={container.livenessProbe} errors={errors} onChange={(livenessProbe) => onChange({ livenessProbe })} />
+            <ProbeEditor title="Readiness" field="readinessProbe" prefix={prefix} value={container.readinessProbe} errors={errors} onChange={(readinessProbe) => onChange({ readinessProbe })} />
+            <ProbeEditor title="Startup" field="startupProbe" prefix={prefix} value={container.startupProbe} errors={errors} onChange={(startupProbe) => onChange({ startupProbe })} />
+          </div>
+        </div>
         <Field label="Command" htmlFor={`${idBase}-command`} error={errors[`${prefix}.command`]} hint="每行一个命令参数，留空使用镜像默认 ENTRYPOINT。">
           <Textarea id={`${idBase}-command`} value={container.command} onChange={(event) => onChange({ command: event.target.value })} placeholder={"/bin/sh"} className="min-h-20 font-mono text-xs" spellCheck={false} />
         </Field>
@@ -657,6 +788,122 @@ function ContainerEditor({ list, index, container, errors, placeholderName, onCh
   );
 }
 
+function VolumesEditor({ form, errors, update }: {
+  form: FormState;
+  errors: FormErrors;
+  update: <K extends keyof FormState>(key: K, value: FormState[K]) => void;
+}) {
+  const patch = (id: string, value: Partial<VolumeForm>) => update("volumes", form.volumes.map((item) => item.id === id ? { ...item, ...value } : item));
+  return (
+    <section className="min-w-0 space-y-3" aria-labelledby="workload-volumes-heading">
+      <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
+        <div className="min-w-0">
+          <h2 id="workload-volumes-heading" className="text-sm font-semibold">存储卷 ({form.volumes.length})</h2>
+          <p className="text-xs text-muted-foreground">声明 ConfigMap、Secret 或已有 PVC；随后在容器中配置挂载路径。</p>
+        </div>
+        <Button type="button" variant="outline" size="sm" onClick={() => update("volumes", [...form.volumes, newVolume()])} disabled={form.volumes.length >= 64}><Plus className="h-4 w-4" />添加存储卷</Button>
+      </div>
+      {form.volumes.length ? form.volumes.map((volume, index) => (
+        <div key={volume.id} className="min-w-0 rounded-lg border bg-muted/10 p-3">
+          <div className="mb-2 flex items-center justify-between gap-2"><span className="text-xs text-muted-foreground">存储卷 {index + 1}</span><Button type="button" variant="ghost" size="sm" className="h-7 px-2 text-destructive" aria-label={`删除存储卷 ${index + 1}`} onClick={() => update("volumes", form.volumes.filter((item) => item.id !== volume.id))}><Trash2 className="h-3.5 w-3.5" /></Button></div>
+          <div className="grid min-w-0 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <Field label="卷名称" htmlFor={`volume-name-${volume.id}`} error={errors[`volumes.${index}.name`]}><Input id={`volume-name-${volume.id}`} value={volume.name} onChange={(event) => patch(volume.id, { name: event.target.value })} placeholder="app-config" /></Field>
+            <Field label="来源类型" htmlFor={`volume-type-${volume.id}`}><Select value={volume.type} onValueChange={(value) => patch(volume.id, { type: value as VolumeForm["type"], optional: value === "persistentVolumeClaim" ? false : volume.optional })}><SelectTrigger id={`volume-type-${volume.id}`}><SelectValue /></SelectTrigger><SelectContent><SelectItem value="configMap">ConfigMap</SelectItem><SelectItem value="secret">Secret</SelectItem><SelectItem value="persistentVolumeClaim">PVC</SelectItem></SelectContent></Select></Field>
+            <Field label={volume.type === "persistentVolumeClaim" ? "PVC 名称" : volume.type === "secret" ? "Secret 名称" : "ConfigMap 名称"} htmlFor={`volume-source-${volume.id}`} error={errors[`volumes.${index}.source`]}><Input id={`volume-source-${volume.id}`} value={volume.source} onChange={(event) => patch(volume.id, { source: event.target.value })} placeholder="app-config" /></Field>
+            {volume.type !== "persistentVolumeClaim" ? <label className="flex min-w-0 items-center gap-2 self-end pb-2 text-sm"><input type="checkbox" checked={volume.optional} onChange={(event) => patch(volume.id, { optional: event.target.checked })} />允许来源不存在</label> : <span className="hidden lg:block" />}
+          </div>
+        </div>
+      )) : <div className="rounded-md border border-dashed px-3 py-4 text-center text-xs text-muted-foreground">当前没有声明存储卷。</div>}
+    </section>
+  );
+}
+
+function EnvSourceEditor({ prefix, values, errors, onChange }: {
+  prefix: string;
+  values: EnvSourceForm[];
+  errors: FormErrors;
+  onChange: (values: EnvSourceForm[]) => void;
+}) {
+  const patch = (id: string, value: Partial<EnvSourceForm>) => onChange(values.map((item) => item.id === id ? { ...item, ...value } : item));
+  return (
+    <details className="min-w-0 rounded-md border bg-muted/10 sm:col-span-2" open={values.length > 0}>
+      <summary className="cursor-pointer px-3 py-2.5 text-xs font-medium">环境变量来源（Secret / ConfigMap / FieldRef）</summary>
+      <div className="min-w-0 space-y-2 border-t p-3">
+        <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground"><span>与上方字面量环境变量合并，名称不能重复。</span><Button type="button" variant="outline" size="sm" onClick={() => onChange([...values, newEnvSource()])} disabled={values.length >= 64}><Plus className="h-3.5 w-3.5" />添加来源</Button></div>
+        {values.map((source, index) => {
+          const field = `${prefix}.envSources.${index}`;
+          const secretLike = source.kind === "secretKeyRef" || source.kind === "configMapKeyRef";
+          return (
+            <div key={source.id} className="grid min-w-0 gap-3 rounded-md border bg-card p-3 sm:grid-cols-2 lg:grid-cols-5">
+              <Field label="变量名称" htmlFor={`${source.id}-name`} error={errors[`${field}.name`]}><Input id={`${source.id}-name`} value={source.name} onChange={(event) => patch(source.id, { name: event.target.value })} placeholder="DATABASE_URL" /></Field>
+              <Field label="来源类型" htmlFor={`${source.id}-kind`}><Select value={source.kind} onValueChange={(value) => patch(source.id, { kind: value as EnvSourceKind })}><SelectTrigger id={`${source.id}-kind`}><SelectValue /></SelectTrigger><SelectContent><SelectItem value="secretKeyRef">Secret Key</SelectItem><SelectItem value="configMapKeyRef">ConfigMap Key</SelectItem><SelectItem value="fieldRef">FieldRef</SelectItem><SelectItem value="resourceFieldRef">Resource Field</SelectItem></SelectContent></Select></Field>
+              <Field label={source.kind === "fieldRef" ? "Field Path" : source.kind === "resourceFieldRef" ? "资源名称" : "来源名称"} htmlFor={`${source.id}-source`} error={errors[`${field}.source`]}><Input id={`${source.id}-source`} value={source.source} onChange={(event) => patch(source.id, { source: event.target.value })} placeholder={source.kind === "fieldRef" ? "metadata.name" : source.kind === "resourceFieldRef" ? "limits.cpu" : "app-secret"} /></Field>
+              <Field label={source.kind === "resourceFieldRef" ? "容器名（可选）" : "Key"} htmlFor={`${source.id}-key`} error={errors[`${field}.key`]}><Input id={`${source.id}-key`} value={source.key} onChange={(event) => patch(source.id, { key: event.target.value })} placeholder={secretLike ? "token" : ""} /></Field>
+              <div className="flex items-end gap-2 pb-1">
+                {secretLike ? <label className="flex min-w-0 flex-1 items-center gap-2 text-xs"><input type="checkbox" checked={source.optional} onChange={(event) => patch(source.id, { optional: event.target.checked })} />可选</label> : <span className="flex-1" />}
+                <Button type="button" variant="ghost" size="sm" className="h-9 px-2 text-destructive" aria-label={`删除环境变量来源 ${index + 1}`} onClick={() => onChange(values.filter((item) => item.id !== source.id))}><Trash2 className="h-4 w-4" /></Button>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </details>
+  );
+}
+
+function VolumeMountEditor({ prefix, values, volumes, errors, onChange }: {
+  prefix: string;
+  values: VolumeMountForm[];
+  volumes: VolumeForm[];
+  errors: FormErrors;
+  onChange: (values: VolumeMountForm[]) => void;
+}) {
+  const patch = (id: string, value: Partial<VolumeMountForm>) => onChange(values.map((item) => item.id === id ? { ...item, ...value } : item));
+  return (
+    <details className="min-w-0 rounded-md border bg-muted/10 sm:col-span-2" open={values.length > 0}>
+      <summary className="cursor-pointer px-3 py-2.5 text-xs font-medium">存储卷挂载</summary>
+      <div className="min-w-0 space-y-2 border-t p-3">
+        <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground"><span>只能引用上方已声明的存储卷。</span><Button type="button" variant="outline" size="sm" onClick={() => onChange([...values, newVolumeMount(volumes[0]?.name)])} disabled={values.length >= 64 || volumes.length === 0}><Plus className="h-3.5 w-3.5" />添加挂载</Button></div>
+        {!volumes.length ? <p className="text-xs text-muted-foreground">请先添加存储卷。</p> : null}
+        {values.map((mount, index) => {
+          const field = `${prefix}.volumeMounts.${index}`;
+          return (
+            <div key={mount.id} className="grid min-w-0 gap-3 rounded-md border bg-card p-3 sm:grid-cols-2 lg:grid-cols-5">
+              <Field label="存储卷" htmlFor={`${mount.id}-volume`} error={errors[`${field}.name`]}><Select value={mount.name || undefined} onValueChange={(value) => patch(mount.id, { name: value })}><SelectTrigger id={`${mount.id}-volume`}><SelectValue placeholder="选择存储卷" /></SelectTrigger><SelectContent>{volumes.map((volume) => <SelectItem key={volume.id} value={volume.name || volume.id} disabled={!volume.name}>{volume.name || "未命名存储卷"}</SelectItem>)}</SelectContent></Select></Field>
+              <Field label="挂载路径" htmlFor={`${mount.id}-path`} error={errors[`${field}.mountPath`]}><Input id={`${mount.id}-path`} value={mount.mountPath} onChange={(event) => patch(mount.id, { mountPath: event.target.value })} placeholder="/etc/app" className="font-mono" /></Field>
+              <Field label="子路径（可选）" htmlFor={`${mount.id}-subpath`} error={errors[`${field}.subPath`]}><Input id={`${mount.id}-subpath`} value={mount.subPath} onChange={(event) => patch(mount.id, { subPath: event.target.value })} placeholder="config.yaml" className="font-mono" /></Field>
+              <label className="flex min-w-0 items-center gap-2 self-end pb-2 text-sm"><input type="checkbox" checked={mount.readOnly} onChange={(event) => patch(mount.id, { readOnly: event.target.checked })} />只读挂载</label>
+              <div className="flex items-end justify-end pb-1"><Button type="button" variant="ghost" size="sm" className="h-9 px-2 text-destructive" aria-label={`删除挂载 ${index + 1}`} onClick={() => onChange(values.filter((item) => item.id !== mount.id))}><Trash2 className="h-4 w-4" /></Button></div>
+            </div>
+          );
+        })}
+      </div>
+    </details>
+  );
+}
+
+function ProbeEditor({ title, field, prefix, value, errors, onChange }: {
+  title: string;
+  field: "livenessProbe" | "readinessProbe" | "startupProbe";
+  prefix: string;
+  value: ProbeForm;
+  errors: FormErrors;
+  onChange: (value: ProbeForm) => void;
+}) {
+  const key = `${prefix}.${field}`;
+  const patch = (next: Partial<ProbeForm>) => onChange({ ...value, ...next });
+  return (
+    <div className="min-w-0 rounded-md border bg-card p-3">
+      <p className="mb-2 text-xs font-medium">{title}</p>
+      <Field label="类型" htmlFor={`${prefix}-${field}-kind`}><Select value={value.kind} onValueChange={(kind) => patch({ kind: kind as ProbeKind })}><SelectTrigger id={`${prefix}-${field}-kind`}><SelectValue /></SelectTrigger><SelectContent><SelectItem value="disabled">未启用</SelectItem><SelectItem value="httpGet">HTTP GET</SelectItem><SelectItem value="tcpSocket">TCP Socket</SelectItem><SelectItem value="exec">Exec</SelectItem><SelectItem value="grpc">gRPC</SelectItem></SelectContent></Select></Field>
+      {value.kind === "httpGet" ? <div className="mt-2 grid grid-cols-2 gap-2"><Field label="路径" htmlFor={`${prefix}-${field}-path`} error={errors[`${key}.path`]}><Input id={`${prefix}-${field}-path`} value={value.path} onChange={(event) => patch({ path: event.target.value })} /></Field><Field label="端口" htmlFor={`${prefix}-${field}-port`} error={errors[`${key}.port`]}><Input id={`${prefix}-${field}-port`} value={value.port} onChange={(event) => patch({ port: event.target.value })} placeholder="8080" /></Field><Field label="协议" htmlFor={`${prefix}-${field}-scheme`} className="col-span-2"><Select value={value.scheme} onValueChange={(scheme) => patch({ scheme: scheme as ProbeForm["scheme"] })}><SelectTrigger id={`${prefix}-${field}-scheme`}><SelectValue /></SelectTrigger><SelectContent><SelectItem value="HTTP">HTTP</SelectItem><SelectItem value="HTTPS">HTTPS</SelectItem></SelectContent></Select></Field></div> : null}
+      {value.kind === "tcpSocket" || value.kind === "grpc" ? <Field label="端口" htmlFor={`${prefix}-${field}-port`} error={errors[`${key}.port`]} className="mt-2"><Input id={`${prefix}-${field}-port`} value={value.port} onChange={(event) => patch({ port: event.target.value })} placeholder={value.kind === "grpc" ? "50051" : "8080"} /></Field> : null}
+      {value.kind === "exec" ? <Field label="命令" htmlFor={`${prefix}-${field}-command`} error={errors[`${key}.command`]} className="mt-2"><Textarea id={`${prefix}-${field}-command`} value={value.command} onChange={(event) => patch({ command: event.target.value })} placeholder={"cat\n/tmp/healthy"} className="min-h-16 font-mono text-xs" /></Field> : null}
+      {value.kind !== "disabled" ? <div className="mt-2 grid grid-cols-2 gap-2"><Field label="initialDelay" htmlFor={`${prefix}-${field}-initial`}><Input id={`${prefix}-${field}-initial`} type="number" min={0} max={3600} value={value.initialDelaySeconds} onChange={(event) => patch({ initialDelaySeconds: event.target.value })} /></Field><Field label="period" htmlFor={`${prefix}-${field}-period`}><Input id={`${prefix}-${field}-period`} type="number" min={1} max={3600} value={value.periodSeconds} onChange={(event) => patch({ periodSeconds: event.target.value })} /></Field><Field label="timeout" htmlFor={`${prefix}-${field}-timeout`}><Input id={`${prefix}-${field}-timeout`} type="number" min={1} max={3600} value={value.timeoutSeconds} onChange={(event) => patch({ timeoutSeconds: event.target.value })} /></Field><Field label="failureThreshold" htmlFor={`${prefix}-${field}-failures`}><Input id={`${prefix}-${field}-failures`} type="number" min={1} max={10} value={value.failureThreshold} onChange={(event) => patch({ failureThreshold: event.target.value })} /></Field></div> : null}
+    </div>
+  );
+}
+
 function SchedulingEditor({ form, errors, update }: {
   form: FormState;
   errors: FormErrors;
@@ -672,6 +919,15 @@ function SchedulingEditor({ form, errors, update }: {
           </Field>
           <Field label="ServiceAccount" htmlFor="workload-service-account" hint="工作负载将使用该身份访问 Kubernetes API。">
             <Input id="workload-service-account" value={form.serviceAccountName} onChange={(event) => update("serviceAccountName", event.target.value)} placeholder="default" />
+          </Field>
+          <Field label="RuntimeClass" htmlFor="workload-runtime-class" error={errors.runtime} hint="例如 gVisor 或 Kata 的 RuntimeClass 名称。">
+            <Input id="workload-runtime-class" value={form.runtimeClassName} onChange={(event) => update("runtimeClassName", event.target.value)} placeholder="gvisor" />
+          </Field>
+          <Field label="优雅终止（秒）" htmlFor="workload-termination-grace" error={errors.runtime} hint="留空使用集群默认值。">
+            <Input id="workload-termination-grace" type="number" min={0} max={86400} value={form.terminationGracePeriodSeconds} onChange={(event) => update("terminationGracePeriodSeconds", event.target.value)} />
+          </Field>
+          <Field label="ImagePullSecrets" htmlFor="workload-image-pull-secrets" error={errors.imagePullSecrets} hint="每行一个 Secret 名称；使用镜像仓时通常会自动补充。" className="sm:col-span-2">
+            <Textarea id="workload-image-pull-secrets" value={form.imagePullSecrets} onChange={(event) => update("imagePullSecrets", event.target.value)} placeholder="registry-pull-secret" className="min-h-20 font-mono text-xs" />
           </Field>
           <Field label="NodeSelector" htmlFor="workload-node-selector" error={errors.nodeSelector} hint="每行一个 key=value，Pod 只会调度到全部匹配的节点。" className="sm:col-span-2">
             <Textarea id="workload-node-selector" value={form.nodeSelector} onChange={(event) => update("nodeSelector", event.target.value)} placeholder={"node-pool=gpu\nkubernetes.io/os=linux"} className="min-h-20 font-mono text-xs" />
@@ -784,6 +1040,8 @@ function Summary({ input, form }: { input: WorkloadCreateInput | null; form: For
       {input.kind === "statefulset" ? <SummaryItem label="Headless Service" value={input.serviceName || input.name} /> : null}
       {input.kind === "cronjob" ? <><SummaryItem label="调度" value={input.schedule ?? ""} mono /><SummaryItem label="并发策略 / 初始暂停" value={`${input.concurrencyPolicy ?? "Allow"} / ${input.suspend ? "是" : "否"}`} /></> : null}
       <SummaryItem label="标签 / 节点选择器" value={`${Object.keys(input.labels ?? {}).length} / ${Object.keys(input.nodeSelector ?? {}).length}`} />
+      <SummaryItem label="存储卷 / 挂载" value={`${input.volumes?.length ?? 0} / ${containers.reduce((total, container) => total + (container.volumeMounts?.length ?? 0), 0)}`} />
+      <SummaryItem label="探针" value={containers.map((container) => [container.livenessProbe, container.readinessProbe, container.startupProbe].filter(Boolean).length).join(" / ")} />
       <SummaryItem label="容忍 / 亲和性 / 拓扑" value={`${input.tolerations?.length ?? 0} / ${input.nodeAffinity?.length ?? 0} / ${input.topologySpreadConstraints?.length ?? 0}`} />
       <SummaryItem label="PriorityClass / ServiceAccount" value={`${input.priorityClassName || "—"} / ${input.serviceAccountName || "—"}`} mono />
       {form.kind === "job" || form.kind === "cronjob" ? <SummaryItem label="Job 参数" value={`completions=${input.jobCompletions ?? "默认"} · parallelism=${input.jobParallelism ?? "默认"} · backoff=${input.jobBackoffLimit ?? "默认"} · ttl=${input.jobTtlSecondsAfterFinished ?? "默认"}`} /> : null}
@@ -806,6 +1064,12 @@ function buildInput(form: FormState): WorkloadCreateInput | null {
   if ((form.kind === "deployment" || form.kind === "statefulset") && !Number.isInteger(replicas)) return null;
   const podSecurityContext = buildPodSecurityContext(form);
   if (podSecurityContext === null) return null;
+  const volumes = form.volumes.map((volume): WorkloadVolumeSpec => ({
+    name: volume.name.trim(), type: volume.type, source: volume.source.trim(), optional: volume.optional || undefined,
+  }));
+  const imagePullSecrets = parseSecretNames(form.imagePullSecrets);
+  const terminationGrace = parseOptionalInteger(form.terminationGracePeriodSeconds, 0, 86400);
+  if (imagePullSecrets === null || terminationGrace === null) return null;
   const jobCompletions = parseOptionalInteger(form.jobCompletions, 1, 10000);
   const jobParallelism = parseOptionalInteger(form.jobParallelism, 0, 10000);
   const jobBackoffLimit = parseOptionalInteger(form.jobBackoffLimit, 0, 10000);
@@ -831,11 +1095,14 @@ function buildInput(form: FormState): WorkloadCreateInput | null {
     cpuLimitMilli: primary?.cpuLimitMilli,
     memoryRequestBytes: primary?.memoryRequestBytes,
     memoryLimitBytes: primary?.memoryLimitBytes,
-    env: primary?.env,
     command: primary?.command,
     args: primary?.args,
     containers: containers as WorkloadContainerSpec[],
     initContainers: initContainers as WorkloadContainerSpec[],
+    volumes,
+    imagePullSecrets: imagePullSecrets.length ? imagePullSecrets : undefined,
+    runtimeClassName: form.runtimeClassName.trim() || undefined,
+    terminationGracePeriodSeconds: terminationGrace,
     nodeSelector,
     tolerations: form.tolerations.map((row): WorkloadToleration => ({
       key: row.key.trim(), operator: row.operator, value: row.operator === "Exists" ? "" : row.value.trim(), effect: row.effect,
@@ -860,7 +1127,12 @@ function buildInput(form: FormState): WorkloadCreateInput | null {
 }
 
 function buildContainer(container: ContainerForm): WorkloadContainerSpec | null {
-  const env = parseEnv(container.env);
+  const literalEnv = parseEnv(container.env);
+  const sourcedEnv = parseEnvSources(container.envSources);
+  const volumeMounts = buildVolumeMounts(container.volumeMounts);
+  const livenessProbe = buildProbe(container.livenessProbe);
+  const readinessProbe = buildProbe(container.readinessProbe);
+  const startupProbe = buildProbe(container.startupProbe);
   const command = parseLines(container.command);
   const args = parseLines(container.args);
   const port = parsePort(container.containerPort);
@@ -869,7 +1141,9 @@ function buildContainer(container: ContainerForm): WorkloadContainerSpec | null 
   const memoryRequest = parseMiB(container.memoryRequestMi);
   const memoryLimit = parseMiB(container.memoryLimitMi);
   const securityContext = buildContainerSecurityContext(container);
-  if (env === null || command === null || args === null || port === null || cpuRequest === null || cpuLimit === null || memoryRequest === null || memoryLimit === null || securityContext === null) return null;
+  if (literalEnv === null || sourcedEnv === null || command === null || args === null || port === null || cpuRequest === null || cpuLimit === null || memoryRequest === null || memoryLimit === null || securityContext === null || volumeMounts === null || livenessProbe === null || readinessProbe === null || startupProbe === null) return null;
+  const env = [...literalEnv, ...sourcedEnv];
+  if (new Set(env.map((item) => item.name)).size !== env.length) return null;
   return {
     name: container.name.trim() || undefined,
     image: container.image.trim(),
@@ -883,6 +1157,10 @@ function buildContainer(container: ContainerForm): WorkloadContainerSpec | null 
     command,
     args,
     securityContext: securityContext ?? undefined,
+    volumeMounts,
+    livenessProbe: livenessProbe ?? undefined,
+    readinessProbe: readinessProbe ?? undefined,
+    startupProbe: startupProbe ?? undefined,
   };
 }
 
@@ -974,6 +1252,110 @@ function parseEnv(value: string): DeploymentEnvVar[] | null {
     out.push({ name, value: trimmed.slice(separator + 1) });
   }
   return out;
+}
+
+function parseEnvSources(values: EnvSourceForm[]): WorkloadEnvVar[] | null {
+  const out: WorkloadEnvVar[] = [];
+  const seen = new Set<string>();
+  for (const source of values) {
+    const name = source.name.trim();
+    const target = source.source.trim();
+    const key = source.key.trim();
+    if (!ENV_NAME.test(name) || seen.has(name)) return null;
+    seen.add(name);
+    if (source.kind === "secretKeyRef" || source.kind === "configMapKeyRef") {
+      if (!target || target.length > 253 || !DNS_SUBDOMAIN.test(target) || !key || key.length > 253) return null;
+    } else if (source.kind === "fieldRef") {
+      if (!target || target.length > 253) return null;
+    } else if (!target || target.length > 253 || (key && (key.length > 63 || !DNS_LABEL.test(key)))) {
+      return null;
+    }
+    out.push({ name, value: "", valueFrom: { kind: source.kind, name: target, key: key || undefined, optional: source.optional || undefined } });
+  }
+  return out;
+}
+
+function parseSecretNames(value: string): string[] | null {
+  const out = value.split(/[\n,]/).map((item) => item.trim()).filter(Boolean);
+  return out.some((name) => name.length > 253 || !DNS_SUBDOMAIN.test(name)) ? null : Array.from(new Set(out));
+}
+
+function validateContainerMountForms(container: ContainerForm, prefix: string, volumes: VolumeForm[], errors: FormErrors) {
+  const available = new Set(volumes.map((volume) => volume.name));
+  const names = new Set<string>();
+  const paths = new Set<string>();
+  container.volumeMounts.forEach((mount, index) => {
+    const field = `${prefix}.volumeMounts.${index}`;
+    if (!mount.name || !available.has(mount.name)) errors[`${field}.name`] = "请选择已声明的存储卷";
+    if (names.has(mount.name)) errors[`${field}.name`] = "同一容器不能重复挂载同一存储卷";
+    names.add(mount.name);
+    if (!mount.mountPath.startsWith("/") || mount.mountPath.includes("..")) errors[`${field}.mountPath`] = "挂载路径必须是绝对路径且不能包含 ..";
+    if (paths.has(mount.mountPath)) errors[`${field}.mountPath`] = "挂载路径不能重复";
+    paths.add(mount.mountPath);
+    if (mount.subPath.startsWith("/") || mount.subPath.includes("..")) errors[`${field}.subPath`] = "子路径必须是相对路径且不能包含 ..";
+  });
+}
+
+function buildVolumeMounts(values: VolumeMountForm[]): WorkloadVolumeMount[] | null {
+  const names = new Set<string>();
+  const paths = new Set<string>();
+  const out: WorkloadVolumeMount[] = [];
+  for (const mount of values) {
+    if (!mount.name || names.has(mount.name) || !mount.mountPath.startsWith("/") || mount.mountPath.includes("..") || paths.has(mount.mountPath)) return null;
+    names.add(mount.name);
+    paths.add(mount.mountPath);
+    out.push({ name: mount.name, mountPath: mount.mountPath, subPath: mount.subPath.trim() || undefined, readOnly: mount.readOnly });
+  }
+  return out;
+}
+
+function buildProbe(probe: ProbeForm): WorkloadProbe | undefined | null {
+  if (probe.kind === "disabled") return undefined;
+  const initialDelaySeconds = parseOptionalInteger(probe.initialDelaySeconds, 0, 3600);
+  const periodSeconds = parseOptionalInteger(probe.periodSeconds, 1, 3600);
+  const timeoutSeconds = parseOptionalInteger(probe.timeoutSeconds, 1, 3600);
+  const successThreshold = 1;
+  const failureThreshold = parseOptionalInteger(probe.failureThreshold, 1, 10);
+  if (initialDelaySeconds === null || periodSeconds === null || timeoutSeconds === null || failureThreshold === null) return null;
+  const common = { type: probe.kind, command: [] as string[], initialDelaySeconds: initialDelaySeconds ?? 0, periodSeconds: periodSeconds ?? 10, timeoutSeconds: timeoutSeconds ?? 1, successThreshold, failureThreshold: failureThreshold ?? 3 };
+  if (probe.kind === "httpGet") {
+    if (!probe.path.startsWith("/") || !validProbePort(probe.port)) return null;
+    return { ...common, path: probe.path, port: probe.port.trim(), scheme: probe.scheme };
+  }
+  if (probe.kind === "tcpSocket") return validProbePort(probe.port) ? { ...common, port: probe.port.trim() } : null;
+  if (probe.kind === "grpc") {
+    const port = Number(probe.port);
+    if (!Number.isInteger(port) || port < 1 || port > 65535) return null;
+    return { ...common, port: String(port) };
+  }
+  const command = parseLines(probe.command);
+  return command && command.length > 0 ? { ...common, command } : null;
+}
+
+function validateProbeForm(errors: FormErrors, field: string, probe: ProbeForm) {
+  if (probe.kind === "disabled") return;
+  if (probe.kind === "httpGet") {
+    if (!probe.path.startsWith("/")) errors[`${field}.path`] = "路径必须以 / 开头";
+    if (!validProbePort(probe.port)) errors[`${field}.port`] = "端口必须是 1 到 65535 或命名端口";
+  } else if (probe.kind === "tcpSocket") {
+    if (!validProbePort(probe.port)) errors[`${field}.port`] = "端口必须是 1 到 65535 或命名端口";
+  } else if (probe.kind === "grpc") {
+    const port = Number(probe.port);
+    if (!Number.isInteger(port) || port < 1 || port > 65535) errors[`${field}.port`] = "gRPC 端口必须是 1 到 65535";
+  } else if (!parseLines(probe.command)?.length) {
+    errors[`${field}.command`] = "Exec 探针至少需要一个命令参数";
+  }
+  if (parseOptionalInteger(probe.initialDelaySeconds, 0, 3600) === null) errors[`${field}.initialDelaySeconds`] = "必须在 0 到 3600 之间";
+  if (parseOptionalInteger(probe.periodSeconds, 1, 3600) === null) errors[`${field}.periodSeconds`] = "必须在 1 到 3600 之间";
+  if (parseOptionalInteger(probe.timeoutSeconds, 1, 3600) === null) errors[`${field}.timeoutSeconds`] = "必须在 1 到 3600 之间";
+  if (parseOptionalInteger(probe.failureThreshold, 1, 10) === null) errors[`${field}.failureThreshold`] = "必须在 1 到 10 之间";
+}
+
+function validProbePort(value: string): boolean {
+  const port = Number(value);
+  if (Number.isInteger(port)) return port >= 1 && port <= 65535;
+  const trimmed = value.trim();
+  return trimmed.length > 0 && trimmed.length <= 63 && DNS_LABEL.test(trimmed);
 }
 
 function parseLines(value: string): string[] | null {

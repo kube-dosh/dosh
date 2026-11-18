@@ -360,6 +360,7 @@ func (c *Client) GetWorkload(ctx context.Context, kind, namespace, name string) 
 		containers = item.Spec.Template.Spec.Containers
 		initContainers = item.Spec.Template.Spec.InitContainers
 		volumes = item.Spec.Template.Spec.Volumes
+		rollout = daemonSetRolloutStatus(*item)
 		for _, condition := range item.Status.Conditions {
 			conditions = append(conditions, domain.Condition{Type: string(condition.Type), Status: string(condition.Status), Reason: condition.Reason, Message: condition.Message, LastTransitionTime: condition.LastTransitionTime.Time})
 		}
@@ -442,6 +443,23 @@ func statefulSetRolloutStatus(item appsv1.StatefulSet) *domain.WorkloadRolloutSt
 	}
 	if rolling := item.Spec.UpdateStrategy.RollingUpdate; rolling != nil && rolling.Partition != nil {
 		status.Partition = *rolling.Partition
+	}
+	return status
+}
+
+func daemonSetRolloutStatus(item appsv1.DaemonSet) *domain.WorkloadRolloutStatus {
+	status := &domain.WorkloadRolloutStatus{
+		Strategy: string(item.Spec.UpdateStrategy.Type), ObservedGeneration: item.Status.ObservedGeneration,
+		UpdatedReplicas: item.Status.UpdatedNumberScheduled, ReadyReplicas: item.Status.NumberReady,
+		AvailableReplicas: item.Status.NumberAvailable, UnavailableReplicas: item.Status.NumberUnavailable,
+	}
+	if rolling := item.Spec.UpdateStrategy.RollingUpdate; rolling != nil {
+		if rolling.MaxSurge != nil {
+			status.MaxSurge = rolling.MaxSurge.String()
+		}
+		if rolling.MaxUnavailable != nil {
+			status.MaxUnavailable = rolling.MaxUnavailable.String()
+		}
 	}
 	return status
 }
@@ -741,18 +759,31 @@ func (c *Client) SetCronJobSuspend(ctx context.Context, namespace, name string, 
 	return mapKubeError(err)
 }
 
-// UpdateWorkloadRollout changes a Deployment's pause flag and rolling-update
-// parameters using a read-modify-write guarded by resourceVersion. A stale
-// version is idempotent when the requested state is already present.
+// UpdateWorkloadRollout changes supported rollout controls using a
+// read-modify-write guarded by resourceVersion. A stale version is idempotent
+// when the requested state is already present.
 func (c *Client) UpdateWorkloadRollout(ctx context.Context, kind, namespace, name string, update domain.WorkloadRolloutUpdate) error {
 	ctx, cancel := c.withTimeout(ctx)
 	defer cancel()
-	if !strings.EqualFold(kind, "deployment") {
-		return fmt.Errorf("%w: rollout controls are only supported for deployments", domain.ErrUnsupported)
+	switch strings.ToLower(kind) {
+	case "deployment":
+		return c.updateDeploymentRollout(ctx, namespace, name, update)
+	case "statefulset":
+		return c.updateStatefulSetRollout(ctx, namespace, name, update)
+	case "daemonset":
+		return c.updateDaemonSetRollout(ctx, namespace, name, update)
+	default:
+		return fmt.Errorf("%w: rollout controls are not supported for %s", domain.ErrUnsupported, kind)
 	}
+}
+
+func (c *Client) updateDeploymentRollout(ctx context.Context, namespace, name string, update domain.WorkloadRolloutUpdate) error {
 	item, err := c.clientset.AppsV1().Deployments(namespace).Get(ctx, name, metav1.GetOptions{})
 	if err != nil {
 		return mapKubeError(err)
+	}
+	if update.Partition != nil {
+		return fmt.Errorf("%w: partition is only supported for StatefulSets", domain.ErrInvalid)
 	}
 	changed := false
 	if update.Paused != nil && item.Spec.Paused != *update.Paused {
@@ -804,6 +835,104 @@ func (c *Client) UpdateWorkloadRollout(ctx context.Context, kind, namespace, nam
 		return nil
 	}
 	_, err = c.clientset.AppsV1().Deployments(namespace).Update(ctx, item, metav1.UpdateOptions{})
+	return mapKubeError(err)
+}
+
+func (c *Client) updateStatefulSetRollout(ctx context.Context, namespace, name string, update domain.WorkloadRolloutUpdate) error {
+	if update.Paused != nil || update.MaxSurge != "" || update.MaxUnavailable != "" {
+		return fmt.Errorf("%w: StatefulSet rollout control supports partition only", domain.ErrInvalid)
+	}
+	if update.Partition == nil {
+		return fmt.Errorf("%w: partition is required", domain.ErrInvalid)
+	}
+	if *update.Partition < 0 {
+		return fmt.Errorf("%w: partition must not be negative", domain.ErrInvalid)
+	}
+	item, err := c.clientset.AppsV1().StatefulSets(namespace).Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		return mapKubeError(err)
+	}
+	changed := false
+	if item.Spec.UpdateStrategy.Type != appsv1.RollingUpdateStatefulSetStrategyType {
+		item.Spec.UpdateStrategy.Type = appsv1.RollingUpdateStatefulSetStrategyType
+		changed = true
+	}
+	if item.Spec.UpdateStrategy.RollingUpdate == nil {
+		item.Spec.UpdateStrategy.RollingUpdate = &appsv1.RollingUpdateStatefulSetStrategy{}
+		changed = true
+	}
+	if item.Spec.UpdateStrategy.RollingUpdate.Partition == nil || *item.Spec.UpdateStrategy.RollingUpdate.Partition != *update.Partition {
+		partition := *update.Partition
+		item.Spec.UpdateStrategy.RollingUpdate.Partition = &partition
+		changed = true
+	}
+	if update.ResourceVersion != "" && item.ResourceVersion != update.ResourceVersion {
+		if !changed {
+			return nil
+		}
+		return fmt.Errorf("%w: expected %s, got %s", domain.ErrConflict, update.ResourceVersion, item.ResourceVersion)
+	}
+	if !changed {
+		return nil
+	}
+	_, err = c.clientset.AppsV1().StatefulSets(namespace).Update(ctx, item, metav1.UpdateOptions{})
+	return mapKubeError(err)
+}
+
+func (c *Client) updateDaemonSetRollout(ctx context.Context, namespace, name string, update domain.WorkloadRolloutUpdate) error {
+	if update.Paused != nil || update.Partition != nil {
+		return fmt.Errorf("%w: DaemonSet rollout control supports maxSurge and maxUnavailable only", domain.ErrInvalid)
+	}
+	if update.MaxSurge == "" && update.MaxUnavailable == "" {
+		return fmt.Errorf("%w: maxSurge or maxUnavailable is required", domain.ErrInvalid)
+	}
+	item, err := c.clientset.AppsV1().DaemonSets(namespace).Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		return mapKubeError(err)
+	}
+	changed := false
+	if item.Spec.UpdateStrategy.Type != appsv1.RollingUpdateDaemonSetStrategyType {
+		item.Spec.UpdateStrategy.Type = appsv1.RollingUpdateDaemonSetStrategyType
+		changed = true
+	}
+	if item.Spec.UpdateStrategy.RollingUpdate == nil {
+		item.Spec.UpdateStrategy.RollingUpdate = &appsv1.RollingUpdateDaemonSet{}
+		changed = true
+	}
+	if update.MaxSurge != "" {
+		value, err := parseRolloutValue(update.MaxSurge)
+		if err != nil {
+			return err
+		}
+		if item.Spec.UpdateStrategy.RollingUpdate.MaxSurge == nil || item.Spec.UpdateStrategy.RollingUpdate.MaxSurge.String() != value.String() {
+			item.Spec.UpdateStrategy.RollingUpdate.MaxSurge = value
+			changed = true
+		}
+	}
+	if update.MaxUnavailable != "" {
+		value, err := parseRolloutValue(update.MaxUnavailable)
+		if err != nil {
+			return err
+		}
+		if item.Spec.UpdateStrategy.RollingUpdate.MaxUnavailable == nil || item.Spec.UpdateStrategy.RollingUpdate.MaxUnavailable.String() != value.String() {
+			item.Spec.UpdateStrategy.RollingUpdate.MaxUnavailable = value
+			changed = true
+		}
+	}
+	if item.Spec.UpdateStrategy.RollingUpdate.MaxSurge != nil && item.Spec.UpdateStrategy.RollingUpdate.MaxUnavailable != nil &&
+		item.Spec.UpdateStrategy.RollingUpdate.MaxSurge.String() == "0" && item.Spec.UpdateStrategy.RollingUpdate.MaxUnavailable.String() == "0" {
+		return fmt.Errorf("%w: maxSurge and maxUnavailable cannot both be zero", domain.ErrInvalid)
+	}
+	if update.ResourceVersion != "" && item.ResourceVersion != update.ResourceVersion {
+		if !changed {
+			return nil
+		}
+		return fmt.Errorf("%w: expected %s, got %s", domain.ErrConflict, update.ResourceVersion, item.ResourceVersion)
+	}
+	if !changed {
+		return nil
+	}
+	_, err = c.clientset.AppsV1().DaemonSets(namespace).Update(ctx, item, metav1.UpdateOptions{})
 	return mapKubeError(err)
 }
 

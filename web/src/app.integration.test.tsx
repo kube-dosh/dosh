@@ -6,7 +6,7 @@ import { setupServer } from "msw/node";
 import { Toaster } from "sonner";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { routeTree } from "@/router";
-import type { IngressDetail, NodeDetail, Overview, PersistentVolumeClaimDetail, PersistentVolumeDetail, PodDetail, ServiceDetail, SessionResponse, StorageClassDetail, WorkloadDetail, WorkloadSummary } from "@/api/types";
+import type { AutoscalerSummary, DisruptionBudgetSummary, IngressDetail, NodeDetail, Overview, PersistentVolumeClaimDetail, PersistentVolumeDetail, PodDetail, ServiceDetail, SessionResponse, StorageClassDetail, WorkloadDetail, WorkloadSummary } from "@/api/types";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { ThemeProvider } from "@/lib/theme";
 
@@ -34,6 +34,8 @@ const session: SessionResponse = {
       storageclasses: { create: false, update: false, delete: false, scale: false },
       nodes: { create: false, update: true, delete: false, scale: false },
       namespaces: { create: true, update: false, delete: true, scale: false },
+      horizontalpodautoscalers: { create: true, update: true, delete: true, scale: false },
+      poddisruptionbudgets: { create: true, update: true, delete: true, scale: false },
     },
   },
   authMode: "local",
@@ -140,6 +142,7 @@ const server = setupServer(
   http.get("/api/v1/auth/config", () => HttpResponse.json({ mode: "local", providerName: "", loginURL: "" })),
   http.get("/api/v1/session", () => HttpResponse.json(session)),
   http.get("/api/v1/capabilities", () => HttpResponse.json(session.capabilities)),
+  http.get("/api/v1/preferences", () => HttpResponse.json({ favorites: [], recent: [], savedViews: {}, hiddenColumns: {} })),
   http.post("/api/v1/session", () => HttpResponse.json(session)),
   http.delete("/api/v1/session", () => new HttpResponse(null, { status: 204 })),
   http.get("/api/v1/overview", () => HttpResponse.json(overview)),
@@ -161,6 +164,17 @@ const server = setupServer(
   http.get("/api/v1/nodes", () => HttpResponse.json({ items: [{ name: "worker-0001", status: "Ready", roles: ["worker"], internalIP: "192.168.122.200", version: "v1.36.5", osImage: "Fedora", kernelVersion: "6.19", containerRuntime: "containerd://2.3.6", cpuCapacityMilli: 2000, memoryCapacityBytes: 4294967296, podCapacity: 110, podCount: 12, cpuRequestsMilli: 800, memoryRequestsBytes: 1073741824, unschedulable: false, createdAt: "2026-11-02T00:00:00Z" }], meta: { total: 1 } })),
   http.get("/api/v1/nodes/worker-0001", () => HttpResponse.json(nodeDetail)),
   http.get("/api/v1/workloads", () => HttpResponse.json({ items: [workload], meta: { total: 1 } })),
+  http.get("/api/v1/resilience/autoscalers", () => HttpResponse.json({ items: [{
+    name: "web-api", namespace: "default", resourceVersion: "31", targetKind: "Deployment", targetName: "web-api",
+    minReplicas: 2, maxReplicas: 8, currentReplicas: 3, desiredReplicas: 3, status: "Ready",
+    metrics: [{ type: "Resource", resource: "cpu", current: "45%", target: "80%", currentUtilization: 45, targetUtilization: 80 }],
+    conditions: [{ type: "AbleToScale", status: "True", reason: "ReadyForNewScale" }], createdAt: "2026-11-02T00:00:00Z",
+  } satisfies AutoscalerSummary], meta: { total: 1, totalKnown: true, page: 1, pageSize: 1, totalPages: 1, hasMore: false } })),
+  http.get("/api/v1/resilience/disruption-budgets", () => HttpResponse.json({ items: [{
+    name: "web-api", namespace: "default", resourceVersion: "41", minAvailable: "2", selector: { app: "web" },
+    currentHealthy: 3, desiredHealthy: 2, disruptionsAllowed: 1, expectedPods: 3, observedGeneration: 2, status: "Ready",
+    conditions: [{ type: "DisruptionAllowed", status: "True", reason: "SufficientPods" }], createdAt: "2026-11-02T00:00:00Z",
+  } satisfies DisruptionBudgetSummary], meta: { total: 1, totalKnown: true, page: 1, pageSize: 1, totalPages: 1, hasMore: false } })),
   http.get("/api/v1/workloads/deployment/default/web-api", () => HttpResponse.json({ ...workload, name: "web-api", images: ["nginx:alpine"], resourceVersion: "317754", conditions: [], selector: {}, pods: [], containers: [{ name: "web", image: "nginx:alpine" }] })),
   http.post("/api/v1/workloads/deployments/preview", () => HttpResponse.json({ yaml: "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: web-api\n" })),
   http.post("/api/v1/workloads/deployments", () => HttpResponse.json({ ...workload, name: "web-api", images: ["nginx:alpine"] }, { status: 201 })),
@@ -325,6 +339,19 @@ describe("dosh application", () => {
 
     expect(await screen.findByRole("heading", { name: "集群总览" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "YAML 创建" })).toHaveAttribute("href", "/yaml/create");
+  });
+
+  it("renders autoscaler and disruption budget explanations", async () => {
+    renderRoute("/resilience");
+
+    expect(await screen.findByRole("heading", { name: "弹性与可用性" })).toBeInTheDocument();
+    expect(await screen.findByText("web-api", { selector: "h3" })).toBeInTheDocument();
+    expect(screen.getByText("当前 45% · 目标 80%")).toBeInTheDocument();
+    const pdbTab = screen.getByRole("tab", { name: /PDB 中断预算/ });
+    fireEvent.mouseDown(pdbTab);
+    fireEvent.click(pdbTab);
+    expect(await screen.findByText("健康 / 期望")).toBeInTheDocument();
+    expect(screen.getByText("当前允许驱逐 1 个 Pod；节点维护会遵守该上限逐个处理。")).toBeInTheDocument();
   });
 
   it("renders cluster network ranges and links node Pod CIDRs", async () => {
@@ -1221,6 +1248,79 @@ describe("dosh application", () => {
     expect(initContainers[0]).toMatchObject({ name: "init-config", image: "busybox:1.37", command: ["sh", "-c", "wait-for-db"] });
   });
 
+  it("creates a workload with volumes, env sources, probes and runtime settings", async () => {
+    let createBody: Record<string, unknown> | undefined;
+    server.use(
+      http.post("/api/v1/workloads/create/preview", async ({ request }) => {
+        createBody = await request.json() as Record<string, unknown>;
+        return HttpResponse.json({ yaml: "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: advanced\n" });
+      }),
+      http.post("/api/v1/workloads/create", async ({ request }) => {
+        createBody = await request.json() as Record<string, unknown>;
+        return HttpResponse.json({ ...workload, name: "advanced", images: ["nginx:alpine"] }, { status: 201 });
+      }),
+      http.get("/api/v1/workloads/deployment/default/advanced", () => HttpResponse.json({
+        ...configuredWorkload(), name: "advanced", images: ["nginx:alpine"],
+      })),
+    );
+    renderRoute("/workloads?namespace=default&kind=deployment");
+
+    fireEvent.click(await screen.findByRole("button", { name: "创建工作负载" }));
+    const dialog = await screen.findByRole("dialog", { name: "创建工作负载" });
+    fireEvent.change(within(dialog).getByLabelText("Deployment 名称"), { target: { value: "advanced" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "下一步" }));
+    await within(dialog).findByLabelText("容器镜像");
+
+    fireEvent.click(within(dialog).getByRole("button", { name: "添加存储卷" }));
+    fireEvent.change(within(dialog).getByLabelText("卷名称"), { target: { value: "app-config" } });
+    fireEvent.change(within(dialog).getByLabelText("ConfigMap 名称"), { target: { value: "web-config" } });
+
+    fireEvent.click(within(dialog).getByRole("button", { name: "添加挂载" }));
+    fireEvent.change(within(dialog).getByLabelText("挂载路径"), { target: { value: "/etc/app" } });
+    fireEvent.click(within(dialog).getByLabelText("只读挂载"));
+
+    fireEvent.click(within(dialog).getByRole("button", { name: "添加来源" }));
+    fireEvent.change(within(dialog).getByLabelText("变量名称"), { target: { value: "TOKEN" } });
+    fireEvent.change(within(dialog).getByLabelText("来源名称"), { target: { value: "app-secret" } });
+    fireEvent.change(within(dialog).getByLabelText("Key"), { target: { value: "token" } });
+
+    const readinessKind = dialog.querySelector<HTMLButtonElement>('[id="containers.0-readinessProbe-kind"]');
+    expect(readinessKind).not.toBeNull();
+    fireEvent.click(readinessKind!);
+    fireEvent.click(await screen.findByRole("option", { name: "HTTP GET" }));
+    const readinessPath = dialog.querySelector<HTMLInputElement>('[id="containers.0-readinessProbe-path"]');
+    const readinessPort = dialog.querySelector<HTMLInputElement>('[id="containers.0-readinessProbe-port"]');
+    expect(readinessPath).not.toBeNull();
+    expect(readinessPort).not.toBeNull();
+    fireEvent.change(readinessPath!, { target: { value: "/ready" } });
+    fireEvent.change(readinessPort!, { target: { value: "8080" } });
+
+    fireEvent.click(within(dialog).getByText("高级调度与 Pod 安全上下文"));
+    fireEvent.change(within(dialog).getByLabelText("RuntimeClass"), { target: { value: "gvisor" } });
+    fireEvent.change(within(dialog).getByLabelText("优雅终止（秒）"), { target: { value: "30" } });
+    fireEvent.change(within(dialog).getByLabelText("ImagePullSecrets"), { target: { value: "registry-pull-secret" } });
+
+    fireEvent.click(within(dialog).getByRole("button", { name: "下一步" }));
+    expect(await within(dialog).findByText(/kind: Deployment/)).toBeInTheDocument();
+    fireEvent.click(within(dialog).getByRole("button", { name: "创建 Deployment" }));
+    expect(await screen.findByRole("heading", { name: "advanced" })).toBeInTheDocument();
+
+    expect(createBody).toMatchObject({
+      kind: "deployment",
+      name: "advanced",
+      imagePullSecrets: ["registry-pull-secret"],
+      runtimeClassName: "gvisor",
+      terminationGracePeriodSeconds: 30,
+      volumes: [{ name: "app-config", type: "configMap", source: "web-config" }],
+    });
+    const containers = createBody?.containers as Array<Record<string, unknown>>;
+    expect(containers[0]).toMatchObject({
+      volumeMounts: [{ name: "app-config", mountPath: "/etc/app", readOnly: true }],
+      env: [{ name: "TOKEN", value: "", valueFrom: { kind: "secretKeyRef", name: "app-secret", key: "token" } }],
+      readinessProbe: { type: "httpGet", path: "/ready", port: "8080", scheme: "HTTP" },
+    });
+  });
+
   it("shows rollout progress and sends deployment rollout controls", async () => {
     let rolloutBody: Record<string, unknown> | undefined;
     server.use(
@@ -1247,6 +1347,178 @@ describe("dosh application", () => {
 
     await waitFor(() => expect(rolloutBody).toMatchObject({ paused: true, maxSurge: "50%", maxUnavailable: "0", resourceVersion: "317754" }));
     expect(await screen.findByText("Deployment 发布已暂停")).toBeInTheDocument();
+  });
+
+  it("updates StatefulSet partition rollout control", async () => {
+    let rolloutBody: Record<string, unknown> | undefined;
+    server.use(
+      http.get("/api/v1/workloads/statefulset/default/db", () => HttpResponse.json({
+        ...configuredWorkload(),
+        kind: "StatefulSet",
+        name: "db",
+        images: ["postgres:17"],
+        rollout: {
+          strategy: "RollingUpdate", partition: 1, observedGeneration: 5,
+          updatedReplicas: 1, readyReplicas: 3, availableReplicas: 3, unavailableReplicas: 0,
+        },
+      })),
+      http.post("/api/v1/workloads/statefulset/default/db/rollout", async ({ request }) => {
+        rolloutBody = await request.json() as Record<string, unknown>;
+        return HttpResponse.json({ status: "updated" });
+      }),
+    );
+    renderRoute("/workloads/statefulset/default/db");
+
+    fireEvent.click(await screen.findByRole("button", { name: "发布控制" }));
+    const dialog = await screen.findByRole("dialog", { name: "发布控制" });
+    expect(within(dialog).getByLabelText("Partition")).toHaveValue(1);
+    fireEvent.change(within(dialog).getByLabelText("Partition"), { target: { value: "2" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "保存发布设置" }));
+
+    await waitFor(() => expect(rolloutBody).toEqual({ partition: 2, resourceVersion: "317754" }));
+    expect(await screen.findByText("StatefulSet 发布控制已更新")).toBeInTheDocument();
+  });
+
+  it("updates DaemonSet rollout strategy", async () => {
+    let rolloutBody: Record<string, unknown> | undefined;
+    server.use(
+      http.get("/api/v1/workloads/daemonset/default/agent", () => HttpResponse.json({
+        ...configuredWorkload(),
+        kind: "DaemonSet",
+        name: "agent",
+        images: ["agent:2"],
+        rollout: {
+          strategy: "RollingUpdate", maxSurge: "0", maxUnavailable: "1", observedGeneration: 7,
+          updatedReplicas: 5, readyReplicas: 5, availableReplicas: 5, unavailableReplicas: 0,
+        },
+      })),
+      http.post("/api/v1/workloads/daemonset/default/agent/rollout", async ({ request }) => {
+        rolloutBody = await request.json() as Record<string, unknown>;
+        return HttpResponse.json({ status: "updated" });
+      }),
+    );
+    renderRoute("/workloads/daemonset/default/agent");
+
+    fireEvent.click(await screen.findByRole("button", { name: "发布控制" }));
+    const dialog = await screen.findByRole("dialog", { name: "发布控制" });
+    fireEvent.change(within(dialog).getByLabelText("maxSurge"), { target: { value: "10%" } });
+    fireEvent.change(within(dialog).getByLabelText("maxUnavailable"), { target: { value: "2" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "保存发布设置" }));
+
+    await waitFor(() => expect(rolloutBody).toMatchObject({ maxSurge: "10%", maxUnavailable: "2", resourceVersion: "317754" }));
+    expect(await screen.findByText("DaemonSet 发布控制已更新")).toBeInTheDocument();
+  });
+
+  it("creates, edits and deletes autoscalers and disruption budgets", async () => {
+    let hpaCreateBody: Record<string, unknown> | undefined;
+    let hpaUpdateBody: Record<string, unknown> | undefined;
+    let hpaDeleteVersion: string | null = null;
+    let pdbCreateBody: Record<string, unknown> | undefined;
+    let pdbUpdateBody: Record<string, unknown> | undefined;
+    let pdbDeleteVersion: string | null = null;
+    let autoscalers: AutoscalerSummary[] = [{
+      name: "web-api", namespace: "default", resourceVersion: "31", targetKind: "Deployment", targetName: "web-api",
+      minReplicas: 2, maxReplicas: 8, currentReplicas: 3, desiredReplicas: 3, status: "Ready",
+      metrics: [{ type: "Resource", resource: "cpu", current: "45%", target: "80%", currentUtilization: 45, targetUtilization: 80 }],
+      conditions: [{ type: "AbleToScale", status: "True", reason: "ReadyForNewScale" }], createdAt: "2026-11-02T00:00:00Z",
+    }];
+    let disruptionBudgets: DisruptionBudgetSummary[] = [{
+      name: "web-api", namespace: "default", resourceVersion: "41", minAvailable: "2", selector: { app: "web" },
+      currentHealthy: 3, desiredHealthy: 2, disruptionsAllowed: 1, expectedPods: 3, observedGeneration: 2, status: "Ready",
+      conditions: [{ type: "DisruptionAllowed", status: "True", reason: "SufficientPods" }], createdAt: "2026-11-02T00:00:00Z",
+    }];
+    server.use(
+      http.get("/api/v1/resilience/autoscalers", () => HttpResponse.json({ items: autoscalers, meta: { total: autoscalers.length } })),
+      http.post("/api/v1/resilience/autoscalers", async ({ request }) => {
+        hpaCreateBody = await request.json() as Record<string, unknown>;
+        const created = {
+          ...autoscalers[0], name: String(hpaCreateBody.name), resourceVersion: "32", targetName: String(hpaCreateBody.targetName),
+        };
+        autoscalers = [...autoscalers, created];
+        return HttpResponse.json(created, { status: 201 });
+      }),
+      http.put("/api/v1/resilience/autoscalers/default/web-api", async ({ request }) => {
+        hpaUpdateBody = await request.json() as Record<string, unknown>;
+        return HttpResponse.json({ ...autoscalers[0], maxReplicas: 12, resourceVersion: "33" });
+      }),
+      http.delete("/api/v1/resilience/autoscalers/default/web-api", ({ request }) => {
+        hpaDeleteVersion = new URL(request.url).searchParams.get("resourceVersion");
+        return HttpResponse.json({ status: "deleting" }, { status: 202 });
+      }),
+      http.get("/api/v1/resilience/disruption-budgets", () => HttpResponse.json({ items: disruptionBudgets, meta: { total: disruptionBudgets.length } })),
+      http.post("/api/v1/resilience/disruption-budgets", async ({ request }) => {
+        pdbCreateBody = await request.json() as Record<string, unknown>;
+        const created = {
+          ...disruptionBudgets[0], name: String(pdbCreateBody.name), resourceVersion: "42",
+          minAvailable: String(pdbCreateBody.minAvailable), selector: pdbCreateBody.selector as Record<string, string>,
+        };
+        disruptionBudgets = [...disruptionBudgets, created];
+        return HttpResponse.json(created, { status: 201 });
+      }),
+      http.put("/api/v1/resilience/disruption-budgets/default/web-api", async ({ request }) => {
+        pdbUpdateBody = await request.json() as Record<string, unknown>;
+        return HttpResponse.json({ ...disruptionBudgets[0], minAvailable: "80%", resourceVersion: "43" });
+      }),
+      http.delete("/api/v1/resilience/disruption-budgets/default/web-api", ({ request }) => {
+        pdbDeleteVersion = new URL(request.url).searchParams.get("resourceVersion");
+        return HttpResponse.json({ status: "deleting" }, { status: 202 });
+      }),
+    );
+    renderRoute("/resilience?namespace=default");
+
+    expect(await screen.findByText("web-api", { selector: "h3" })).toBeInTheDocument();
+    fireEvent.click(await screen.findByRole("button", { name: "创建 HPA" }));
+    let dialog = await screen.findByRole("dialog", { name: "创建 HPA" });
+    fireEvent.change(within(dialog).getByLabelText("名称"), { target: { value: "worker-hpa" } });
+    fireEvent.click(within(dialog).getByRole("combobox", { name: "选择目标工作负载" }));
+    fireEvent.click(await screen.findByRole("option", { name: "手动输入" }));
+    fireEvent.change(within(dialog).getByLabelText("目标工作负载"), { target: { value: "worker" } });
+    fireEvent.change(within(dialog).getByLabelText("最小副本"), { target: { value: "2" } });
+    fireEvent.change(within(dialog).getByLabelText("最大副本"), { target: { value: "10" } });
+    fireEvent.change(within(dialog).getByLabelText("CPU 利用率目标（%）"), { target: { value: "70" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "创建 HPA" }));
+    await waitFor(() => expect(hpaCreateBody).toMatchObject({
+      name: "worker-hpa", namespace: "default", targetKind: "Deployment", targetName: "worker",
+      minReplicas: 2, maxReplicas: 10, cpuUtilization: 70,
+    }));
+
+    fireEvent.click(screen.getAllByRole("button", { name: "编辑" })[0]);
+    dialog = await screen.findByRole("dialog", { name: "编辑 HPA" });
+    fireEvent.change(within(dialog).getByLabelText("最大副本"), { target: { value: "12" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "保存 HPA" }));
+    await waitFor(() => expect(hpaUpdateBody).toMatchObject({ maxReplicas: 12, resourceVersion: "31" }));
+
+    fireEvent.click(screen.getAllByRole("button", { name: "删除" })[0]);
+    dialog = await screen.findByRole("alertdialog");
+    fireEvent.click(within(dialog).getByRole("button", { name: "确认删除" }));
+    await waitFor(() => expect(hpaDeleteVersion).toBe("31"));
+
+    const pdbTab = screen.getByRole("tab", { name: /PDB 中断预算/ });
+    fireEvent.mouseDown(pdbTab);
+    fireEvent.click(pdbTab);
+    expect(await screen.findByText("健康 / 期望")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "创建 PDB" }));
+    dialog = await screen.findByRole("dialog", { name: "创建 PDB" });
+    fireEvent.change(within(dialog).getByLabelText("名称"), { target: { value: "worker-pdb" } });
+    fireEvent.change(within(dialog).getByLabelText("约束值"), { target: { value: "75%" } });
+    fireEvent.change(within(dialog).getByLabelText("Pod 选择器"), { target: { value: "app=worker" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "创建 PDB" }));
+    await waitFor(() => expect(pdbCreateBody).toMatchObject({
+      name: "worker-pdb", namespace: "default", minAvailable: "75%", selector: { app: "worker" },
+    }));
+
+    fireEvent.click(screen.getAllByRole("button", { name: "编辑" })[0]);
+    dialog = await screen.findByRole("dialog", { name: "编辑 PDB" });
+    fireEvent.change(within(dialog).getByLabelText("约束值"), { target: { value: "80%" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "保存 PDB" }));
+    await waitFor(() => expect(pdbUpdateBody).toMatchObject({
+      name: "web-api", namespace: "default", minAvailable: "80%", selector: { app: "web" }, resourceVersion: "41",
+    }));
+
+    fireEvent.click(screen.getAllByRole("button", { name: "删除" })[0]);
+    dialog = await screen.findByRole("alertdialog");
+    fireEvent.click(within(dialog).getByRole("button", { name: "确认删除" }));
+    await waitFor(() => expect(pdbDeleteVersion).toBe("41"));
   });
 
   it("shows batch status and runs a selected CronJob container with overrides", async () => {

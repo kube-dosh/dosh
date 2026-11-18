@@ -110,6 +110,7 @@ func ValidateWorkloadSpec(spec *domain.WorkloadCreateSpec) error {
 	spec.RegistryID = strings.TrimSpace(spec.RegistryID)
 	spec.PriorityClassName = strings.TrimSpace(spec.PriorityClassName)
 	spec.ServiceAccountName = strings.TrimSpace(spec.ServiceAccountName)
+	spec.RuntimeClassName = strings.TrimSpace(spec.RuntimeClassName)
 	if err := validateDNSLabel("name", spec.Name); err != nil {
 		return err
 	}
@@ -145,7 +146,13 @@ func ValidateWorkloadSpec(spec *domain.WorkloadCreateSpec) error {
 	if err := normalizeWorkloadContainers(spec); err != nil {
 		return err
 	}
+	if err := validateWorkloadVolumes(spec); err != nil {
+		return err
+	}
 	if err := validateContainers(spec, legacySingleContainer); err != nil {
+		return err
+	}
+	if err := validateImagePullSecrets(spec); err != nil {
 		return err
 	}
 	if err := validateScheduling(spec); err != nil {
@@ -183,7 +190,7 @@ func normalizeWorkloadContainers(spec *domain.WorkloadCreateSpec) error {
 			Name: spec.ContainerName, Image: spec.Image, RegistryID: spec.RegistryID, ContainerPort: spec.ContainerPort,
 			CPURequestMilli: spec.CPURequestMilli, CPULimitMilli: spec.CPULimitMilli,
 			MemoryRequestBytes: spec.MemoryRequestBytes, MemoryLimitBytes: spec.MemoryLimitBytes,
-			Env: spec.Env, Command: spec.Command, Args: spec.Args,
+			Env: deploymentEnvVars(spec.Env), Command: spec.Command, Args: spec.Args,
 		}}
 	}
 	if len(spec.InitContainers) > maxContainers || len(spec.Containers) > maxContainers {
@@ -212,8 +219,26 @@ func normalizeWorkloadContainers(spec *domain.WorkloadCreateSpec) error {
 	spec.ContainerPort = first.ContainerPort
 	spec.CPURequestMilli, spec.CPULimitMilli = first.CPURequestMilli, first.CPULimitMilli
 	spec.MemoryRequestBytes, spec.MemoryLimitBytes = first.MemoryRequestBytes, first.MemoryLimitBytes
-	spec.Env = first.Env
+	spec.Env = legacyEnvVars(first.Env)
 	return nil
+}
+
+func legacyEnvVars(values []domain.WorkloadEnvVar) []domain.DeploymentEnvVar {
+	out := make([]domain.DeploymentEnvVar, 0, len(values))
+	for _, value := range values {
+		if value.ValueFrom == nil {
+			out = append(out, domain.DeploymentEnvVar{Name: value.Name, Value: value.Value})
+		}
+	}
+	return out
+}
+
+func deploymentEnvVars(values []domain.DeploymentEnvVar) []domain.WorkloadEnvVar {
+	out := make([]domain.WorkloadEnvVar, 0, len(values))
+	for _, value := range values {
+		out = append(out, domain.WorkloadEnvVar{Name: strings.TrimSpace(value.Name), Value: value.Value})
+	}
+	return out
 }
 
 func validateContainers(spec *domain.WorkloadCreateSpec, legacySingleContainer bool) error {
@@ -274,6 +299,11 @@ func validateContainers(spec *domain.WorkloadCreateSpec, legacySingleContainer b
 				}
 				return validationError(envField, "environment variable value exceeds 1MiB")
 			}
+			if env.ValueFrom != nil {
+				if err := validateEnvValueFromField(fmt.Sprintf("%s.env.%d.valueFrom", field, i), &env); err != nil {
+					return err
+				}
+			}
 			container.Env[i] = env
 		}
 		if err := validateCommandArgs(container.Command, field+".command"); err != nil {
@@ -281,6 +311,18 @@ func validateContainers(spec *domain.WorkloadCreateSpec, legacySingleContainer b
 		}
 		if err := validateCommandArgs(container.Args, field+".args"); err != nil {
 			return err
+		}
+		if err := validateWorkloadContainerVolumes(spec.Volumes, container.VolumeMounts, field+".volumeMounts"); err != nil {
+			return err
+		}
+		for name, probe := range map[string]**domain.WorkloadProbe{
+			"livenessProbe": &container.LivenessProbe, "readinessProbe": &container.ReadinessProbe, "startupProbe": &container.StartupProbe,
+		} {
+			normalized, err := normalizeWorkloadProbe(field+"."+name, *probe)
+			if err != nil {
+				return err
+			}
+			*probe = normalized
 		}
 		return validateContainerSecurityContext(container.SecurityContext, field+".securityContext")
 	}
@@ -297,6 +339,98 @@ func validateContainers(spec *domain.WorkloadCreateSpec, legacySingleContainer b
 			return err
 		}
 		spec.InitContainers[i] = container
+	}
+	return nil
+}
+
+func validateWorkloadVolumes(spec *domain.WorkloadCreateSpec) error {
+	if len(spec.Volumes) > maxContainerMounts {
+		return validationError("volumes", "at most %d volumes are allowed", maxContainerMounts)
+	}
+	seen := make(map[string]struct{}, len(spec.Volumes))
+	for i := range spec.Volumes {
+		volume := &spec.Volumes[i]
+		volume.Name = strings.TrimSpace(volume.Name)
+		volume.Type = strings.TrimSpace(volume.Type)
+		volume.Source = strings.TrimSpace(volume.Source)
+		if err := validateDNSLabel(fmt.Sprintf("volumes.%d.name", i), volume.Name); err != nil {
+			return err
+		}
+		if _, exists := seen[volume.Name]; exists {
+			return validationError(fmt.Sprintf("volumes.%d.name", i), "volume name must be unique")
+		}
+		seen[volume.Name] = struct{}{}
+		switch volume.Type {
+		case "configMap", "secret", "persistentVolumeClaim":
+		default:
+			return validationError(fmt.Sprintf("volumes.%d.type", i), "volume type must be configMap, secret or persistentVolumeClaim")
+		}
+		if volume.Source == "" || len(volume.Source) > 253 || !dnsSubdomainPattern.MatchString(volume.Source) {
+			return validationError(fmt.Sprintf("volumes.%d.source", i), "volume source must be a DNS-1123 subdomain")
+		}
+	}
+	return nil
+}
+
+func validateWorkloadContainerVolumes(volumes []domain.WorkloadVolumeSpec, mounts []domain.WorkloadVolumeMount, field string) error {
+	if len(mounts) > maxContainerMounts {
+		return validationError(field, "at most %d volume mounts are allowed", maxContainerMounts)
+	}
+	available := make(map[string]struct{}, len(volumes))
+	for _, volume := range volumes {
+		available[volume.Name] = struct{}{}
+	}
+	seenNames := make(map[string]struct{}, len(mounts))
+	seenPaths := make(map[string]struct{}, len(mounts))
+	for i := range mounts {
+		mount := &mounts[i]
+		mount.Name = strings.TrimSpace(mount.Name)
+		mount.MountPath = strings.TrimSpace(mount.MountPath)
+		mount.SubPath = strings.TrimSpace(mount.SubPath)
+		if _, exists := available[mount.Name]; !exists {
+			return validationError(fmt.Sprintf("%s.%d.name", field, i), "referenced volume was not declared")
+		}
+		if _, exists := seenNames[mount.Name]; exists {
+			return validationError(fmt.Sprintf("%s.%d.name", field, i), "each volume may be mounted only once per container")
+		}
+		seenNames[mount.Name] = struct{}{}
+		if !strings.HasPrefix(mount.MountPath, "/") || strings.Contains(mount.MountPath, "..") || len(mount.MountPath) > 4096 {
+			return validationError(fmt.Sprintf("%s.%d.mountPath", field, i), "mountPath must be an absolute path without '..'")
+		}
+		if _, exists := seenPaths[mount.MountPath]; exists {
+			return validationError(fmt.Sprintf("%s.%d.mountPath", field, i), "mountPath must be unique within a container")
+		}
+		seenPaths[mount.MountPath] = struct{}{}
+		if mount.SubPath != "" && (strings.HasPrefix(mount.SubPath, "/") || strings.Contains(mount.SubPath, "..") || len(mount.SubPath) > 4096) {
+			return validationError(fmt.Sprintf("%s.%d.subPath", field, i), "subPath must be relative and must not contain '..'")
+		}
+	}
+	return nil
+}
+
+func validateImagePullSecrets(spec *domain.WorkloadCreateSpec) error {
+	if len(spec.ImagePullSecrets) > 32 {
+		return validationError("imagePullSecrets", "at most 32 image pull secrets are allowed")
+	}
+	seen := make(map[string]struct{}, len(spec.ImagePullSecrets))
+	out := make([]string, 0, len(spec.ImagePullSecrets))
+	for i, secret := range spec.ImagePullSecrets {
+		secret = strings.TrimSpace(secret)
+		if secret == "" || len(secret) > 253 || !dnsSubdomainPattern.MatchString(secret) {
+			return validationError(fmt.Sprintf("imagePullSecrets.%d", i), "image pull secret name must be a DNS-1123 subdomain")
+		}
+		if _, exists := seen[secret]; exists {
+			continue
+		}
+		seen[secret] = struct{}{}
+		out = append(out, secret)
+	}
+	spec.ImagePullSecrets = out
+	if spec.RuntimeClassName != "" && (len(spec.RuntimeClassName) > 253 || !dnsSubdomainPattern.MatchString(spec.RuntimeClassName)) {
+		return validationError("runtimeClassName", "runtimeClassName must be a DNS-1123 subdomain")
+	}
+	if spec.TerminationGracePeriod != nil && (*spec.TerminationGracePeriod < 0 || *spec.TerminationGracePeriod > 86400) {
+		return validationError("terminationGracePeriodSeconds", "terminationGracePeriodSeconds must be between 0 and 86400")
 	}
 	return nil
 }
