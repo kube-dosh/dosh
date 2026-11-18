@@ -746,6 +746,62 @@ func TestCreateDeploymentMapsAlreadyExistsAndPreviewMatches(t *testing.T) {
 	}
 }
 
+func TestWorkloadCreateObjectsCoverAllSupportedKinds(t *testing.T) {
+	spec := domain.WorkloadCreateSpec{
+		Kind: "statefulset", Name: "api", Namespace: "prod", Replicas: 3, ServiceName: "api-headless",
+		Schedule: "*/5 * * * *", ConcurrencyPolicy: "Forbid", Suspend: true,
+		ContainerName: "api", Image: "registry.test/api:1", ContainerPort: 8080,
+		CPURequestMilli: 100, CPULimitMilli: 500, MemoryRequestBytes: 128 << 20, MemoryLimitBytes: 512 << 20,
+	}
+
+	deployment := deploymentForCreate(spec)
+	if deployment.Spec.Replicas == nil || *deployment.Spec.Replicas != 3 || deployment.Spec.Template.Spec.Containers[0].Name != "api" {
+		t.Fatalf("deployment = %#v", deployment)
+	}
+	statefulSet := statefulSetForCreate(spec)
+	if statefulSet.Spec.ServiceName != "api-headless" || statefulSet.Spec.Selector == nil || statefulSet.Spec.Selector.MatchLabels[managedByNameLabel] != "api" {
+		t.Fatalf("statefulset = %#v", statefulSet)
+	}
+	daemonSet := daemonSetForCreate(spec)
+	if daemonSet.Spec.Selector == nil || daemonSet.Spec.Template.Spec.Containers[0].Image != "registry.test/api:1" {
+		t.Fatalf("daemonset = %#v", daemonSet)
+	}
+	job := jobForCreate(spec)
+	if job.Spec.Template.Spec.RestartPolicy != corev1.RestartPolicyNever || job.Spec.Template.Labels[managedByLabel] != "dosh" {
+		t.Fatalf("job = %#v", job)
+	}
+	cronJob := cronJobForCreate(spec)
+	if cronJob.Spec.Schedule != "*/5 * * * *" || cronJob.Spec.ConcurrencyPolicy != batchv1.ForbidConcurrent || cronJob.Spec.Suspend == nil || !*cronJob.Spec.Suspend {
+		t.Fatalf("cronjob = %#v", cronJob)
+	}
+	if cronJob.Spec.JobTemplate.Spec.Template.Spec.RestartPolicy != corev1.RestartPolicyOnFailure {
+		t.Fatalf("cronjob restart policy = %q", cronJob.Spec.JobTemplate.Spec.Template.Spec.RestartPolicy)
+	}
+}
+
+func TestRunCronJobOnceCopiesTemplateAndAddsManagementMetadata(t *testing.T) {
+	cronJob := &batchv1.CronJob{
+		ObjectMeta: metav1.ObjectMeta{Name: "backup", Namespace: "prod"},
+		Spec: batchv1.CronJobSpec{JobTemplate: batchv1.JobTemplateSpec{
+			ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"team": "platform"}},
+			Spec: batchv1.JobSpec{Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{
+				RestartPolicy: corev1.RestartPolicyOnFailure,
+				Containers:    []corev1.Container{{Name: "backup", Image: "backup:1"}},
+			}}},
+		}},
+	}
+	job := jobFromCronJobTemplate(*cronJob)
+	if !strings.HasPrefix(job.GenerateName, "backup-manual-") || job.Namespace != "prod" {
+		t.Fatalf("job metadata = %#v", job.ObjectMeta)
+	}
+	if job.Labels["team"] != "platform" || job.Labels[managedByLabel] != "dosh" || job.Annotations["dosh.io/run-from-cronjob"] != "backup" {
+		t.Fatalf("job labels=%#v annotations=%#v", job.Labels, job.Annotations)
+	}
+	if job.Spec.Template.Spec.Containers[0].Image != "backup:1" || job.Spec.Template.Spec.RestartPolicy != corev1.RestartPolicyOnFailure {
+		t.Fatalf("job pod template = %#v", job.Spec.Template)
+	}
+}
+
 func TestListWorkloadRevisionsFiltersOwnedDeploymentReplicaSets(t *testing.T) {
 	deployment := testDeployment()
 	deployment.UID = "deployment-uid"

@@ -1,5 +1,6 @@
 import type {
   AccessReview,
+  AuditExportParams,
   AuditRecord,
   AuthConfig,
   Capabilities,
@@ -78,6 +79,7 @@ import type {
   StorageClassDetail,
   UserPreferences,
   WorkloadDetail,
+  WorkloadCreateInput,
   WorkloadContainerConfigUpdateInput,
   WorkloadImageUpdateInput,
   WorkloadProbe,
@@ -340,6 +342,25 @@ async function listRequest<T>(path: string): Promise<ListResponse<T>> {
   return normalizeList(await request<ListResponse<T>>(path));
 }
 
+async function download(path: string): Promise<{ blob: Blob; filename: string }> {
+  const response = await fetch(path, { credentials: "same-origin", headers: { Accept: "text/csv, application/json" } });
+  if (!response.ok) {
+    let problem: Partial<Problem> = {};
+    try {
+      problem = (await response.json()) as Problem;
+    } catch {
+      problem = { code: "request_failed", message: response.statusText };
+    }
+    if (response.status === 401) notifyUnauthorized();
+    throw new ApiError(response.status, problem);
+  }
+  const disposition = response.headers.get("Content-Disposition") ?? "";
+  return {
+    blob: await response.blob(),
+    filename: /filename="?([^";]+)"?/i.exec(disposition)?.[1] ?? "dosh-audit-export",
+  };
+}
+
 export const api = {
   authConfig: () => request<AuthConfig>("/api/v1/auth/config"),
   async login(username: string, password: string): Promise<SessionResponse> {
@@ -380,6 +401,11 @@ export const api = {
     };
   },
   auditEvents: (params?: ListParams) => listRequest<AuditRecord>(`/api/v1/audit-events${query(params)}`),
+  auditActions: async () => {
+    const value = await request<{ items?: string[] }>("/api/v1/audit-events/actions");
+    return list(value.items);
+  },
+  exportAuditEvents: (params: AuditExportParams) => download(`/api/v1/audit-events/export${query({ namespace: params.namespace, q: params.q, action: params.action, result: params.result, format: params.format })}`),
   nodes: (params?: ListParams) => listRequest<NodeSummary>(`/api/v1/nodes${query(params)}`),
   node: async (name: string) => normalizeNodeDetail(await request<NodeDetail>(`/api/v1/nodes/${encodeURIComponent(name)}`)),
   diagnose: (kind: string, name: string, namespace?: string) => request<Diagnosis>(
@@ -413,6 +439,12 @@ export const api = {
     request<WorkloadSummary>("/api/v1/workloads/deployments", { method: "POST", body: JSON.stringify(input) }),
   previewDeployment: (input: DeploymentCreateInput) =>
     request<DeploymentPreview>("/api/v1/workloads/deployments/preview", { method: "POST", body: JSON.stringify(input) }),
+  createWorkload: (input: WorkloadCreateInput) =>
+    request<WorkloadSummary>("/api/v1/workloads/create", { method: "POST", body: JSON.stringify(input) }),
+  previewWorkload: (input: WorkloadCreateInput) =>
+    request<DeploymentPreview>("/api/v1/workloads/create/preview", { method: "POST", body: JSON.stringify(input) }),
+  runCronJobOnce: (namespace: string, name: string) =>
+    request<WorkloadSummary>(`/api/v1/workloads/cronjob/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}/run`, { method: "POST" }),
   scaleWorkload: (kind: string, namespace: string, name: string, replicas: number) =>
     request<{ status: string }>(`/api/v1/workloads/${kind}/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}/scale`, {
       method: "POST",

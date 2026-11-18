@@ -5,7 +5,7 @@ import { createColumnHelper } from "@tanstack/react-table";
 import { Boxes, CircleDot, Eye, FileCode2, Loader2, Minus, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/api/client";
-import type { WorkloadSummary } from "@/api/types";
+import type { WorkloadCreateKind, WorkloadSummary } from "@/api/types";
 import { DataTable } from "@/components/data/data-table";
 import { ErrorState } from "@/components/feedback/states";
 import { StatusBadge } from "@/components/feedback/status-badge";
@@ -25,7 +25,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useCapabilities } from "@/features/auth/use-session";
-import { DeploymentCreateDialog } from "@/features/workloads/deployment-create-dialog";
+import { WorkloadCreateDialog } from "@/features/workloads/workload-create-dialog";
 import { cursorPaginationProps, retryListQuery, useCursorPagination } from "@/hooks/use-cursor-pagination";
 import { workloadCapabilities } from "@/lib/capabilities";
 import { formatAge } from "@/lib/utils";
@@ -59,7 +59,8 @@ export function WorkloadsPage() {
     refetchInterval: 20_000,
   });
   const capabilities = useCapabilities(namespace || undefined).data;
-  const deploymentCaps = workloadCapabilities(capabilities, "deployment");
+  const createKinds = kinds.filter((item) => workloadCapabilities(capabilities, item).create);
+  const initialCreateKind = (kinds as readonly string[]).includes(kind) ? kind as WorkloadCreateKind : undefined;
   const refresh = async () => { await query.refetch(); await queryClient.invalidateQueries({ queryKey: ["workloads"] }); };
   const scale = useMutation({
     mutationFn: () => api.scaleWorkload(scaling!.kind.toLowerCase(), scaling!.namespace, scaling!.name, Number(replicas)),
@@ -92,7 +93,7 @@ export function WorkloadsPage() {
         breadcrumb="工作负载 / 全部工作负载"
         description="统一查看并管理工作负载 Deployment、StatefulSet、DaemonSet、Job 和 CronJob。"
         actions={<>
-          {deploymentCaps.create ? <Button onClick={() => setCreateOpen(true)}><Plus className="h-4 w-4" />创建 Deployment</Button> : null}
+          {createKinds.length ? <Button onClick={() => setCreateOpen(true)}><Plus className="h-4 w-4" />创建工作负载</Button> : null}
           <Button variant="outline" asChild><Link to="/pods"><CircleDot className="h-4 w-4" />Pod 实例</Link></Button>
         </>}
       />
@@ -133,7 +134,7 @@ export function WorkloadsPage() {
         onRowClick={(row) => void navigate({ to: "/workloads/$kind/$namespace/$name", params: { kind: row.kind.toLowerCase(), namespace: row.namespace, name: row.name } })}
         empty={<div className="flex flex-col items-center gap-2"><Boxes className="h-6 w-6" /><span>没有匹配的工作负载</span></div>}
       />
-      <DeploymentCreateDialog open={createOpen} onOpenChange={setCreateOpen} initialNamespace={namespace} />
+      <WorkloadCreateDialog open={createOpen} onOpenChange={setCreateOpen} initialNamespace={namespace} initialKind={initialCreateKind} capabilities={capabilities} />
       <Dialog open={Boolean(scaling)} onOpenChange={(open) => { if (!open) setScaling(undefined); }}>
         <DialogContent className="max-w-md">
           <DialogHeader><DialogTitle>调整副本数</DialogTitle><DialogDescription>{scaling?.namespace}/{scaling?.name} · 当前期望副本数 {scaling?.desired}</DialogDescription></DialogHeader>

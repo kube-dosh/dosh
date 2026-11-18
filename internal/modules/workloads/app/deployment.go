@@ -26,54 +26,81 @@ var (
 	labelPrefixPattern = regexp.MustCompile(`^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$`)
 )
 
-// CreateDeployment validates the complete request before any Kubernetes write,
-// performs a server-side dry run, and only then creates the Deployment. A
-// failed dry run therefore never leaves a partial resource behind.
-func (s *Service) CreateDeployment(ctx context.Context, actor domain.Actor, spec domain.DeploymentCreateSpec) (domain.WorkloadSummary, error) {
-	access := workloadAccess("deployment", "create", strings.TrimSpace(spec.Namespace), "", "")
-	if err := s.authorize(ctx, actor, "create", "deployment", spec.Namespace, spec.Name, access); err != nil {
+// CreateWorkload validates the complete request before any Kubernetes write,
+// performs a server-side dry run, and only then creates the workload. A failed
+// dry run therefore never leaves a partial resource behind.
+func (s *Service) CreateWorkload(ctx context.Context, actor domain.Actor, spec domain.WorkloadCreateSpec) (domain.WorkloadSummary, error) {
+	spec.Kind = normalizeCreateKind(spec.Kind)
+	if err := ValidateKind(spec.Kind); err != nil {
+		validationErr := validationError("kind", "unsupported workload kind %q", spec.Kind)
+		s.audit(ctx, actor, "create", spec.Kind, spec.Namespace, spec.Name, validationErr)
+		return domain.WorkloadSummary{}, validationErr
+	}
+	access := workloadAccess(spec.Kind, "create", strings.TrimSpace(spec.Namespace), "", "")
+	if err := s.authorize(ctx, actor, "create", spec.Kind, spec.Namespace, spec.Name, access); err != nil {
 		return domain.WorkloadSummary{}, err
 	}
-	if err := ValidateDeploymentSpec(&spec); err != nil {
-		s.audit(ctx, actor, "create", "deployment", spec.Namespace, spec.Name, err)
+	if err := ValidateWorkloadSpec(&spec); err != nil {
+		s.audit(ctx, actor, "create", spec.Kind, spec.Namespace, spec.Name, err)
 		return domain.WorkloadSummary{}, err
 	}
 	if err := s.applyImagePullSecret(ctx, actor, spec.RegistryID, spec.Image, &spec.ImagePullSecrets); err != nil {
-		s.audit(ctx, actor, "create", "deployment", spec.Namespace, spec.Name, err)
+		s.audit(ctx, actor, "create", spec.Kind, spec.Namespace, spec.Name, err)
 		return domain.WorkloadSummary{}, err
 	}
-	if _, err := s.repository.CreateDeployment(ctx, spec, true); err != nil {
-		s.audit(ctx, actor, "create", "deployment", spec.Namespace, spec.Name, err)
+	if _, err := s.repository.CreateWorkload(ctx, spec, true); err != nil {
+		s.audit(ctx, actor, "create", spec.Kind, spec.Namespace, spec.Name, err)
 		return domain.WorkloadSummary{}, err
 	}
-	summary, err := s.repository.CreateDeployment(ctx, spec, false)
-	s.audit(ctx, actor, "create", "deployment", spec.Namespace, spec.Name, err)
+	summary, err := s.repository.CreateWorkload(ctx, spec, false)
+	s.audit(ctx, actor, "create", spec.Kind, spec.Namespace, spec.Name, err)
 	return summary, err
 }
 
-// PreviewDeployment returns the exact object the create path would submit,
+// PreviewWorkload returns the exact object the create path would submit,
 // without writing to Kubernetes. It enforces the same create permission and
 // validation rules as the real request.
-func (s *Service) PreviewDeployment(ctx context.Context, actor domain.Actor, spec domain.DeploymentCreateSpec) (string, error) {
-	access := workloadAccess("deployment", "create", strings.TrimSpace(spec.Namespace), "", "")
-	if err := s.authorize(ctx, actor, "preview", "deployment", spec.Namespace, spec.Name, access); err != nil {
+func (s *Service) PreviewWorkload(ctx context.Context, actor domain.Actor, spec domain.WorkloadCreateSpec) (string, error) {
+	spec.Kind = normalizeCreateKind(spec.Kind)
+	if err := ValidateKind(spec.Kind); err != nil {
+		return "", validationError("kind", "unsupported workload kind %q", spec.Kind)
+	}
+	access := workloadAccess(spec.Kind, "create", strings.TrimSpace(spec.Namespace), "", "")
+	if err := s.authorize(ctx, actor, "preview", spec.Kind, spec.Namespace, spec.Name, access); err != nil {
 		return "", err
 	}
-	if err := ValidateDeploymentSpec(&spec); err != nil {
+	if err := ValidateWorkloadSpec(&spec); err != nil {
 		return "", err
 	}
 	if err := s.applyImagePullSecret(ctx, actor, spec.RegistryID, spec.Image, &spec.ImagePullSecrets); err != nil {
 		return "", err
 	}
-	return s.repository.PreviewDeployment(ctx, spec)
+	return s.repository.PreviewWorkload(ctx, spec)
 }
 
-// ValidateDeploymentSpec normalizes safe whitespace and rejects inputs that are
+func (s *Service) CreateDeployment(ctx context.Context, actor domain.Actor, spec domain.DeploymentCreateSpec) (domain.WorkloadSummary, error) {
+	spec.Kind = "deployment"
+	return s.CreateWorkload(ctx, actor, spec)
+}
+
+func (s *Service) PreviewDeployment(ctx context.Context, actor domain.Actor, spec domain.DeploymentCreateSpec) (string, error) {
+	spec.Kind = "deployment"
+	return s.PreviewWorkload(ctx, actor, spec)
+}
+
+// ValidateWorkloadSpec normalizes safe whitespace and rejects inputs that are
 // invalid or unsafe before the Kubernetes dry-run boundary. API Server dry-run
 // remains authoritative for schema checks outside the supported wizard fields.
-func ValidateDeploymentSpec(spec *domain.DeploymentCreateSpec) error {
+func ValidateWorkloadSpec(spec *domain.WorkloadCreateSpec) error {
+	spec.Kind = normalizeCreateKind(spec.Kind)
+	if err := ValidateKind(spec.Kind); err != nil {
+		return validationError("kind", "unsupported workload kind %q", spec.Kind)
+	}
 	spec.Name = strings.TrimSpace(spec.Name)
 	spec.Namespace = strings.TrimSpace(spec.Namespace)
+	spec.ServiceName = strings.TrimSpace(spec.ServiceName)
+	spec.Schedule = strings.TrimSpace(spec.Schedule)
+	spec.ConcurrencyPolicy = strings.TrimSpace(spec.ConcurrencyPolicy)
 	spec.ContainerName = strings.TrimSpace(spec.ContainerName)
 	spec.Image = strings.TrimSpace(spec.Image)
 	spec.RegistryID = strings.TrimSpace(spec.RegistryID)
@@ -89,8 +116,30 @@ func ValidateDeploymentSpec(spec *domain.DeploymentCreateSpec) error {
 	if err := validateDNSLabel("containerName", spec.ContainerName); err != nil {
 		return err
 	}
-	if spec.Replicas < 0 || spec.Replicas > maxReplicas {
+	if spec.Kind == "daemonset" || spec.Kind == "job" || spec.Kind == "cronjob" {
+		spec.Replicas = 0
+	} else if spec.Replicas < 0 || spec.Replicas > maxReplicas {
 		return validationError("replicas", "replicas must be between 0 and %d", maxReplicas)
+	}
+	if spec.Kind == "statefulset" {
+		if spec.ServiceName == "" {
+			spec.ServiceName = spec.Name
+		}
+		if err := validateDNSLabel("serviceName", spec.ServiceName); err != nil {
+			return err
+		}
+	}
+	if spec.Kind == "cronjob" {
+		if spec.Schedule == "" || len(spec.Schedule) > 100 || strings.ContainsAny(spec.Schedule, "\r\n\t") {
+			return validationError("schedule", "schedule is required and must be a single-line cron expression")
+		}
+		switch spec.ConcurrencyPolicy {
+		case "", "Allow":
+			spec.ConcurrencyPolicy = "Allow"
+		case "Forbid", "Replace":
+		default:
+			return validationError("concurrencyPolicy", "concurrencyPolicy must be Allow, Forbid or Replace")
+		}
 	}
 	if spec.Image == "" || len(spec.Image) > 512 || !imagePattern.MatchString(spec.Image) {
 		return validationError("image", "image must be a valid container image reference (maximum 512 characters)")
@@ -133,7 +182,7 @@ func ValidateDeploymentSpec(spec *domain.DeploymentCreateSpec) error {
 	return nil
 }
 
-func validateResources(spec domain.DeploymentCreateSpec) error {
+func validateResources(spec domain.WorkloadCreateSpec) error {
 	if spec.CPURequestMilli < 0 || spec.CPULimitMilli < 0 || spec.CPURequestMilli > maxCPURequestMilli || spec.CPULimitMilli > maxCPURequestMilli {
 		return validationError("cpu", "CPU request and limit must be between 0 and %dm", maxCPURequestMilli)
 	}
@@ -147,6 +196,15 @@ func validateResources(spec domain.DeploymentCreateSpec) error {
 		return validationError("memoryLimitBytes", "memory limit must be greater than or equal to the request")
 	}
 	return nil
+}
+
+func ValidateDeploymentSpec(spec *domain.DeploymentCreateSpec) error {
+	spec.Kind = "deployment"
+	return ValidateWorkloadSpec(spec)
+}
+
+func normalizeCreateKind(kind string) string {
+	return strings.ToLower(strings.TrimSpace(kind))
 }
 
 func validateDNSLabel(field, value string) error {

@@ -56,7 +56,8 @@
 | 浏览器测试基础设施 | `scripts/run-playwright-container.sh`、`scripts/create-source-binding.sh`、`make playwright-check`；单 worker、`retries=0`、每浏览器独立容器、默认 `4g` 内存 / `2` CPU（硬上限 `6g` / `4` CPU），私有 `1g` shm、`2048` PID、20 分钟硬超时、禁止宿主 IPC、宿主级 `flock` 禁止重叠运行，并拒绝并发/重试覆盖；performance 项目也必须经 runner 且仅允许 performance 配置 | v2.46 当前候选已完成 mock Chromium/Firefox/WebKit 各 38/38，以及真实 OIDC Chromium/Firefox/WebKit 各 16/16；WebKit 在隔离 runner 串行执行。v2.45 及更早结果不能继承。所有配置均为 `workers=1`、`retries=0` |
 | 前一完整门禁候选（仅历史参考） | App 镜像 `192.168.122.10:5000/dosh/dosh:0.1.3-rc-20261102153511`，digest `sha256:47983a7aedf46d683f56982b0f352a684ae81d126b3390eada1b9bae0ba4312e` | retry、Metrics、30 分钟 soak、审计 Webhook/SIGTERM、rollback/restore 已通过；不得替换当前候选证据，v2.45 未复跑这些专项 |
 | 历史候选（不代表当前源码） | `0.1.3-rc-1793626263`、`0.1.3-oidc-e2e-1793622219` 等早期镜像及其 digest；仅用于历史回归参考 | 不得用于当前候选放行；审计 CA/Token、动态集群上下文和 Helm digest 门禁都晚于这些镜像 |
-| Deployment 创建向导 | domain DTO、app 校验/授权/审计、API Server Dry Run、YAML 预览、三步前端向导、409 `already_exists` 已实现 | v2.46 当前候选的 mock Chromium/Firefox/WebKit 各 38/38、真实 OIDC 各 16/16 和专用工作负载生命周期均包含向导创建、扩容、更新、重启和删除 |
+| 通用工作负载创建 | 支持 Deployment、StatefulSet、DaemonSet、Job、CronJob 的领域校验、授权、审计、API Server Dry Run、YAML 预览和三步前端向导；支持 StatefulSet Headless Service 与 CronJob 调度参数，保留 Deployment 专用接口兼容 | 本轮本地通过 Go 全量测试、Vitest、构建/包体检查和 Chromium/Firefox 定向 E2E；尚未提交、推送、部署或进行生产发布 |
+| 审计动作目录与导出 | 动作筛选目录由服务端真实审计记录生成；当前筛选结果可导出 CSV/JSON，CSV 防公式注入，导出动作自身纳入审计 | 本轮本地通过 Go 全量测试、Vitest、构建/包体检查和 Chromium/Firefox 定向 E2E；尚未提交、推送、部署或进行生产发布 |
 | 节点运维 | `POST /nodes/{name}/cordon`、`POST /nodes/{name}/uncordon`、`nodeCordon` capability、详情页二次确认、空操作幂等和条件写权限已实现 | 新候选在隔离 Release 通过 viewer/operator 403、admin 200、kubectl `unschedulable` 对账、恢复调度、审计 `denied/success` 和 requestId；生产节点未被测试 |
 | API 契约增量 | Deployment 创建、节点调度、事件对象过滤、列表元数据、存储详情、命名空间配额/限制详情、审计历史、镜像更新和 CronJob 暂停/恢复已写入 OpenAPI，生成的 TS 类型与契约同步 | 当前 App/OpenAPI 为 `0.1.4`，44 paths / 59 schemas；`make api-check` 已通过 |
 | 架构与路由护栏 | `make arch` 已规则化检查依赖方向、跨模块 import、Router 创建位置、`init()` 路由、proxy/通配路由和环境变量访问；`TestRouteInventoryMatchesOpenAPI` 与 `TestModuleRoutesAreScoped` 已通过 | 本地架构门禁已验收；CI 真跑待完成 |
@@ -879,13 +880,13 @@
 | WBS-3.2 工作负载与 Pod | 白名单 kind、并发 resourceVersion、Pod 日志流、URL 筛选状态 | `internal/modules/workloads`、`internal/platform/kube/{workloads,pods}.go`、`web/src/features/workloads/*` | app/http/kube fake 测试、路由测试、Vitest | 真实集群列表/详情/扩容/重启/删除/日志、409 冲突 | 实验室已验收 |
 | WBS-4.1 事件与日志流 | SSE 与日志都采用请求 context 生命周期；客户端断开即释放；不缓存敏感内容 | `internal/modules/events`、workloads logs、`web/src/features/workloads/log-viewer.tsx` | SSE 帧、cancel、断开和首批日志测试 | 临时 ConfigMap 事件、CoreDNS 日志、断线重连 | v2.44 历史候选 30 分钟 soak 实验室已验收；v2.45 未复跑，生产同等并发待复验 |
 | WBS-4.7 日志与事件安全回归 | 日志和事件只作为文本渲染；ANSI/OSC/DCS/C0-C1 控制序列跨 chunk 净化；日志不进入浏览器持久存储 | `web/src/features/workloads/{log-sanitizer.ts,log-viewer.tsx}`、`web/src/features/workloads/*.test.*`、`web/e2e/dosh.spec.ts` | `npm test`、`npm run typecheck`、受限容器 Chromium/Firefox Playwright、源码静态扫描 | HTML/`javascript:` OSC 不创建 DOM、不执行脚本；Vitest 46/46、mock 各 34/34 | v2.40 实验室已验收 |
-| WBS-4.8 审计历史查询 | 管理员可见当前实例最近 1000 条审计记录；有界环形缓冲、进程内快照；只做排查入口，不替代 stdout/SIEM/WORM | `internal/domain/types.go`、`internal/platform/audit/history.go`、`internal/modules/audithistory/**`、`internal/bootstrap/{app,router,routes_test}.go`、`api/openapi.yaml`、`web/src/features/audit/*`、`web/src/router.tsx` | app/http/audit race 测试；OpenAPI/TS typecheck；Vitest/MSW；mock Chromium/Firefox；真实 OIDC 权限/过滤/分页/排序/400；真实本地认证 | 未认证 401、viewer/operator 403、admin 200；登录、scale、Secret reveal、denied/failure 可查询；重启后清空且有容量上界 | v2.45 当前候选实验室已验收；企业 SIEM、持久化/WORM 与生产发布仍未验收 |
+| WBS-4.8 审计历史查询与导出 | 管理员可见当前实例最近 1000 条审计记录；有界环形缓冲、进程内快照；动作目录由真实记录生成；当前筛选快照可导出 CSV/JSON，CSV 防公式注入并审计导出动作；只做排查入口，不替代 stdout/SIEM/WORM | `internal/domain/types.go`、`internal/platform/audit/history.go`、`internal/modules/audithistory/**`、`internal/bootstrap/{app,router,routes_test}.go`、`api/openapi.yaml`、`web/src/features/audit/*`、`web/src/router.tsx` | app/http/audit race 测试；OpenAPI/TS typecheck；Vitest/MSW；mock Chromium/Firefox；真实 OIDC 权限/过滤/分页/排序/400；真实本地认证 | 未认证 401、viewer/operator 403、admin 200；登录、scale、Secret reveal、denied/failure 可查询；重启后清空且有容量上界；动作目录与导出快照一致 | 本轮本地测试与 Chromium/Firefox 定向 E2E 通过；企业 SIEM、持久化/WORM 与生产发布仍未验收 |
 | WBS-4.2 配置与 Secret | 列表只返回元数据；点击“查看明文”可直接 reveal，仍需敏感读权限、`no-store` 和审计 | `internal/modules/configuration`、`platform/kube/configuration.go`、配置页 | 脱敏/reveal/授权/审计测试 | 真实 Secret reveal 与 YAML 脱敏 | 实验室已验收；企业 IdP 待复验 |
 | WBS-5.1 安全写操作 | 前端确认 + 后端授权 + CSRF + audit；写请求不自动重试 | `internal/modules/workloads/app/service.go`、`platform/kube/workloads.go`、`scripts/e2e-workload-lifecycle.sh` | scale/restart/delete 成功、400、403、409、审计测试；当前 digest 独立夹具对账 | `make e2e-workload-lifecycle`：预览→创建→扩容→镜像更新→重启→删除，kubectl/审计/清理全部通过 | 当前候选实验室已验收；证据见 21.2.36 |
 | WBS-5.8 工作负载镜像更新 | 仅 Deployment/StatefulSet/DaemonSet；容器级镜像 DTO；GET→resourceVersion 校验→typed Update；旧版本且目标镜像不同返回 409，目标已达成时幂等成功；Job/CronJob 501；独立 `updateImage` capability 和 `update-image` 审计 | `internal/domain/{types}.go`、`workloads/app/{service,image}.go`、`workloads/http/handler.go`、`platform/kube/workloads.go`、`api/openapi.yaml`、`web/src/features/workloads/workload-detail-page.tsx` | app/http/kube 定向测试、fake client 冲突/幂等/缺失容器、OpenAPI/TS typecheck、Vitest 51/51、隔离 mock Chromium/Firefox 各 37/37、隔离集群 kubectl 对账 | 隔离集群更新三种工作负载、kubectl 对账、其他容器不变、409 不覆盖、Job/CronJob 501、审计检索 | 已完成当前候选真实隔离集群验收；证据见 21.2.35 |
 | WBS-5.9 CronJob 暂停/恢复 | 仅 CronJob；专用 `suspend`/`resume` 用例；独立 `suspendCronJob` capability；GET→resourceVersion 校验→typed Update；目标状态未生效的旧版本返回 409，目标状态已生效时幂等成功；非 CronJob 501；审计动作分别为 `suspend`/`resume` | `internal/domain/types.go`、`workloads/app/{service,suspend}.go`、`workloads/http/handler.go`、`platform/kube/workloads.go`、`api/openapi.yaml`、`web/src/features/workloads/workload-detail-page.tsx` | app/http/kube 定向测试、fake client 冲突/幂等、OpenAPI/TS typecheck、Vitest 51/51、隔离容器 mock Chromium/Firefox 各 37/37、隔离集群 75 秒暂停窗口与恢复调度对账 | 隔离集群暂停→确认不再创建新 Job→恢复、kubectl 对账、已有 Job 不变、409 不覆盖、非 CronJob 501、审计检索 | 已完成当前候选真实隔离集群验收；证据见 21.2.35 |
 | WBS-5.2 YAML Dry Run/Apply | 白名单资源；严格单文档并拒绝重复键；服务端 Dry Run 成功后才 apply；拒绝任意 API 透传 | `internal/modules/yaml`、`platform/kube/yaml.go`、`web/src/components/resources/yaml-dialog.tsx` | 解析、多文档/重复键、白名单、越权、Dry Run 失败不写入测试 | ConfigMap/Deployment Dry Run 和 apply 真实对账；当前 digest API 回归 | 当前候选实验室已验收；生产发布门禁未完成 |
-| WBS-5.4 Deployment 创建向导 | 专用 DTO 而非任意 YAML；app 校验名称/镜像/端口/资源/Env/Label；先 API Server Dry Run 再创建；重复创建稳定 409 | `internal/domain/deployment.go`、`workloads/app/deployment.go`、`platform/kube/deployment_create.go`、`workloads/http/handler.go`、`web/src/features/workloads/deployment-create-dialog.tsx` | app/http/kube 定向 race 测试；OpenAPI/TS typecheck | operator 创建、viewer 403、非法字段 400、重复 409、kubectl 对账、审计 | 当前候选隔离集群已通过 preview/create、400、409、RBAC 和 kubectl 对账；v2.36 mock Chromium/Firefox 各 28/28 均包含向导创建；历史三浏览器 42/42 不继承 |
+| WBS-5.4 通用工作负载创建 | 专用 DTO 而非任意 YAML；覆盖 Deployment/StatefulSet/DaemonSet/Job/CronJob；app 校验名称/镜像/端口/资源/Env/Label；先 API Server Dry Run 再创建；重复创建稳定 409；CronJob 可从模板立即执行一次性 Job | `internal/domain/deployment.go`、`workloads/app/{deployment,cronjob_run}.go`、`platform/kube/workload_create.go`、`workloads/http/handler.go`、`web/src/features/workloads/workload-create-dialog.tsx` | app/http/kube 定向 race 测试；OpenAPI/TS typecheck；Chromium/Firefox 定向 E2E | 各 kind 创建、viewer 403、非法字段 400、重复 409、kubectl 对账、审计、CronJob 立即执行 | 本轮本地测试通过；尚未生产部署 |
 | WBS-6.1 Service/Ingress 详情 | 列表可进入详情；Service 展示 EndpointSlice 就绪/目标；Ingress 展示默认后端、TLS Secret 和路由目标状态；依赖缺失不白屏 | `internal/domain/types.go`、`internal/modules/network/{app,http}`、`internal/platform/kube/network.go`、`web/src/features/network/*` | app/http/kube 定向测试、OpenAPI/TS typecheck、Vitest、隔离 Playwright | 真实隔离 API 与 Chromium/Firefox 深链 | v2.36 实验室已验收 |
 | WBS-6.2 Metrics | 独立 `dosh-metrics`；探测缓存；实际 usage 与 requests 双轨；三态降级/恢复 | `platform/kube/metrics.go`、domain DTO、总览/节点/Pod 页面、`scripts/install-metrics-server.sh`、`scripts/e2e-metrics.sh` | fake Metrics client 测试 | `v1beta1.metrics.k8s.io` Available、禁用、恢复；`kubectl top` 对账 | v2.45 当前候选实验室已验收（证据见 21.2.40）；生产 Metrics 拓扑待验收 |
 | WBS-6.3 StorageClass/PV/PVC 详情 | 列表名称与绑定关系可进入详情；StorageClass 展示参数/回收策略/卷绑定/扩容；PV 展示容量/卷模式/CSI/绑定 PVC；PVC 展示申请/实际容量、绑定 PV 和 conditions；均提供元数据、事件与 YAML | `internal/domain/types.go`、`internal/modules/storage/{app,http}`、`internal/platform/kube/storage.go`、`web/src/features/storage/*`、`web/src/router.tsx` | app/http/kube 定向测试、OpenAPI/TS typecheck、Vitest、隔离 Playwright | 临时 StorageClass/PV/PVC 真实详情/YAML/conditions 对账；清理后 404；Chromium/Firefox 本地认证 | v2.37 实验室已验收 |
@@ -1856,7 +1857,7 @@ client secret 只以 `secretKeyRef` 出现；端口仍为 32626，命名空间�
 | 2 本地认证与权限 | 实验室已验收 | 登录、Cookie、CSRF、只读模式、审计 stdout 已验收 | 生产多用户身份转到阶段 8 |
 | 3 只读核心能力 | 实验室已验收 | 总览、节点、工作负载、Pod、日志已与真实集群对账；v2.46 当前候选通过 OIDC 三身份 API/RBAC、Metrics 三态和 mock/真实 OIDC 三浏览器矩阵 | 企业 IdP、Edge/Safari 和生产目标环境复验；生产 Metrics 拓扑 |
 | 4 事件、日志、配置和 Secret | 实验室已验收 | SSE、日志流、Secret 脱敏/reveal、YAML 只读已实现；v2.46 当前候选通过三浏览器、隔离 Audit/Reveal、真实 Loki 59 事件/34 requestId 和 30 分钟 soak | 生产/预发同等并发复验；企业 SIEM 保留与告警 |
-| 5 安全写操作 | 实验室已验收（增量范围） | dry-run/apply、扩容、409、重启、删除、Deployment 创建向导与审计已实现；v2.46 当前 digest 通过工作负载完整生命周期、Cordon/Uncordon、CronJob 详情和浏览器写操作路径 | 仍需在完整候选变更单中复验闭环；生产发布未执行 |
+| 5 安全写操作 | 实验室已验收（增量范围） | dry-run/apply、扩容、409、重启、删除、Deployment/StatefulSet/DaemonSet/Job/CronJob 创建向导、CronJob 立即执行与审计已实现；v2.46 当前 digest 通过既有工作负载生命周期、Cordon/Uncordon 和 CronJob 详情，本轮通用创建改动已完成本地测试 | 通用创建与审计导出仍需在完整候选变更单中复验闭环；生产发布未执行 |
 | 6 网络、存储与监控 | 实验室已验收（增量范围） | Service/Ingress 详情和 StorageClass/PV/PVC 详情已与真实隔离 API 对账，存储 fixture 清理后确认 404；v2.46 当前候选已完成 Metrics 三态和真实 Loki 投递/检索 | 生产 Metrics 拓扑；企业 SIEM/OpenSearch 保留、告警和访问审批 |
 | 7 发布加固与验收 | 实验室已验收（生产发布未执行） | `0.1.2/0.1.4` 仍为 revision 12、2/2 Ready；v2.46 当前候选通过 `make verify`、Vitest 62/62、race、rollback/restore、Metrics、retry、Audit/Loki、soak、性能/bundle、govulncheck、npm audit、Trivy 和 599 文件最终归档；离机 WORM 未完成 | 真实 CI 绿灯、受信 TLS、外部商用门禁、digest 生产发布与回滚 |
 | 8 多用户身份与商用关闭 | 实验室已验收（外部商用门禁未关闭） | OIDC app/HTTP/adapter、SAR、动态 capabilities、impersonation、前端退出和 Helm 双模式已实现；v2.46 当前候选通过三身份 API/RBAC、真实 OIDC 三浏览器各 16/16、6/6 denied 审计和 Token 扫描 0；企业 IdP、CI、TLS、SIEM、WORM 和生产发布仍未关闭 | 企业 IdP；Edge/Safari 实机；CI 真跑；受信 TLS；企业 SIEM；离机 WORM；digest 生产发布 |
@@ -2050,8 +2051,8 @@ client secret 只以 `secretKeyRef` 出现；端口仍为 32626，命名空间�
 - WBS-5.1：实现工作负载扩容和资源版本校验。
 - WBS-5.2：实现滚动重启。
 - WBS-5.3：实现删除确认和删除传播策略。
-- WBS-5.4：实现 Deployment 创建向导；app 先做领域校验，再由 Kubernetes API Server Dry Run 校验字段，
-  最后正式创建；重复资源返回稳定 409。
+- WBS-5.4：实现通用工作负载创建向导，覆盖 Deployment、StatefulSet、DaemonSet、Job 和 CronJob；
+  app 先做领域校验，再由 Kubernetes API Server Dry Run 校验字段，最后正式创建；重复资源返回稳定 409。
 - WBS-5.5：实现 YAML Dry Run，再按允许列表执行 apply。
 - WBS-5.6：实现统一确认弹窗、危险操作视觉和操作结果反馈。
 - WBS-5.7：增加写操作审计和 fake client 无越权调用测试。
@@ -2065,7 +2066,7 @@ client secret 只以 `secretKeyRef` 出现；端口仍为 32626，命名空间�
 **产物**
 
 - 扩容、重启、删除。
-- Deployment 创建向导。
+- Deployment、StatefulSet、DaemonSet、Job 和 CronJob 创建向导。
 - YAML 编辑与 Dry Run。
 - 写操作审计。
 - 工作负载镜像更新与并发冲突反馈。
@@ -2634,7 +2635,7 @@ kubectl delete clusterrolebinding dosh-e2e-viewers dosh-e2e-admins dosh-oidc-e2e
 | 阶段 8 | AUTH-O-*、AZ-O-*、SEC-O-003 至 SEC-O-005、TST-U-013 至 TST-U-016 | v2.45 当前候选的 OIDC 负向测试、SAR 断言、Helm 双路径、三身份 API/RBAC、mock 各 38/38、真实 OIDC 各 16/16 和全量本地门禁已通过；v2.44 历史 digest 的 30 分钟 soak 与 revision `181→184` 回滚/restore 不继承给 v2.45；企业 IdP、Edge/Safari 实机、CI 真跑和生产发布待补 |
 | 增量：Metrics | OVW-U-004、NODE-U-005、POD-U-003、TST-U-009 | fake Metrics 测试、真实 Metrics Server 有/无/恢复三态对账、降级文案 |
 | 增量：429/5xx 重试 | NFR-E-001 | `retry_test.go` 的幂等/写请求/次数上限/取消/Retry-After 测试；v2.44 历史 digest 完成全矩阵，v2.45 未复跑，证据见 21.2.38 |
-| 增量：Deployment 创建向导 | WL-E-004/005、WL-N-003/004、UX-N-001 | domain/app/kube/http 测试；API Server Dry Run；v2.45 当前候选的 mock 各 38/38、真实 OIDC 各 16/16 均包含向导创建；v2.44 历史隔离 API 生命周期对账不继承 |
+| 增量：通用工作负载创建 | WL-E-004/005、WL-N-003/004、UX-N-001 | domain/app/kube/http 测试；API Server Dry Run；本轮 Chromium/Firefox 定向 E2E 覆盖 StatefulSet 与 Headless Service；v2.45 及更早的 Deployment 专用证据不继承给通用创建 |
 | 增量：工作负载审计与 adapter | WL-N-005/006、SEC-U-004、TST-U-002/003 | workload app 失败审计、只读 HTTP adapter 和 CronJob 无 selector 测试；v2.44 历史候选已在隔离 Release 通过，v2.45 未重跑专用矩阵，见 21.2.38 |
 | 增量：URL 状态 | UX-U-008、TST-U-010 | 路由解析测试、刷新/分享/前进后退 E2E |
 | 增量：审计投递 | SEC-U-006/007、OPS-U-013、NFR-E-003/004、TST-U-011/012；实施级 AUDIT-W-* | 22.14：v2.45 当前 digest 通过隔离 Audit/Reveal 的私 CA、Bearer/HMAC、Cilium 出口、业务事件矩阵、故障/恢复、队列、只读拒绝、20/20 SIGTERM 排空和泄露扫描 0；真实 Loki 与真实 SIEM 未在 v2.45 复跑 |
@@ -2733,7 +2734,7 @@ kubectl delete clusterrolebinding dosh-e2e-viewers dosh-e2e-admins dosh-oidc-e2e
 | 镜像扫描 | `Makefile#image-scan` | Trivy 固定 digest；HIGH/CRITICAL 0 |
 | 后端单元测试 | `internal/**/**_test.go` | app、HTTP handler、Kubernetes fake-client adapter 用例通过；当前行覆盖：domain `100%`、workloads app `99.4%`、kube `78.4%`，nodes/overview/network/storage HTTP 均为 `100%` |
 | 工作负载失败审计与 CronJob 详情 | `internal/modules/workloads/app/service.go`、`service_test.go`、`internal/platform/kube/workloads.go`、`workloads_test.go` | 无效操作/非法删除策略均审计；无 selector CronJob 不 panic；当前隔离 Release 失败审计和 CronJob API 抽样均已通过 |
-| Deployment 创建向导 | `internal/domain/deployment.go`、`internal/modules/workloads/app/deployment.go`、`internal/platform/kube/deployment_create.go`、`web/src/features/workloads/deployment-create-dialog.tsx` | domain/app/kube/handler 测试通过；当前候选 API 与浏览器矩阵覆盖 Dry Run→Create、YAML preview、403/400/409、审计和 kubectl 对账 |
+| 通用工作负载创建 | `internal/domain/deployment.go`、`internal/modules/workloads/app/{deployment,cronjob_run}.go`、`internal/platform/kube/workload_create.go`、`web/src/features/workloads/workload-create-dialog.tsx` | domain/app/kube/handler 测试通过；本地 Chromium/Firefox 定向 E2E 覆盖 StatefulSet/Headless Service、CronJob 立即执行、审计动作目录与导出 |
 | Metrics 适配 | `internal/platform/kube/metrics*.go`、`internal/domain/types.go`、`scripts/install-metrics-server.sh`、`scripts/e2e-metrics.sh` | 已实现 Node/Pod/Detail 实际用量和 `hasMetrics` 降级；v2.44 历史 digest 在隔离 Release 完成可用/禁用/恢复三态，证据见 21.2.38；v2.45 未复跑 |
 | Kubernetes 有界重试 | `internal/platform/kube/retry.go`、`retry_test.go`、`client.go`、`scripts/e2e-kube-retry.sh` | 仅幂等读请求重试，最多 3 次，尊重 `Retry-After`/context；v2.44 历史 digest 完成完整故障矩阵，证据见 21.2.38；v2.45 未复跑 |
 | 列表 URL 状态 | `web/src/lib/list-search.ts`、`web/src/router.tsx`、各列表页 | 已实现 `q/namespace/kind` 持久化；v2.45 当前候选 mock Chromium/Firefox/WebKit 各 38/38、真实 OIDC 各 16/16 覆盖刷新、分享、前进/后退 |
@@ -4617,7 +4618,7 @@ RBAC 的集成路径，不证明生产浏览器体验或企业 IdP 兼容性。
 | 动态集群上下文 | AppShell、侧栏、关于弹窗和总览面包屑统一读取 `/api/v1/overview`；v2.39 mock Chromium/Firefox 各 32/32、真实 OIDC 各 15/15 覆盖动态上下文 | 低 | 企业 IdP 与生产环境复验；Edge/Safari 实机 |
 | Metrics 实际利用率 | Metrics Server `v0.9.1` 已安装在 `dosh-metrics`；v2.45 当前 digest 通过可用/禁用/恢复三态和真实数值对账（CPU `2152m→0→2141m`），证据见 21.2.40；生产/预发目标拓扑仍未复验 | 低 | 在生产/预发等价 Metrics 拓扑复验，记录目标环境证据 |
 | 筛选条件 URL 持久化 | 代码已实现；v2.45 当前候选 mock Chromium/Firefox/WebKit 各 38/38、真实 OIDC 各 16/16，包含关键词、命名空间、类型、刷新、新标签页分享、前进/后退和空参数抽样 | 候选实验室已验收（三浏览器容器） | Edge/Safari 实机复验后归档 |
-| Deployment 创建向导 | 已实现专用 DTO、app 校验/授权/审计、API Server Dry Run、YAML 预览、三步向导和稳定 409；当前候选通过 preview/create、400、409、RBAC 和浏览器向导流程 | 低（候选） | 随目标版本发布，并在生产等价环境复核 |
+| 通用工作负载创建 | 已实现 Deployment/StatefulSet/DaemonSet/Job/CronJob 专用 DTO、app 校验/授权/审计、API Server Dry Run、YAML 预览、三步向导和稳定 409；本轮本地通过 Chromium/Firefox 定向浏览器流程 | 低（候选） | 提交后在目标候选与生产等价环境复核 |
 | OIDC + impersonation | app/HTTP/adapter/impersonation/SAR、前端退出和 Helm 双模式已实现；v2.45 当前 digest 通过真实 OIDC Chromium/Firefox/WebKit 各 16/16、host 两浏览器 12/12 与隔离 WebKit 6/6 denied 审计和 Token 扫描 | 当前候选签名测试 IdP 的三浏览器容器实验室已验收；企业 IdP、Edge/Safari 实机未验收 | 接入预发企业 IdP，复验 claims、私有 CA、logout 和同一负向矩阵 |
 | OIDC 浏览器与企业 IdP | v2.45 当前 digest 在测试 IdP 通过真实 OIDC Chromium/Firefox/WebKit 各 16/16，覆盖三身份、Secret 无权限、按钮权限、七类负向、审计历史、主题/axe/键盘和 logout | 生产多用户场景为高 | 接入预发企业 IdP，复验私有 CA、claims、logout 和 Token 扫描；补 Edge/Safari 实机 |
 | OIDC Token 泄露 | v2.45 当前 digest 的 Chromium/Firefox/WebKit 浏览器 URL/DOM/Web Storage/应用日志/ConfigMap/Deployment/Helm values 扫描 0 命中，host 两浏览器 12/12 与隔离 WebKit 6/6 denied 审计均带 requestId | 当前候选三浏览器容器实验室已验收 | 企业 IdP 和受信 TLS 复跑后更新受控归档 |
@@ -4682,7 +4683,7 @@ Metrics 通过独立 `k8s.io/metrics` client 读取 `metrics.k8s.io/v1beta1`，�
 3. 在 adapter 内把 K8s 对象转换为 domain DTO，去除 `managedFields`，Secret 默认脱敏。
 4. 将所有 API 错误映射到 domain 错误语义。
 5. 列表接口批量读取 Node/Pod Metrics；详情接口按资源读取单条指标；使用 `hasMetrics` 显式表达缺失。
-6. Deployment 创建由 `deployment_create.go` 统一构造对象：preview 与 create 共用同一构造函数，
+6. 通用工作负载创建由 `workload_create.go` 统一构造对象：preview 与 create 共用同一构造函数，
    create 先以 `DryRunAll` 提交，再正式创建；AlreadyExists 映射为 `domain.ErrAlreadyExists`。
 
 **验收**

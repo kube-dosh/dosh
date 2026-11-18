@@ -1379,7 +1379,7 @@ export interface paths {
             };
             requestBody: {
                 content: {
-                    "application/json": components["schemas"]["DeploymentCreateRequest"];
+                    "application/json": components["schemas"]["WorkloadCreateRequest"];
                 };
             };
             responses: {
@@ -1424,7 +1424,7 @@ export interface paths {
             };
             requestBody: {
                 content: {
-                    "application/json": components["schemas"]["DeploymentCreateRequest"];
+                    "application/json": components["schemas"]["WorkloadCreateRequest"];
                 };
             };
             responses: {
@@ -1440,6 +1440,143 @@ export interface paths {
                 400: components["responses"]["BadRequest"];
                 401: components["responses"]["Unauthorized"];
                 403: components["responses"]["Forbidden"];
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/workloads/create": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Validate with API Server dry-run and create a workload
+         * @description Creates one Deployment, StatefulSet, DaemonSet, Job or CronJob with a single application container. The request is validated locally, then submitted once with API Server dry-run before the real create request.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["WorkloadCreateKindRequest"];
+                };
+            };
+            responses: {
+                /** @description Workload created */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["WorkloadSummary"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+                409: components["responses"]["Conflict"];
+                503: components["responses"]["DependencyUnavailable"];
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/workloads/create/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Preview a validated workload manifest without writing */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["WorkloadCreateKindRequest"];
+                };
+            };
+            responses: {
+                /** @description Workload manifest */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["DeploymentPreview"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/workloads/cronjob/{namespace}/{name}/run": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Create a one-off Job from a CronJob template
+         * @description Requires get on the CronJob and create on Jobs. The CronJob schedule is not modified.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    namespace: components["parameters"]["NamespacePath"];
+                    name: components["parameters"]["Name"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Job created from the CronJob template */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["WorkloadSummary"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+                404: components["responses"]["NotFound"];
             };
         };
         delete?: never;
@@ -2365,6 +2502,96 @@ export interface paths {
                     };
                     content: {
                         "application/json": components["schemas"]["AuditRecordList"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/audit-events/actions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List audit action names present in the retained history
+         * @description Derives the filter directory from actual audit records so newly audited operations become filterable without a frontend-maintained enum.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Distinct audit actions */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["AuditActionList"];
+                    };
+                };
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/audit-events/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Export the matching retained audit snapshot
+         * @description Exports all audit records currently matching the filters from the process-local retained snapshot. Format may be csv or json. A successful or denied export is itself recorded as the export-audit action after the snapshot is read.
+         */
+        get: {
+            parameters: {
+                query?: {
+                    namespace?: components["parameters"]["Namespace"];
+                    q?: components["parameters"]["Search"];
+                    action?: string;
+                    result?: "success" | "failure" | "denied";
+                    format?: "csv" | "json";
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Audit export attachment */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "text/csv": string;
+                        "application/json": components["schemas"]["AuditExport"];
                     };
                 };
                 400: components["responses"]["BadRequest"];
@@ -5107,6 +5334,15 @@ export interface components {
             items: components["schemas"]["AuditRecord"][];
             meta: components["schemas"]["ListMeta"];
         };
+        AuditActionList: {
+            items: string[];
+        };
+        AuditExport: {
+            /** Format: date-time */
+            exportedAt: string;
+            count: number;
+            items: components["schemas"]["AuditRecord"][];
+        };
         ClusterNodeCIDR: {
             name: string;
             internalIP?: string;
@@ -5363,10 +5599,26 @@ export interface components {
             name: string;
             value: string;
         };
-        DeploymentCreateRequest: {
+        WorkloadCreateRequest: {
+            /**
+             * @description Optional on the legacy Deployment-only endpoint; required by WorkloadCreateKindRequest.
+             * @enum {string}
+             */
+            kind?: "deployment" | "statefulset" | "daemonset" | "job" | "cronjob";
             name: string;
             namespace: string;
-            replicas: number;
+            replicas?: number;
+            /** @description Required for StatefulSet; defaults to the workload name. */
+            serviceName?: string;
+            /** @description Required for CronJob. */
+            schedule?: string;
+            /**
+             * @default Allow
+             * @enum {string}
+             */
+            concurrencyPolicy: "Allow" | "Forbid" | "Replace";
+            /** @default false */
+            suspend: boolean;
             containerName?: string;
             image: string;
             registryId?: string;
@@ -5380,6 +5632,7 @@ export interface components {
                 [key: string]: string;
             };
         };
+        WorkloadCreateKindRequest: components["schemas"]["WorkloadCreateRequest"] & Record<string, never>;
         DeploymentPreview: {
             yaml: string;
         };

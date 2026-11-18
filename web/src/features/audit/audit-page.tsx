@@ -2,30 +2,24 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate, useSearch } from "@tanstack/react-router";
 import { createColumnHelper } from "@tanstack/react-table";
-import { ScrollText, ShieldCheck } from "lucide-react";
+import { Download, Loader2, ScrollText, ShieldCheck } from "lucide-react";
+import { toast } from "sonner";
 import { api } from "@/api/client";
-import type { AuditRecord } from "@/api/types";
+import type { AuditExportFormat, AuditRecord } from "@/api/types";
 import { DataTable } from "@/components/data/data-table";
 import { ErrorState } from "@/components/feedback/states";
 import { StatusBadge } from "@/components/feedback/status-badge";
 import { NamespaceSelect } from "@/components/layout/namespace-select";
 import { PageHeader } from "@/components/layout/page-header";
 import { SearchInput } from "@/components/layout/search-input";
+import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { cursorPaginationProps, retryListQuery, useCursorPagination } from "@/hooks/use-cursor-pagination";
 import { formatDate } from "@/lib/utils";
 
 const column = createColumnHelper<AuditRecord>();
-const actions = [
-  "apply", "cordon", "create-configmap", "create-deployment", "create-ingress", "create-namespace",
-  "create-persistentvolumeclaim", "create-secret", "create-service", "delete", "delete-configmap",
-  "delete-ingress", "delete-namespace", "delete-persistentvolumeclaim", "delete-secret",
-  "delete-service", "dry-run", "login", "login_started", "logout", "reload", "restart", "resume",
-  "reveal", "scale", "suspend", "uncordon", "update-configmap", "update-container-config",
-  "update-image", "update-ingress", "update-labels", "update-persistentvolumeclaim", "update-secret",
-  "update-service", "update-taints", "exec", "exec-close", "create-ephemeral-container",
-];
 const results = ["success", "failure", "denied"] as const;
 
 export function AuditPage() {
@@ -37,6 +31,7 @@ export function AuditPage() {
   const result = search.result ?? "";
   const pager = useCursorPagination(`audit|${namespace}|${q}|${action}|${result}`, 20);
   const [selected, setSelected] = useState<AuditRecord | null>(null);
+  const [exporting, setExporting] = useState<AuditExportFormat | null>(null);
   const updateSearch = (patch: { q?: string; namespace?: string; action?: string; result?: string }) => {
     void navigate({ to: "/audit", search: { ...search, ...patch }, replace: true });
   };
@@ -45,6 +40,29 @@ export function AuditPage() {
     queryFn: () => api.auditEvents({ namespace, q, action, result, page: pager.page, pageSize: pager.pageSize, cursor: pager.cursor }),
     refetchInterval: 30_000,
   });
+  const actionsQuery = useQuery({ queryKey: ["audit-actions"], queryFn: api.auditActions, staleTime: 30_000 });
+  const actions = action
+    ? Array.from(new Set([...(actionsQuery.data ?? []), action])).sort()
+    : (actionsQuery.data ?? []);
+  const exportAudit = async (format: AuditExportFormat) => {
+    setExporting(format);
+    try {
+      const { blob, filename } = await api.exportAuditEvents({ namespace, q, action, result, format });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+      toast.success(`审计记录已导出为 ${format.toUpperCase()}`);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "导出审计记录失败");
+    } finally {
+      setExporting(null);
+    }
+  };
 
   if (query.isError) return <ErrorState error={query.error} onRetry={() => retryListQuery(pager, query.error, query.refetch)} />;
 
@@ -57,7 +75,7 @@ export function AuditPage() {
       />
       <div role="note" className="mb-3 flex items-start gap-2 rounded-md border border-primary/20 bg-primary/5 px-3 py-2 text-xs text-muted-foreground">
         <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
-        <span>仅展示当前实例最近 1000 条记录，Pod 重启或副本切换后可能不同。长期保留、告警和不可变存储仍由 stdout 采集或企业 SIEM 负责。</span>
+        <span>仅展示当前实例最近 1000 条记录，Pod 重启或副本切换后可能不同。导出只包含当前筛选条件下仍保留的快照；长期保留、告警和不可变存储由 stdout 采集或企业 SIEM 负责。</span>
       </div>
       <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
         <SearchInput value={q} onChange={(value) => updateSearch({ q: value || undefined })} placeholder="搜索用户、动作、资源或请求 ID" />
@@ -77,6 +95,18 @@ export function AuditPage() {
           </SelectContent>
         </Select>
         <span className="text-xs text-muted-foreground sm:ml-auto">{query.data?.meta.total ?? 0} 条记录</span>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="outline" size="sm" disabled={exporting !== null}>
+              {exporting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+              导出
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuItem onSelect={() => void exportAudit("csv")}>导出 CSV</DropdownMenuItem>
+            <DropdownMenuItem onSelect={() => void exportAudit("json")}>导出 JSON</DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
       <DataTable
         columns={[

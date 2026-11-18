@@ -178,9 +178,14 @@ func containerProbe(request *containerProbeRequest) *domain.WorkloadProbe {
 }
 
 type deploymentCreateRequest struct {
+	Kind               string                    `json:"kind"`
 	Name               string                    `json:"name"`
 	Namespace          string                    `json:"namespace"`
 	Replicas           int32                     `json:"replicas"`
+	ServiceName        string                    `json:"serviceName"`
+	Schedule           string                    `json:"schedule"`
+	ConcurrencyPolicy  string                    `json:"concurrencyPolicy"`
+	Suspend            bool                      `json:"suspend"`
 	ContainerName      string                    `json:"containerName"`
 	Image              string                    `json:"image"`
 	RegistryID         string                    `json:"registryId"`
@@ -193,13 +198,14 @@ type deploymentCreateRequest struct {
 	Labels             map[string]string         `json:"labels"`
 }
 
-func (request deploymentCreateRequest) spec() domain.DeploymentCreateSpec {
+func (request deploymentCreateRequest) spec() domain.WorkloadCreateSpec {
 	env := make([]domain.DeploymentEnvVar, 0, len(request.Env))
 	for _, item := range request.Env {
 		env = append(env, domain.DeploymentEnvVar{Name: item.Name, Value: item.Value})
 	}
-	return domain.DeploymentCreateSpec{
-		Name: request.Name, Namespace: request.Namespace, Replicas: request.Replicas,
+	return domain.WorkloadCreateSpec{
+		Kind: request.Kind, Name: request.Name, Namespace: request.Namespace, Replicas: request.Replicas,
+		ServiceName: request.ServiceName, Schedule: request.Schedule, ConcurrencyPolicy: request.ConcurrencyPolicy, Suspend: request.Suspend,
 		ContainerName: request.ContainerName, Image: request.Image, RegistryID: request.RegistryID, ContainerPort: request.ContainerPort,
 		CPURequestMilli: request.CPURequestMilli, CPULimitMilli: request.CPULimitMilli,
 		MemoryRequestBytes: request.MemoryRequestBytes, MemoryLimitBytes: request.MemoryLimitBytes,
@@ -213,7 +219,9 @@ func (h *Handler) CreateDeployment(w stdhttp.ResponseWriter, r *stdhttp.Request)
 		return
 	}
 	actor, _ := domain.ActorFromContext(r.Context())
-	item, err := h.service.CreateDeployment(r.Context(), actor, request.spec())
+	spec := request.spec()
+	spec.Kind = "deployment"
+	item, err := h.service.CreateWorkload(r.Context(), actor, spec)
 	if err != nil {
 		httpx.Error(w, r, err)
 		return
@@ -227,12 +235,52 @@ func (h *Handler) PreviewDeployment(w stdhttp.ResponseWriter, r *stdhttp.Request
 		return
 	}
 	actor, _ := domain.ActorFromContext(r.Context())
-	manifest, err := h.service.PreviewDeployment(r.Context(), actor, request.spec())
+	spec := request.spec()
+	spec.Kind = "deployment"
+	manifest, err := h.service.PreviewWorkload(r.Context(), actor, spec)
 	if err != nil {
 		httpx.Error(w, r, err)
 		return
 	}
 	httpx.JSON(w, stdhttp.StatusOK, map[string]string{"yaml": manifest})
+}
+
+func (h *Handler) CreateWorkload(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	var request deploymentCreateRequest
+	if !httpx.DecodeJSON(w, r, &request) {
+		return
+	}
+	actor, _ := domain.ActorFromContext(r.Context())
+	item, err := h.service.CreateWorkload(r.Context(), actor, request.spec())
+	if err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	httpx.JSON(w, stdhttp.StatusCreated, item)
+}
+
+func (h *Handler) PreviewWorkload(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	var request deploymentCreateRequest
+	if !httpx.DecodeJSON(w, r, &request) {
+		return
+	}
+	actor, _ := domain.ActorFromContext(r.Context())
+	manifest, err := h.service.PreviewWorkload(r.Context(), actor, request.spec())
+	if err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	httpx.JSON(w, stdhttp.StatusOK, map[string]string{"yaml": manifest})
+}
+
+func (h *Handler) RunCronJob(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	actor, _ := domain.ActorFromContext(r.Context())
+	item, err := h.service.RunCronJobOnce(r.Context(), actor, chi.URLParam(r, "namespace"), chi.URLParam(r, "name"))
+	if err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	httpx.JSON(w, stdhttp.StatusCreated, item)
 }
 
 func (h *Handler) Scale(w stdhttp.ResponseWriter, r *stdhttp.Request) {
@@ -584,12 +632,15 @@ func (h *Handler) Mount(r chi.Router) {
 	r.Get("/workloads", h.List)
 	r.Post("/workloads/deployments", h.CreateDeployment)
 	r.Post("/workloads/deployments/preview", h.PreviewDeployment)
+	r.Post("/workloads/create", h.CreateWorkload)
+	r.Post("/workloads/create/preview", h.PreviewWorkload)
 	r.Get("/workloads/{kind}/{namespace}/{name}", h.Get)
 	r.Post("/workloads/{kind}/{namespace}/{name}/scale", h.Scale)
 	r.Post("/workloads/{kind}/{namespace}/{name}/restart", h.Restart)
 	r.Post("/workloads/{kind}/{namespace}/{name}/image", h.UpdateImage)
 	r.Put("/workloads/{kind}/{namespace}/{name}/containers/{container}/config", h.UpdateContainerConfig)
 	r.Post("/workloads/{kind}/{namespace}/{name}/suspend", h.SetSuspend)
+	r.Post("/workloads/cronjob/{namespace}/{name}/run", h.RunCronJob)
 	r.Get("/workloads/{kind}/{namespace}/{name}/revisions", h.Revisions)
 	r.Post("/workloads/{kind}/{namespace}/{name}/rollback", h.Rollback)
 	r.Delete("/workloads/{kind}/{namespace}/{name}", h.Delete)

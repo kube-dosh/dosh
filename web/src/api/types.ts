@@ -538,10 +538,17 @@ export interface DeploymentEnvVar {
   value: string;
 }
 
-export interface DeploymentCreateInput {
+export type WorkloadCreateKind = "deployment" | "statefulset" | "daemonset" | "job" | "cronjob";
+
+export interface WorkloadCreateInput {
+  kind: WorkloadCreateKind;
   name: string;
   namespace: string;
-  replicas: number;
+  replicas?: number;
+  serviceName?: string;
+  schedule?: string;
+  concurrencyPolicy?: "Allow" | "Forbid" | "Replace";
+  suspend?: boolean;
   containerName?: string;
   image: string;
   registryId?: string;
@@ -554,8 +561,20 @@ export interface DeploymentCreateInput {
   labels?: Record<string, string>;
 }
 
+export type DeploymentCreateInput = WorkloadCreateInput;
+
 export interface DeploymentPreview {
   yaml: string;
+}
+
+export type AuditExportFormat = "csv" | "json";
+
+export interface AuditExportParams {
+  namespace?: string;
+  q?: string;
+  action?: string;
+  result?: string;
+  format: AuditExportFormat;
 }
 
 export interface ContainerRegistryCapabilities {
@@ -1155,6 +1174,7 @@ export interface GenericResourceMutationInput {
 export type WorkloadKind = "deployment" | "statefulset" | "daemonset" | "job" | "cronjob";
 
 export interface ListParams {
+  format?: string;
   namespace?: string;
   q?: string;
   kind?: string;

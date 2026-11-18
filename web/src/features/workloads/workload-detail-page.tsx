@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useParams, useSearch } from "@tanstack/react-router";
 import { createColumnHelper } from "@tanstack/react-table";
-import { Boxes, FileCode2, Loader2, Minus, Pause, Pencil, Play, Plus, RefreshCw, ScrollText, TerminalSquare, Trash2 } from "lucide-react";
+import { Boxes, FileCode2, Loader2, Minus, Pause, Pencil, Play, PlayCircle, Plus, RefreshCw, ScrollText, TerminalSquare, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { ApiError, api } from "@/api/client";
 import type { PodSummary } from "@/api/types";
@@ -25,7 +25,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useCapabilities } from "@/features/auth/use-session";
 import { DiagnoseButton } from "@/features/diagnostics/diagnose-button";
-import { workloadCapabilities } from "@/lib/capabilities";
+import { resourceCapabilities, workloadCapabilities } from "@/lib/capabilities";
 import { ResourceEvents } from "@/features/events/resource-events";
 import { PodTerminal } from "@/features/workloads/pod-terminal";
 import { WorkloadLogViewer } from "@/features/workloads/workload-log-viewer";
@@ -67,6 +67,7 @@ export function WorkloadDetailPage() {
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [restartOpen, setRestartOpen] = useState(false);
   const [suspendOpen, setSuspendOpen] = useState(false);
+  const [runOpen, setRunOpen] = useState(false);
   const [imageOpen, setImageOpen] = useState(false);
   const [imageContainer, setImageContainer] = useState("");
   const [imageValue, setImageValue] = useState("");
@@ -109,6 +110,7 @@ export function WorkloadDetailPage() {
   const canUpdateImage = workloadCaps.update && ["deployment", "statefulset", "daemonset"].includes(kind);
   const canUpdateContainerConfig = workloadCaps.update && ["deployment", "statefulset", "daemonset"].includes(kind);
   const canSuspend = workloadCaps.update && kind === "cronjob";
+  const canRunNow = kind === "cronjob" && resourceCapabilities(capabilities, "jobs").create;
   const canRollback = workloadCaps.update && supportsRevisions;
   const canDelete = workloadCaps.delete;
   const invalidate = async () => {
@@ -166,6 +168,16 @@ export function WorkloadDetailPage() {
       toast.error(error.message);
     },
   });
+  const runCronJob = useMutation({
+    mutationFn: () => api.runCronJobOnce(params.namespace, params.name),
+    onSuccess: async (created) => {
+      toast.success(`已从 CronJob 创建 Job ${created.name}`);
+      setRunOpen(false);
+      await queryClient.invalidateQueries({ queryKey: ["workloads"] });
+      await navigate({ to: "/workloads/$kind/$namespace/$name", params: { kind: "job", namespace: created.namespace, name: created.name }, search: {} });
+    },
+    onError: (error) => toast.error(error.message),
+  });
   const remove = useMutation({
     mutationFn: () => api.deleteWorkload(kind, params.namespace, params.name, "Background"),
     onSuccess: async () => {
@@ -201,6 +213,7 @@ export function WorkloadDetailPage() {
           <>
             <DiagnoseButton kind={kind} namespace={workload.namespace} name={workload.name} />
             <Button variant="outline" size="sm" onClick={() => setYamlOpen(true)}><FileCode2 className="h-4 w-4" />YAML</Button>
+            {canRunNow ? <Button variant="outline" size="sm" onClick={() => setRunOpen(true)}><PlayCircle className="h-4 w-4" />立即执行</Button> : null}
             {canSuspend ? <Button variant="outline" size="sm" onClick={() => setSuspendOpen(true)}>{suspended ? <Play className="h-4 w-4" /> : <Pause className="h-4 w-4" />}{suspended ? "恢复调度" : "暂停调度"}</Button> : null}
             {canUpdateImage && workload.containers.length ? <Button variant="outline" size="sm" onClick={openImageDialog}><Pencil className="h-4 w-4" />更新镜像</Button> : null}
             {canRestart ? <Button variant="outline" size="sm" onClick={() => setRestartOpen(true)}><RefreshCw className="h-4 w-4" />重启</Button> : null}
@@ -339,6 +352,22 @@ export function WorkloadDetailPage() {
             <AlertDialogAction onClick={(event) => { event.preventDefault(); suspendCronJob.mutate(!suspended); }} disabled={suspendCronJob.isPending}>
               {suspendCronJob.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
               {suspended ? "确认恢复" : "确认暂停"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={runOpen} onOpenChange={setRunOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>立即执行 {workload.name}？</AlertDialogTitle>
+            <AlertDialogDescription>将从当前 CronJob 的 Job 模板创建一个一次性 Job，不会修改 CronJob 调度，也不会补跑历史任务。需要具备创建 Job 的权限。</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={runCronJob.isPending}>取消</AlertDialogCancel>
+            <AlertDialogAction onClick={(event) => { event.preventDefault(); runCronJob.mutate(); }} disabled={runCronJob.isPending}>
+              {runCronJob.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <PlayCircle className="h-4 w-4" />}
+              确认执行
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

@@ -4,7 +4,7 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import { http, HttpResponse } from "msw";
 import { setupServer } from "msw/node";
 import { Toaster } from "sonner";
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { routeTree } from "@/router";
 import type { IngressDetail, NodeDetail, Overview, PersistentVolumeClaimDetail, PersistentVolumeDetail, PodDetail, ServiceDetail, SessionResponse, StorageClassDetail, WorkloadDetail, WorkloadSummary } from "@/api/types";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -164,6 +164,8 @@ const server = setupServer(
   http.get("/api/v1/workloads/deployment/default/web-api", () => HttpResponse.json({ ...workload, name: "web-api", images: ["nginx:alpine"], resourceVersion: "317754", conditions: [], selector: {}, pods: [], containers: [{ name: "web", image: "nginx:alpine" }] })),
   http.post("/api/v1/workloads/deployments/preview", () => HttpResponse.json({ yaml: "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: web-api\n" })),
   http.post("/api/v1/workloads/deployments", () => HttpResponse.json({ ...workload, name: "web-api", images: ["nginx:alpine"] }, { status: 201 })),
+  http.post("/api/v1/workloads/create/preview", () => HttpResponse.json({ yaml: "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: web-api\n" })),
+  http.post("/api/v1/workloads/create", () => HttpResponse.json({ ...workload, name: "web-api", images: ["nginx:alpine"] }, { status: 201 })),
   http.get("/api/v1/namespaces", () => HttpResponse.json({ items: [{ name: "default", status: "Active", createdAt: "2026-11-02T00:00:00Z" }, { name: "production", status: "Active", createdAt: "2026-11-02T00:00:00Z" }], meta: { total: 2 } })),
   http.get("/api/v1/pods", () => HttpResponse.json({ items: [pod], meta: { total: 1 } })),
   http.get("/api/v1/pods/default/web-abcdef-12345", () => HttpResponse.json(pod)),
@@ -202,12 +204,17 @@ const server = setupServer(
   http.get("/api/v1/secrets", () => HttpResponse.json({ items: [], meta: { total: 0, page: 1, pageSize: 20, totalPages: 0, filters: {} } })),
   http.get("/api/v1/certificate", () => HttpResponse.json({ mode: "https", enabled: true, configured: true, status: "valid", subject: "CN=dosh.example.test", issuer: "CN=dosh.example.test", dnsNames: ["dosh.example.test"], ipAddresses: [], daysRemaining: 90, fingerprintSha256: "A".repeat(64), keyAlgorithm: "ECDSA", autoReload: true, reloadIntervalSeconds: 30, lastReloadedAt: "2026-11-05T00:00:00Z" })),
   http.get("/api/v1/audit-events", () => HttpResponse.json({ items: [], meta: { total: 0, page: 1, pageSize: 20, totalPages: 0, filters: {} } })),
+  http.get("/api/v1/audit-events/actions", () => HttpResponse.json({ items: [] })),
   http.get("/api/v1/yaml", () => HttpResponse.json({ kind: "Pod", namespace: "default", name: "web-abcdef-12345", yaml: "apiVersion: v1\nkind: Pod\nmetadata:\n  name: web-abcdef-12345\n" })),
   http.post("/api/v1/yaml/apply", () => HttpResponse.json({ kind: "Deployment", namespace: "default", name: "web", yaml: "" })),
 );
 
 beforeAll(() => server.listen({ onUnhandledRequest: "error" }));
-afterEach(() => server.resetHandlers());
+afterEach(() => {
+  server.resetHandlers();
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+});
 afterAll(() => server.close());
 beforeEach(() => localStorage.clear());
 
@@ -991,6 +998,42 @@ describe("dosh application", () => {
     expect(screen.getByRole("alertdialog", { name: "暂停 CronJob 调度？" })).toBeInTheDocument();
   });
 
+  it("runs a CronJob once and opens the created Job", async () => {
+    const capabilities = {
+      ...session.capabilities,
+      resourceActions: {
+        ...session.capabilities.resourceActions!,
+        jobs: { ...session.capabilities.resourceActions!.jobs, create: true },
+      },
+    };
+    const cronJob = {
+      ...workload, kind: "CronJob", name: "backup", namespace: "default", status: "Idle", ready: "0/0", desired: 0,
+      resourceVersion: "99", conditions: [], selector: {}, pods: [], containers: [],
+    };
+    let runCalled = false;
+    server.use(
+      http.get("/api/v1/session", () => HttpResponse.json({ ...session, capabilities })),
+      http.get("/api/v1/capabilities", () => HttpResponse.json(capabilities)),
+      http.get("/api/v1/workloads/cronjob/default/backup", () => HttpResponse.json(cronJob)),
+      http.post("/api/v1/workloads/cronjob/default/backup/run", () => {
+        runCalled = true;
+        return HttpResponse.json({ ...workload, kind: "Job", name: "backup-manual-12345", namespace: "default" }, { status: 201 });
+      }),
+      http.get("/api/v1/workloads/job/default/backup-manual-12345", () => HttpResponse.json({
+        ...workload, kind: "Job", name: "backup-manual-12345", namespace: "default",
+        conditions: [], selector: {}, pods: [], containers: [],
+      })),
+    );
+    renderRoute("/workloads/cronjob/default/backup");
+
+    fireEvent.click(await screen.findByRole("button", { name: "立即执行" }));
+    const dialog = await screen.findByRole("alertdialog", { name: "立即执行 backup？" });
+    fireEvent.click(within(dialog).getByRole("button", { name: "确认执行" }));
+
+    expect(await screen.findByRole("heading", { name: "backup-manual-12345" })).toBeInTheDocument();
+    expect(runCalled).toBe(true);
+  });
+
   it("toggles the dark theme and persists the explicit preference", async () => {
     renderRoute("/nodes");
     const toggle = await screen.findByRole("button", { name: "切换为深色主题" });
@@ -1004,22 +1047,22 @@ describe("dosh application", () => {
     expect(screen.getByRole("button", { name: "切换为浅色主题" })).toHaveAttribute("aria-pressed", "true");
   });
 
-  it("creates a deployment through preview and confirmation", async () => {
+  it("creates a workload through preview and confirmation", async () => {
     let previewBody: Record<string, unknown> | undefined;
     let createBody: Record<string, unknown> | undefined;
     server.use(
-      http.post("/api/v1/workloads/deployments/preview", async ({ request }) => {
+      http.post("/api/v1/workloads/create/preview", async ({ request }) => {
         previewBody = await request.json() as Record<string, unknown>;
         return HttpResponse.json({ yaml: "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: web-api\n" });
       }),
-      http.post("/api/v1/workloads/deployments", async ({ request }) => {
+      http.post("/api/v1/workloads/create", async ({ request }) => {
         createBody = await request.json() as Record<string, unknown>;
         return HttpResponse.json({ ...workload, name: "web-api", images: ["nginx:alpine"] }, { status: 201 });
       }),
     );
     renderRoute("/workloads?namespace=default");
-    fireEvent.click(await screen.findByRole("button", { name: "创建 Deployment" }, { timeout: 5000 }));
-    const dialog = await screen.findByRole("dialog");
+    fireEvent.click(await screen.findByRole("button", { name: "创建工作负载" }, { timeout: 5000 }));
+    const dialog = await screen.findByRole("dialog", { name: "创建工作负载" });
     fireEvent.change(within(dialog).getByLabelText("Deployment 名称"), { target: { value: "web-api" } });
     fireEvent.click(within(dialog).getByRole("button", { name: "下一步" }));
     await within(dialog).findByLabelText("容器镜像");
@@ -1027,8 +1070,127 @@ describe("dosh application", () => {
     expect(await within(dialog).findByText(/kind: Deployment/)).toBeInTheDocument();
     fireEvent.click(within(dialog).getByRole("button", { name: "创建 Deployment" }));
     expect(await screen.findByRole("heading", { name: "web-api" })).toBeInTheDocument();
-    expect(previewBody).toMatchObject({ name: "web-api", namespace: "default", image: "nginx:alpine", containerPort: 80, cpuRequestMilli: 100, memoryRequestBytes: 134217728 });
+    expect(previewBody).toMatchObject({ kind: "deployment", name: "web-api", namespace: "default", image: "nginx:alpine", containerPort: 80, cpuRequestMilli: 100, memoryRequestBytes: 134217728 });
     expect(createBody).toMatchObject({ name: "web-api", namespace: "default", replicas: 1 });
+  });
+
+  it("creates a StatefulSet with its headless service", async () => {
+    const writableCapabilities = {
+      ...session.capabilities,
+      resourceActions: Object.fromEntries(Object.entries(session.capabilities.resourceActions!).map(([resource, actions]) => [
+        resource,
+        ["statefulsets", "daemonsets", "jobs", "cronjobs"].includes(resource) ? { ...actions, create: true } : actions,
+      ])),
+    };
+    let statefulSetBody: Record<string, unknown> | undefined;
+    server.use(
+      http.get("/api/v1/session", () => HttpResponse.json({ ...session, capabilities: writableCapabilities })),
+      http.get("/api/v1/capabilities", () => HttpResponse.json(writableCapabilities)),
+      http.post("/api/v1/workloads/create/preview", async ({ request }) => {
+        statefulSetBody = await request.json() as Record<string, unknown>;
+        return HttpResponse.json({ yaml: "apiVersion: apps/v1\nkind: StatefulSet\nmetadata:\n  name: db\n" });
+      }),
+      http.post("/api/v1/workloads/create", async ({ request }) => {
+        statefulSetBody = await request.json() as Record<string, unknown>;
+        return HttpResponse.json({ ...workload, kind: "StatefulSet", name: "db", images: ["postgres:17"] }, { status: 201 });
+      }),
+      http.get("/api/v1/workloads/statefulset/default/db", () => HttpResponse.json({ ...workload, kind: "StatefulSet", name: "db", images: ["postgres:17"], conditions: [], selector: {}, pods: [], containers: [] })),
+    );
+    renderRoute("/workloads?namespace=default&kind=statefulset");
+
+    fireEvent.click(await screen.findByRole("button", { name: "创建工作负载" }));
+    const dialog = await screen.findByRole("dialog", { name: "创建工作负载" });
+    fireEvent.change(within(dialog).getByLabelText("StatefulSet 名称"), { target: { value: "db" } });
+    fireEvent.change(within(dialog).getByLabelText("Headless Service"), { target: { value: "db-headless" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "下一步" }));
+    const image = await within(dialog).findByLabelText("容器镜像");
+    fireEvent.change(image, { target: { value: "postgres:17" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "下一步" }));
+    expect(await within(dialog).findByText(/kind: StatefulSet/)).toBeInTheDocument();
+    fireEvent.click(within(dialog).getByRole("button", { name: "创建 StatefulSet" }));
+
+    expect(await screen.findByRole("heading", { name: "db" })).toBeInTheDocument();
+    expect(statefulSetBody).toMatchObject({ kind: "statefulset", name: "db", serviceName: "db-headless", replicas: 1 });
+  });
+
+  it("creates a CronJob with schedule and concurrency policy", async () => {
+    const writableCapabilities = {
+      ...session.capabilities,
+      resourceActions: {
+        ...session.capabilities.resourceActions!,
+        cronjobs: { ...session.capabilities.resourceActions!.cronjobs, create: true },
+      },
+    };
+    let createBody: Record<string, unknown> | undefined;
+    server.use(
+      http.get("/api/v1/session", () => HttpResponse.json({ ...session, capabilities: writableCapabilities })),
+      http.get("/api/v1/capabilities", () => HttpResponse.json(writableCapabilities)),
+      http.post("/api/v1/workloads/create/preview", async ({ request }) => {
+        createBody = await request.json() as Record<string, unknown>;
+        return HttpResponse.json({ yaml: "apiVersion: batch/v1\nkind: CronJob\nmetadata:\n  name: backup\n" });
+      }),
+      http.post("/api/v1/workloads/create", async ({ request }) => {
+        createBody = await request.json() as Record<string, unknown>;
+        return HttpResponse.json({ ...workload, kind: "CronJob", name: "backup", status: "Idle", ready: "0/0", desired: 0 }, { status: 201 });
+      }),
+      http.get("/api/v1/workloads/cronjob/default/backup", () => HttpResponse.json({
+        ...workload, kind: "CronJob", name: "backup", status: "Idle", ready: "0/0", desired: 0,
+        conditions: [], selector: {}, pods: [], containers: [],
+      })),
+    );
+    renderRoute("/workloads?namespace=default&kind=cronjob");
+
+    fireEvent.click(await screen.findByRole("button", { name: "创建工作负载" }));
+    const dialog = await screen.findByRole("dialog", { name: "创建工作负载" });
+    fireEvent.change(within(dialog).getByLabelText("CronJob 名称"), { target: { value: "backup" } });
+    fireEvent.change(within(dialog).getByLabelText("Cron 表达式"), { target: { value: "0 * * * *" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "下一步" }));
+    await within(dialog).findByLabelText("容器镜像");
+    fireEvent.click(within(dialog).getByRole("button", { name: "下一步" }));
+    expect(await within(dialog).findByText(/kind: CronJob/)).toBeInTheDocument();
+    fireEvent.click(within(dialog).getByRole("button", { name: "创建 CronJob" }));
+
+    expect(await screen.findByRole("heading", { name: "backup" })).toBeInTheDocument();
+    expect(createBody).toMatchObject({ kind: "cronjob", name: "backup", schedule: "0 * * * *", concurrencyPolicy: "Allow", suspend: false });
+  });
+
+  it("exports the filtered audit snapshot as CSV", async () => {
+    let actionsRequested = false;
+    let exportRequest: URL | undefined;
+    const createObjectURL = vi.fn(() => "blob:audit-export");
+    const revokeObjectURL = vi.fn();
+    vi.stubGlobal("URL", class extends URL {
+      static createObjectURL = createObjectURL;
+      static revokeObjectURL = revokeObjectURL;
+    });
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+    server.use(
+      http.get("/api/v1/audit-events/actions", () => {
+        actionsRequested = true;
+        return HttpResponse.json({ items: ["diagnose", "run-cronjob", "scale"] });
+      }),
+      http.get("/api/v1/audit-events/export", ({ request }) => {
+        exportRequest = new URL(request.url);
+        return new HttpResponse("id,timestamp,action\n42,2026-11-04T06:00:00Z,scale\n", {
+          headers: {
+            "Content-Type": "text/csv; charset=utf-8",
+            "Content-Disposition": 'attachment; filename="dosh-audit-test.csv"',
+          },
+        });
+      }),
+    );
+    renderRoute("/audit?namespace=production&result=success&action=scale&q=web");
+
+    await waitFor(() => expect(actionsRequested).toBe(true));
+    await waitFor(() => expect(exportRequest).toBeUndefined());
+    fireEvent.pointerDown(await screen.findByRole("button", { name: "导出" }), { button: 0, ctrlKey: false, pointerType: "mouse" });
+    fireEvent.click(await screen.findByRole("menuitem", { name: "导出 CSV" }));
+    await waitFor(() => expect(exportRequest?.searchParams.get("format")).toBe("csv"));
+    expect(exportRequest?.searchParams.get("namespace")).toBe("production");
+    expect(exportRequest?.searchParams.get("result")).toBe("success");
+    expect(exportRequest?.searchParams.get("action")).toBe("scale");
+    expect(exportRequest?.searchParams.get("q")).toBe("web");
+    expect(createObjectURL).toHaveBeenCalledTimes(1);
   });
 
   it("hides deployment creation for read-only capabilities", async () => {
@@ -1051,7 +1213,7 @@ describe("dosh application", () => {
     renderRoute("/workloads?namespace=default");
     expect(await screen.findByRole("link", { name: "web" })).toBeInTheDocument();
     await waitFor(() => expect(capabilityRequests).toBeGreaterThan(0));
-    await waitFor(() => expect(screen.queryByRole("button", { name: "创建 Deployment" })).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByRole("button", { name: "创建工作负载" })).not.toBeInTheDocument());
   });
 
   it("streams pod logs in the detail page", async () => {

@@ -48,7 +48,7 @@ Dosh 不替代 Kubernetes，也不绕过 Kubernetes。所有身份、权限和�
 | 集群总览 | 集群版本、CNI、节点与 Pod 健康度、工作负载数量、CPU/内存使用和调度容量；Metrics API 不可用时自动回退到 requests 数据 |
 | 节点管理 | 节点状态、角色、容量、标签、污点、Pod 分布、事件和日志；按权限执行停止/恢复调度，以及带 PodDisruptionBudget 预检的排空计划与执行 |
 | 工作负载 | Deployment、StatefulSet、DaemonSet、Job、CronJob；详情、实例、容器配置、关联 Service、事件、日志和 YAML |
-| 工作负载操作 | 创建 Deployment、扩缩容、滚动重启、更新镜像、暂停/恢复 CronJob、删除、查看 Deployment/StatefulSet 发布历史及回滚前 Pod 模板 Diff 并回滚，以及按资源级权限编辑 YAML |
+| 工作负载操作 | 创建 Deployment、StatefulSet、DaemonSet、Job、CronJob，扩缩容、滚动重启、更新镜像、暂停/恢复 CronJob、从 CronJob 立即执行一次性 Job、删除、查看 Deployment/StatefulSet 发布历史及回滚前 Pod 模板 Diff 并回滚，以及按资源级权限编辑 YAML |
 | Pod | 状态、普通/Init/Ephemeral Container、重启次数、资源、归属控制器与节点深链、事件、日志和 YAML；在具备 `pods/exec` 权限时提供经审计的浏览器交互终端，并允许有权限的用户为无 Shell 镜像创建受控的 Ephemeral 调试容器；具备 `pods/portforward` 权限时可创建回环、限时、自动回收的 Pod/Service 临时 HTTP 隧道 |
 | 一键故障诊断 | 对 Pod、Deployment、StatefulSet、DaemonSet、Job、CronJob、Service、Ingress、PVC 和 Node 提供只读、确定性、证据驱动的诊断；按严重程度展示检查项、原因、证据、相关资源与可复制的 `kubectl` 命令，不自动执行修复。事件和有界近期日志受 Kubernetes RBAC 约束，权限不足时会明确降级为“跳过”，不会中断其余检查 |
 | 日志 | 单 Pod 实时日志，以及最多 20 条 Pod/容器流的受控工作负载级聚合；支持容器、上一实例、行数、时间戳、时间范围、来源前缀、关键词过滤和逐流权限 warning |
@@ -62,7 +62,7 @@ Dosh 不替代 Kubernetes，也不绕过 Kubernetes。所有身份、权限和�
 | 资源浏览器 | 通过 Kubernetes API Discovery 浏览全部 served version 的内置资源与 CRD 类型；按 API Group、Kind、资源名筛选并切换版本；提供收藏、最近资源、保存视图、隐藏列、通用列表/详情/事件、可筛选的跨资源关系拓扑、带字段搜索的 Schema 动态表单、StatefulSet/DaemonSet/Job/CronJob/PV/StorageClass 推荐模板、YAML 创建/编辑/删除、变更 Diff、本地模板/草稿恢复、全屏编辑和 Owner References，所有读写均受 Kubernetes RBAC 约束；通用 Secret 写入仍由专用页面承担 |
 | YAML 创建 | 按模板编辑、本地模板与最近草稿恢复、Dry Run、创建或 Server-Side Apply；支持多文档顺序提交和常用内置资源白名单；CRD 与其他已发现资源通过资源浏览器的 Schema/YAML 双模式写入，高风险资源需要名称二次确认 |
 | 集群配置 | Kubernetes 版本、平台、CNI、控制面地址、DNS 域名、Pod/Service 网段和节点 Pod CIDR |
-| 审计 | 查看认证与写操作审计记录；审计同时写入标准输出，可选 HTTPS Webhook 和 HMAC 签名 |
+| 审计 | 查看认证与写操作审计记录，按服务端实际动作目录筛选，并将当前筛选快照导出为 CSV/JSON；导出行为本身也会留痕。审计同时写入标准输出，可选 HTTPS Webhook 和 HMAC 签名 |
 | 服务端证书 | 查看 HTTPS 证书有效期、SAN、密钥算法、指纹和加载状态；证书更新后按周期热加载 |
 
 ## 设计原则

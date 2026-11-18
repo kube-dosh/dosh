@@ -665,7 +665,7 @@ paths:
         required: true
         content:
           application/json:
-            schema: { $ref: "#/components/schemas/DeploymentCreateRequest" }
+              schema: { $ref: "#/components/schemas/WorkloadCreateRequest" }
       responses:
         "201":
           description: Deployment created
@@ -688,7 +688,7 @@ paths:
         required: true
         content:
           application/json:
-            schema: { $ref: "#/components/schemas/DeploymentCreateRequest" }
+              schema: { $ref: "#/components/schemas/WorkloadCreateRequest" }
       responses:
         "200":
           description: Deployment manifest
@@ -698,6 +698,72 @@ paths:
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/workloads/create:
+    post:
+      tags: [workloads]
+      summary: Validate with API Server dry-run and create a workload
+      description: Creates one Deployment, StatefulSet, DaemonSet, Job or CronJob with a single application container. The request is validated locally, then submitted once with API Server dry-run before the real create request.
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/WorkloadCreateKindRequest" }
+      responses:
+        "201":
+          description: Workload created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WorkloadSummary" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
+  /api/v1/workloads/create/preview:
+    post:
+      tags: [workloads]
+      summary: Preview a validated workload manifest without writing
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/WorkloadCreateKindRequest" }
+      responses:
+        "200":
+          description: Workload manifest
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DeploymentPreview" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/workloads/cronjob/{namespace}/{name}/run:
+    post:
+      tags: [workloads]
+      summary: Create a one-off Job from a CronJob template
+      description: Requires get on the CronJob and create on Jobs. The CronJob schedule is not modified.
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      parameters:
+        - { $ref: "#/components/parameters/NamespacePath" }
+        - { $ref: "#/components/parameters/Name" }
+      responses:
+        "201":
+          description: Job created from the CronJob template
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WorkloadSummary" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
   /api/v1/workloads/{kind}/{namespace}/{name}:
     get:
       tags: [workloads]
@@ -1241,6 +1307,47 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/AuditRecordList" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/audit-events/actions:
+    get:
+      tags: [observability]
+      summary: List audit action names present in the retained history
+      description: Derives the filter directory from actual audit records so newly audited operations become filterable without a frontend-maintained enum.
+      responses:
+        "200":
+          description: Distinct audit actions
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AuditActionList" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/audit-events/export:
+    get:
+      tags: [observability]
+      summary: Export the matching retained audit snapshot
+      description: Exports all audit records currently matching the filters from the process-local retained snapshot. Format may be csv or json. A successful or denied export is itself recorded as the export-audit action after the snapshot is read.
+      parameters:
+        - { $ref: "#/components/parameters/Namespace" }
+        - { $ref: "#/components/parameters/Search" }
+        - name: action
+          in: query
+          schema: { type: string }
+        - name: result
+          in: query
+          schema: { type: string, enum: [success, failure, denied] }
+        - name: format
+          in: query
+          schema: { type: string, enum: [csv, json], default: csv }
+      responses:
+        "200":
+          description: Audit export attachment
+          content:
+            text/csv:
+              schema: { type: string }
+            application/json:
+              schema: { $ref: "#/components/schemas/AuditExport" }
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
@@ -2998,6 +3105,22 @@ components:
           type: array
           items: { $ref: "#/components/schemas/AuditRecord" }
         meta: { $ref: "#/components/schemas/ListMeta" }
+    AuditActionList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { type: string }
+    AuditExport:
+      type: object
+      required: [exportedAt, count, items]
+      properties:
+        exportedAt: { type: string, format: date-time }
+        count: { type: integer }
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/AuditRecord" }
     ClusterNodeCIDR:
       type: object
       required: [name, podCIDRs]
@@ -3326,13 +3449,21 @@ components:
       properties:
         name: { type: string }
         value: { type: string }
-    DeploymentCreateRequest:
+    WorkloadCreateRequest:
       type: object
-      required: [name, namespace, replicas, image, containerPort]
+      required: [name, namespace, image, containerPort]
       properties:
+        kind:
+          type: string
+          enum: [deployment, statefulset, daemonset, job, cronjob]
+          description: Optional on the legacy Deployment-only endpoint; required by WorkloadCreateKindRequest.
         name: { type: string, minLength: 1, maxLength: 63 }
         namespace: { type: string, minLength: 1, maxLength: 63 }
         replicas: { type: integer, minimum: 0, maximum: 1000 }
+        serviceName: { type: string, maxLength: 63, description: Required for StatefulSet; defaults to the workload name. }
+        schedule: { type: string, maxLength: 100, description: Required for CronJob. }
+        concurrencyPolicy: { type: string, enum: [Allow, Forbid, Replace], default: Allow }
+        suspend: { type: boolean, default: false }
         containerName: { type: string, maxLength: 63 }
         image: { type: string, minLength: 1, maxLength: 512 }
         registryId: { type: string, maxLength: 128 }
@@ -3349,6 +3480,11 @@ components:
           type: object
           maxProperties: 32
           additionalProperties: { type: string }
+    WorkloadCreateKindRequest:
+      allOf:
+        - { $ref: "#/components/schemas/WorkloadCreateRequest" }
+        - type: object
+          required: [kind]
     DeploymentPreview:
       type: object
       required: [yaml]

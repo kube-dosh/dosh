@@ -627,10 +627,19 @@ type NodeMetadataRequest = { method: string; path: string; csrf: string | null; 
 type PreferenceRequest = { method: string; body: UserPreferences };
 type RegistryRequest = { method: string; path: string; body?: ContainerRegistryUpsertInput };
 
-async function installApiMocks(page: Page, options: { authenticated?: boolean; authMode?: "local" | "token"; overview?: Overview; overviewStatus?: number; nodeSchedulingRequests?: NodeSchedulingRequest[]; nodeMetadataRequests?: NodeMetadataRequest[]; preferenceRequests?: PreferenceRequest[]; registryRequests?: RegistryRequest[]; containerRegistries?: ContainerRegistry[]; registryFailures?: { repositories?: boolean; tags?: boolean }; expireSessionOnNodes?: boolean; noIngressController?: boolean; podName?: string; podExec?: boolean; podEphemeralDebug?: boolean; emptyDiscovery?: boolean; ephemeralRequests?: Array<{ image: string; targetContainerName?: string; shell?: string }>; diagnosis?: Diagnosis } = {}) {
+async function installApiMocks(page: Page, options: { authenticated?: boolean; authMode?: "local" | "token"; overview?: Overview; overviewStatus?: number; nodeSchedulingRequests?: NodeSchedulingRequest[]; nodeMetadataRequests?: NodeMetadataRequest[]; preferenceRequests?: PreferenceRequest[]; registryRequests?: RegistryRequest[]; containerRegistries?: ContainerRegistry[]; registryFailures?: { repositories?: boolean; tags?: boolean }; expireSessionOnNodes?: boolean; noIngressController?: boolean; podName?: string; podExec?: boolean; podEphemeralDebug?: boolean; emptyDiscovery?: boolean; ephemeralRequests?: Array<{ image: string; targetContainerName?: string; shell?: string }>; diagnosis?: Diagnosis; workloadCreate?: boolean } = {}) {
   const authenticated = options.authenticated ?? true;
   const authMode = options.authMode ?? "local";
-  const sessionResponse: SessionResponse = { ...session, authMode, capabilities: { ...session.capabilities, podExec: options.podExec ?? session.capabilities.podExec, podEphemeralDebug: options.podEphemeralDebug ?? session.capabilities.podEphemeralDebug } };
+  const resourceActions = session.capabilities.resourceActions!;
+  const writableResourceActions = options.workloadCreate ? {
+    ...resourceActions,
+    deployments: { ...resourceActions.deployments, create: true },
+    statefulsets: { ...resourceActions.statefulsets, create: true },
+    daemonsets: { ...resourceActions.daemonsets, create: true },
+    jobs: { ...resourceActions.jobs, create: true },
+    cronjobs: { ...resourceActions.cronjobs, create: true },
+  } : resourceActions;
+  const sessionResponse: SessionResponse = { ...session, authMode, capabilities: { ...session.capabilities, podExec: options.podExec ?? session.capabilities.podExec, podEphemeralDebug: options.podEphemeralDebug ?? session.capabilities.podEphemeralDebug, resourceActions: writableResourceActions } };
   const listedPod = options.podName ? { ...podSummary, name: options.podName } : podSummary;
   let signedIn = authenticated;
   let nodeSchedulingDisabled = false;
@@ -976,6 +985,19 @@ async function installApiMocks(page: Page, options: { authenticated?: boolean; a
       ));
       return json(route, list(items));
     }
+    if (path === "/api/v1/workloads/create/preview" && method === "POST") {
+      const body = request.postDataJSON() as { kind: string; name: string };
+      const kind = body.kind === "cronjob" ? "CronJob" : body.kind === "statefulset" ? "StatefulSet" : body.kind === "daemonset" ? "DaemonSet" : body.kind === "job" ? "Job" : "Deployment";
+      return json(route, { yaml: `apiVersion: apps/v1\nkind: ${kind}\nmetadata:\n  name: ${body.name}\n` });
+    }
+    if (path === "/api/v1/workloads/create" && method === "POST") {
+      const body = request.postDataJSON() as { kind: string; name: string; namespace: string };
+      const kind = body.kind === "cronjob" ? "CronJob" : body.kind === "statefulset" ? "StatefulSet" : body.kind === "daemonset" ? "DaemonSet" : body.kind === "job" ? "Job" : "Deployment";
+      return json(route, { ...workloadSummary, kind, name: body.name, namespace: body.namespace, images: ["nginx:alpine"] }, 201);
+    }
+    if (path === "/api/v1/workloads/statefulset/default/db" && method === "GET") {
+      return json(route, { ...workloadDetail, kind: "StatefulSet", name: "db", images: ["nginx:alpine"] });
+    }
     if (path === "/api/v1/namespaces") {
       const query = new URL(request.url()).searchParams.get("q")?.trim() ?? "";
       return json(route, list([
@@ -1045,6 +1067,12 @@ async function installApiMocks(page: Page, options: { authenticated?: boolean; a
     if (path === "/api/v1/workloads/cronjob/default/backup" && method === "GET") return json(route, cronJobDetail);
     if (path === "/api/v1/workloads/cronjob/default/backup/suspend" && method === "POST") {
       return json(route, { status: "updated" });
+    }
+    if (path === "/api/v1/workloads/cronjob/default/backup/run" && method === "POST") {
+      return json(route, { ...workloadSummary, kind: "Job", name: "backup-manual-demo", namespace: "default" }, 201);
+    }
+    if (path === "/api/v1/workloads/job/default/backup-manual-demo" && method === "GET") {
+      return json(route, { ...workloadDetail, kind: "Job", name: "backup-manual-demo" });
     }
     if (path === "/api/v1/pods") return json(route, list([listedPod]));
     if (path === "/api/v1/pods/default/web-abcdef-12345/ephemeral-containers" && method === "POST") {
@@ -1123,6 +1151,26 @@ async function installApiMocks(page: Page, options: { authenticated?: boolean; a
         && (!params.get("q") || JSON.stringify(record).includes(params.get("q") ?? ""))
       ));
       return json(route, list(records));
+    }
+    if (path === "/api/v1/audit-events/actions" && method === "GET") {
+      return json(route, { items: ["diagnose", "run-cronjob", "scale"] });
+    }
+    if (path === "/api/v1/audit-events/export" && method === "GET") {
+      const format = new URL(request.url()).searchParams.get("format") ?? "csv";
+      if (format === "json") {
+        return route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          headers: { "Content-Disposition": 'attachment; filename="dosh-audit-e2e.json"' },
+          body: JSON.stringify({ exportedAt: "2026-11-04T06:00:00Z", count: 1, items: [] }),
+        });
+      }
+      return route.fulfill({
+        status: 200,
+        contentType: "text/csv; charset=utf-8",
+        headers: { "Content-Disposition": 'attachment; filename="dosh-audit-e2e.csv"' },
+        body: "id,timestamp,user,groups,action,resource,namespace,name,result,requestId,error,details\n42,2026-11-04T06:00:00Z,alice@example.test,dosh-admins,scale,deployment,production,web-api,success,req-audit-42,,{}\n",
+      });
     }
     if (path === "/api/v1/yaml") {
       const params = new URL(request.url()).searchParams;
@@ -2412,6 +2460,66 @@ test("CronJob 暂停携带资源版本并发送 CSRF", async ({ page }) => {
   await expect(page.getByText("CronJob 已暂停调度")).toBeVisible();
 });
 
+test("创建工作负载支持 StatefulSet 与 Headless Service", async ({ page }) => {
+  await installApiMocks(page, { workloadCreate: true });
+  await page.goto("/workloads?namespace=default&kind=statefulset");
+  await page.getByRole("button", { name: "创建工作负载" }).click();
+  const dialog = page.getByRole("dialog", { name: "创建工作负载" });
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByLabel("工作负载类型")).toContainText("StatefulSet");
+  await dialog.getByLabel("StatefulSet 名称").fill("db");
+  await dialog.getByLabel("Headless Service").fill("db-headless");
+  await dialog.getByRole("button", { name: "下一步" }).click();
+  await expect(dialog.getByLabel("容器镜像")).toBeVisible();
+  await dialog.getByRole("button", { name: "下一步" }).click();
+  await expect(dialog.getByText(/kind: StatefulSet/)).toBeVisible();
+
+  const createRequest = page.waitForRequest((request) => request.method() === "POST" && new URL(request.url()).pathname === "/api/v1/workloads/create");
+  await dialog.getByRole("button", { name: "创建 StatefulSet" }).click();
+  const request = await createRequest;
+  expect(request.headers()["x-csrf-token"]).toBe(csrfToken);
+  expect(request.postDataJSON()).toMatchObject({ kind: "statefulset", name: "db", namespace: "default", serviceName: "db-headless", replicas: 1 });
+  await expect(page.getByRole("heading", { name: "db", exact: true })).toBeVisible();
+});
+
+test("CronJob 立即执行后打开一次性 Job", async ({ page }) => {
+  await installApiMocks(page, { workloadCreate: true });
+  await page.goto("/workloads/cronjob/default/backup");
+  await expect(page.getByRole("heading", { name: "backup", exact: true })).toBeVisible();
+
+  await page.getByRole("button", { name: "立即执行" }).click();
+  const dialog = page.getByRole("alertdialog", { name: "立即执行 backup？" });
+  const runRequest = page.waitForRequest((request) => request.method() === "POST" && new URL(request.url()).pathname === "/api/v1/workloads/cronjob/default/backup/run");
+  await dialog.getByRole("button", { name: "确认执行" }).click();
+  const request = await runRequest;
+  expect(request.headers()["x-csrf-token"]).toBe(csrfToken);
+  await expect(page.getByRole("heading", { name: "backup-manual-demo", exact: true })).toBeVisible();
+});
+
+test("审计页使用服务端动作目录并导出当前筛选快照", async ({ page }) => {
+  await installApiMocks(page);
+  await page.goto("/audit?namespace=production&result=success&action=scale&q=web");
+  await expect(page.getByRole("cell", { name: "alice@example.test" })).toBeVisible();
+
+  await page.getByRole("combobox", { name: "审计动作筛选" }).click();
+  await expect(page.getByRole("option", { name: "run-cronjob" })).toBeVisible();
+  await expect(page.getByRole("option", { name: "diagnose" })).toBeVisible();
+  await page.keyboard.press("Escape");
+
+  const exportRequest = page.waitForRequest((request) => request.method() === "GET" && new URL(request.url()).pathname === "/api/v1/audit-events/export");
+  const download = page.waitForEvent("download");
+  await page.getByRole("button", { name: "导出" }).click();
+  await page.getByRole("menuitem", { name: "导出 CSV" }).click();
+  const request = await exportRequest;
+  const url = new URL(request.url());
+  expect(url.searchParams.get("format")).toBe("csv");
+  expect(url.searchParams.get("namespace")).toBe("production");
+  expect(url.searchParams.get("result")).toBe("success");
+  expect(url.searchParams.get("action")).toBe("scale");
+  expect(url.searchParams.get("q")).toBe("web");
+  expect((await download).suggestedFilename()).toBe("dosh-audit-e2e.csv");
+});
+
 test("Pod 日志通过流式接口加载", async ({ page }) => {
   await installApiMocks(page);
   await page.goto("/pods/default/web-abcdef-12345");
@@ -3199,11 +3307,11 @@ test("移动端关键弹窗与确认框保持在视口内", async ({ page }) => 
   await page.keyboard.press("Escape");
 
   await page.goto("/workloads");
-  await page.getByRole("button", { name: "创建 Deployment" }).click();
-  dialog = page.getByRole("dialog", { name: "创建 Deployment" });
+  await page.getByRole("button", { name: "创建工作负载" }).click();
+  dialog = page.getByRole("dialog", { name: "创建工作负载" });
   await expect(dialog).toBeVisible();
-  await expectElementInsideViewport(page, dialog, "deployment create dialog");
-  await page.screenshot({ path: "test-results/mobile-interactions/deployment-create-dialog.png", fullPage: true });
+  await expectElementInsideViewport(page, dialog, "workload create dialog");
+  await page.screenshot({ path: "test-results/mobile-interactions/workload-create-dialog.png", fullPage: true });
   await page.keyboard.press("Escape");
 
   await page.goto("/resources/example.io/v1/widgets?namespace=default");

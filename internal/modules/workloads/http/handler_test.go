@@ -121,6 +121,10 @@ func (r *workloadRepo) GetWorkload(_ context.Context, kind, namespace, name stri
 }
 
 func (r *workloadRepo) CreateDeployment(_ context.Context, spec domain.DeploymentCreateSpec, dryRun bool) (domain.WorkloadSummary, error) {
+	return r.CreateWorkload(context.Background(), spec, dryRun)
+}
+
+func (r *workloadRepo) CreateWorkload(_ context.Context, spec domain.WorkloadCreateSpec, dryRun bool) (domain.WorkloadSummary, error) {
 	r.createCalls = append(r.createCalls, dryRun)
 	r.lastNamespace, r.lastName = spec.Namespace, spec.Name
 	if r.createErr != nil {
@@ -130,9 +134,18 @@ func (r *workloadRepo) CreateDeployment(_ context.Context, spec domain.Deploymen
 }
 
 func (r *workloadRepo) PreviewDeployment(_ context.Context, spec domain.DeploymentCreateSpec) (string, error) {
+	return r.PreviewWorkload(context.Background(), spec)
+}
+
+func (r *workloadRepo) PreviewWorkload(_ context.Context, spec domain.WorkloadCreateSpec) (string, error) {
 	r.previewCalls++
 	r.lastNamespace, r.lastName = spec.Namespace, spec.Name
 	return r.previewYAML, nil
+}
+
+func (r *workloadRepo) RunCronJobOnce(_ context.Context, namespace, name string) (domain.WorkloadSummary, error) {
+	r.lastNamespace, r.lastName = namespace, name
+	return domain.WorkloadSummary{Kind: "Job", Name: name + "-manual", Namespace: namespace}, nil
 }
 
 func (r *workloadRepo) ScaleWorkload(_ context.Context, kind, namespace, name string, replicas int32, expectedResourceVersion string) error {
@@ -796,6 +809,35 @@ func TestPreviewDeploymentAndCreateConflict(t *testing.T) {
 	response = performWorkloadJSON(server.router, http.MethodPost, "/api/v1/workloads/deployments", payload, server.authHeaders())
 	if response.Code != http.StatusConflict || len(server.repo.createCalls) != 1 || !strings.Contains(response.Body.String(), `"code":"already_exists"`) {
 		t.Fatalf("conflict status=%d calls=%#v body=%s", response.Code, server.repo.createCalls, response.Body.String())
+	}
+}
+
+func TestGenericWorkloadCreatePreviewAndCronJobRunRoutes(t *testing.T) {
+	server := newWorkloadTestServer(t)
+	server.repo.previewYAML = "apiVersion: batch/v1\nkind: CronJob\nmetadata:\n  name: backup\n"
+	payload := `{"kind":"cronjob","name":"backup","namespace":"prod","schedule":"*/5 * * * *","concurrencyPolicy":"Forbid","image":"busybox:1.37","containerPort":80}`
+
+	response := performWorkloadJSON(server.router, http.MethodPost, "/api/v1/workloads/create", `{"name":"api","namespace":"prod","image":"nginx:alpine","containerPort":80}`, server.authHeaders())
+	if response.Code != http.StatusBadRequest || len(server.repo.createCalls) != 0 {
+		t.Fatalf("missing kind status=%d calls=%#v body=%s", response.Code, server.repo.createCalls, response.Body.String())
+	}
+
+	response = performWorkloadJSON(server.router, http.MethodPost, "/api/v1/workloads/create/preview", payload, server.authHeaders())
+	if response.Code != http.StatusOK || server.repo.previewCalls != 1 || !strings.Contains(response.Body.String(), "kind: CronJob") {
+		t.Fatalf("preview status=%d calls=%d body=%s", response.Code, server.repo.previewCalls, response.Body.String())
+	}
+
+	response = performWorkloadJSON(server.router, http.MethodPost, "/api/v1/workloads/create", payload, server.authHeaders())
+	if response.Code != http.StatusCreated || len(server.repo.createCalls) != 2 || !server.repo.createCalls[0] || server.repo.createCalls[1] {
+		t.Fatalf("create status=%d calls=%#v body=%s", response.Code, server.repo.createCalls, response.Body.String())
+	}
+	if server.repo.lastName != "backup" || server.repo.lastNamespace != "prod" {
+		t.Fatalf("created resource = %s/%s", server.repo.lastNamespace, server.repo.lastName)
+	}
+
+	response = performWorkloadJSON(server.router, http.MethodPost, "/api/v1/workloads/cronjob/prod/backup/run", ``, server.authHeaders())
+	if response.Code != http.StatusCreated || server.repo.lastName != "backup" || server.repo.lastNamespace != "prod" {
+		t.Fatalf("run status=%d resource=%s/%s body=%s", response.Code, server.repo.lastNamespace, server.repo.lastName, response.Body.String())
 	}
 }
 

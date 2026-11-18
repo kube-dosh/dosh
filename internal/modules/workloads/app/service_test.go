@@ -24,10 +24,12 @@ type fakeRepository struct {
 	podLogCalls    []string
 	podLogErrors   map[string]error
 	createCalls    []bool
+	lastCreateSpec domain.WorkloadCreateSpec
 	previewCalls   int
 	createErr      error
 	previewYAML    string
 	previewErr     error
+	runErr         error
 	workloads      []domain.WorkloadSummary
 	workloadsErr   error
 	lastListQuery  domain.ListQuery
@@ -87,13 +89,20 @@ func (f *fakeRepository) GetWorkload(_ context.Context, kind, namespace, name st
 	return f.workloadDetail, f.workloadErr
 }
 func (f *fakeRepository) CreateDeployment(_ context.Context, spec domain.DeploymentCreateSpec, dryRun bool) (domain.WorkloadSummary, error) {
+	return f.CreateWorkload(context.Background(), spec, dryRun)
+}
+func (f *fakeRepository) CreateWorkload(_ context.Context, spec domain.WorkloadCreateSpec, dryRun bool) (domain.WorkloadSummary, error) {
 	f.createCalls = append(f.createCalls, dryRun)
+	f.lastCreateSpec = spec
 	if f.createErr != nil {
 		return domain.WorkloadSummary{}, f.createErr
 	}
 	return domain.WorkloadSummary{Kind: "Deployment", Name: spec.Name, Namespace: spec.Namespace, Desired: spec.Replicas}, nil
 }
 func (f *fakeRepository) PreviewDeployment(context.Context, domain.DeploymentCreateSpec) (string, error) {
+	return f.PreviewWorkload(context.Background(), domain.WorkloadCreateSpec{})
+}
+func (f *fakeRepository) PreviewWorkload(context.Context, domain.WorkloadCreateSpec) (string, error) {
 	f.previewCalls++
 	return f.previewYAML, f.previewErr
 }
@@ -123,6 +132,13 @@ func (f *fakeRepository) SetCronJobSuspend(_ context.Context, namespace, name st
 	f.lastNamespace, f.lastName = namespace, name
 	f.lastSuspend = update
 	return f.suspendErr
+}
+func (f *fakeRepository) RunCronJobOnce(_ context.Context, namespace, name string) (domain.WorkloadSummary, error) {
+	f.lastNamespace, f.lastName = namespace, name
+	if f.runErr != nil {
+		return domain.WorkloadSummary{}, f.runErr
+	}
+	return domain.WorkloadSummary{Kind: "Job", Name: name + "-manual", Namespace: namespace}, nil
 }
 func (f *fakeRepository) ListWorkloadRevisions(_ context.Context, kind, namespace, name string) ([]domain.WorkloadRevision, error) {
 	f.lastKind, f.lastNamespace, f.lastName = kind, namespace, name
@@ -784,6 +800,132 @@ func TestCreateDeploymentDryRunsBeforeWritingAndAudits(t *testing.T) {
 	}
 	if auditor.events != 1 || auditor.results[0] != "success" {
 		t.Fatalf("audit = events %d results %#v", auditor.events, auditor.results)
+	}
+}
+
+func TestCreateWorkloadSupportsAllKindsWithKindSpecificDefaults(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		kind         string
+		mutate       func(*domain.WorkloadCreateSpec)
+		wantReplicas int32
+		wantService  string
+		wantSchedule string
+		wantPolicy   string
+	}{
+		{kind: "deployment", wantReplicas: 2},
+		{kind: "statefulset", wantReplicas: 2, wantService: "api"},
+		{kind: "daemonset"},
+		{kind: "job"},
+		{kind: "cronjob", mutate: func(spec *domain.WorkloadCreateSpec) {
+			spec.Schedule = " */5 * * * * "
+			spec.ConcurrencyPolicy = "Forbid"
+		}, wantSchedule: "*/5 * * * *", wantPolicy: "Forbid"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.kind, func(t *testing.T) {
+			repo := &fakeRepository{}
+			auditor := &fakeAuditor{}
+			service := New(repo, fakeGuard{allow: true}, auditor)
+			spec := validDeploymentSpec()
+			spec.Kind = tt.kind
+			if tt.mutate != nil {
+				tt.mutate(&spec)
+			}
+			created, err := service.CreateWorkload(context.Background(), domain.Actor{Username: "admin"}, spec)
+			if err != nil {
+				t.Fatalf("CreateWorkload() error = %v", err)
+			}
+			if created.Name != "api" || len(repo.createCalls) != 2 || !repo.createCalls[0] || repo.createCalls[1] {
+				t.Fatalf("created = %#v calls = %#v", created, repo.createCalls)
+			}
+			got := repo.lastCreateSpec
+			if got.Kind != tt.kind || got.Replicas != tt.wantReplicas || got.ServiceName != tt.wantService || got.Schedule != tt.wantSchedule || got.ConcurrencyPolicy != tt.wantPolicy {
+				t.Fatalf("normalized spec = %#v", got)
+			}
+			if len(auditor.actions) != 1 || auditor.actions[0] != "create" || auditor.results[0] != "success" {
+				t.Fatalf("audit actions=%#v results=%#v", auditor.actions, auditor.results)
+			}
+		})
+	}
+}
+
+func TestCreateWorkloadRejectsKindSpecificInvalidInput(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name   string
+		mutate func(*domain.WorkloadCreateSpec)
+		field  string
+	}{
+		{name: "unsupported kind", mutate: func(spec *domain.WorkloadCreateSpec) { spec.Kind = "pod" }, field: "kind"},
+		{name: "cronjob missing schedule", mutate: func(spec *domain.WorkloadCreateSpec) { spec.Kind = "cronjob"; spec.Schedule = "" }, field: "schedule"},
+		{name: "cronjob invalid policy", mutate: func(spec *domain.WorkloadCreateSpec) {
+			spec.Kind, spec.Schedule, spec.ConcurrencyPolicy = "cronjob", "*/5 * * * *", "Sometimes"
+		}, field: "concurrencyPolicy"},
+		{name: "statefulset invalid service", mutate: func(spec *domain.WorkloadCreateSpec) { spec.Kind = "statefulset"; spec.ServiceName = "Bad_Service" }, field: "serviceName"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := &fakeRepository{}
+			service := New(repo, fakeGuard{allow: true}, &fakeAuditor{})
+			spec := validDeploymentSpec()
+			tt.mutate(&spec)
+			_, err := service.CreateWorkload(context.Background(), domain.Actor{Username: "admin"}, spec)
+			if !errors.Is(err, domain.ErrInvalid) {
+				t.Fatalf("error = %v, want ErrInvalid", err)
+			}
+			var validation *domain.ValidationError
+			if !errors.As(err, &validation) || validation.Field != tt.field {
+				t.Fatalf("validation error = %#v, want field %q", validation, tt.field)
+			}
+			if len(repo.createCalls) != 0 {
+				t.Fatalf("repository called for invalid input: %#v", repo.createCalls)
+			}
+		})
+	}
+}
+
+func TestRunCronJobOnceRequiresGetAndJobCreateAndAudits(t *testing.T) {
+	t.Parallel()
+	repo := &fakeRepository{}
+	guard := &recordingGuard{}
+	auditor := &fakeAuditor{}
+	service := New(repo, guard, auditor)
+	created, err := service.RunCronJobOnce(context.Background(), domain.Actor{Username: "admin"}, " prod ", " backup ")
+	if err != nil {
+		t.Fatalf("RunCronJobOnce() error = %v", err)
+	}
+	if created.Name != "backup-manual" || repo.lastNamespace != "prod" || repo.lastName != "backup" {
+		t.Fatalf("created=%#v namespace=%q name=%q", created, repo.lastNamespace, repo.lastName)
+	}
+	if len(guard.accesses) != 2 {
+		t.Fatalf("accesses = %#v", guard.accesses)
+	}
+	if got := guard.accesses[0]; got.Verb != "get" || got.APIGroup != "batch" || got.Resource != "cronjobs" || got.Namespace != "prod" || got.Name != "backup" {
+		t.Fatalf("cronjob access = %#v", got)
+	}
+	if got := guard.accesses[1]; got.Verb != "create" || got.APIGroup != "batch" || got.Resource != "jobs" || got.Namespace != "prod" {
+		t.Fatalf("job access = %#v", got)
+	}
+	if len(auditor.actions) != 1 || auditor.actions[0] != "run-cronjob" || auditor.results[0] != "success" {
+		t.Fatalf("audit actions=%#v results=%#v", auditor.actions, auditor.results)
+	}
+}
+
+func TestRunCronJobOnceRejectsInvalidNamesAndAuditsFailures(t *testing.T) {
+	t.Parallel()
+	repo := &fakeRepository{}
+	ax := &fakeAuditor{}
+	service := New(repo, &recordingGuard{}, ax)
+	if _, err := service.RunCronJobOnce(context.Background(), domain.Actor{Username: "admin"}, "Bad_NS", "backup"); !errors.Is(err, domain.ErrInvalid) {
+		t.Fatalf("invalid namespace error = %v", err)
+	}
+	repo.runErr = domain.ErrUnavailable
+	if _, err := service.RunCronJobOnce(context.Background(), domain.Actor{Username: "admin"}, "prod", "backup"); !errors.Is(err, domain.ErrUnavailable) {
+		t.Fatalf("repository error = %v", err)
+	}
+	if len(ax.actions) != 2 || ax.actions[0] != "run-cronjob" || ax.results[0] != "failure" || ax.results[1] != "failure" {
+		t.Fatalf("audit actions=%#v results=%#v", ax.actions, ax.results)
 	}
 }
 

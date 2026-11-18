@@ -22,13 +22,14 @@ type Repository interface {
 	ListWorkloads(ctx context.Context, query domain.ListQuery) ([]domain.WorkloadSummary, error)
 	ListWorkloadsPage(ctx context.Context, query domain.ListQuery, page domain.PageRequest) (domain.PageResult[domain.WorkloadSummary], error)
 	GetWorkload(ctx context.Context, kind, namespace, name string) (domain.WorkloadDetail, error)
-	CreateDeployment(ctx context.Context, spec domain.DeploymentCreateSpec, dryRun bool) (domain.WorkloadSummary, error)
-	PreviewDeployment(ctx context.Context, spec domain.DeploymentCreateSpec) (string, error)
+	CreateWorkload(ctx context.Context, spec domain.WorkloadCreateSpec, dryRun bool) (domain.WorkloadSummary, error)
+	PreviewWorkload(ctx context.Context, spec domain.WorkloadCreateSpec) (string, error)
 	ScaleWorkload(ctx context.Context, kind, namespace, name string, replicas int32, expectedResourceVersion string) error
 	RestartWorkload(ctx context.Context, kind, namespace, name string) error
 	UpdateWorkloadImage(ctx context.Context, kind, namespace, name string, update domain.WorkloadImageUpdate) error
 	UpdateWorkloadContainerConfig(ctx context.Context, kind, namespace, name string, update domain.WorkloadContainerConfigUpdate) error
 	SetCronJobSuspend(ctx context.Context, namespace, name string, update domain.CronJobSuspendUpdate) error
+	RunCronJobOnce(ctx context.Context, namespace, name string) (domain.WorkloadSummary, error)
 	ListWorkloadRevisions(ctx context.Context, kind, namespace, name string) ([]domain.WorkloadRevision, error)
 	RollbackWorkload(ctx context.Context, kind, namespace, name string, revision int64) error
 	DeleteWorkload(ctx context.Context, kind, namespace, name string, propagation domain.DeletionPropagation) error
