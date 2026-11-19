@@ -1,4 +1,4 @@
-import { createRootRoute, createRoute, createRouter, Outlet } from "@tanstack/react-router";
+import { createRootRoute, createRoute, createRouter, lazyRouteComponent, Outlet } from "@tanstack/react-router";
 import { AppShell } from "@/components/layout/app-shell";
 import { ErrorState } from "@/components/feedback/states";
 import { LoginPage } from "@/routes/login-page";
@@ -68,6 +68,12 @@ const appRoute = createRoute({
 });
 
 const indexRoute = createRoute({ getParentRoute: () => appRoute, path: "/", component: OverviewPage });
+const applicationsRoute = createRoute({
+  getParentRoute: () => appRoute,
+  path: "/applications",
+  component: lazyRouteComponent(() => import("@/features/workspaces/application-workspace-page"), "ApplicationWorkspacePage"),
+  validateSearch: parseListSearch,
+});
 const clusterConfigurationRoute = createRoute({ getParentRoute: () => appRoute, path: "/cluster/config", component: ClusterConfigurationPage });
 const yamlCreateRoute = createRoute({ getParentRoute: () => appRoute, path: "/yaml/create", component: YAMLCreatePage });
 const resourcesRoute = createRoute({ getParentRoute: () => appRoute, path: "/resources", component: ResourcesPage, validateSearch: parseListSearch });
@@ -102,6 +108,7 @@ export const routeTree = rootRoute.addChildren([
   loginRoute,
   appRoute.addChildren([
     indexRoute,
+    applicationsRoute,
     clusterConfigurationRoute,
     yamlCreateRoute,
     resourcesRoute,

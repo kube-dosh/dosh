@@ -3,7 +3,7 @@ import { Link, Outlet, useNavigate, useRouterState } from "@tanstack/react-route
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import {
-  Activity, Bell, Boxes, ChevronDown, CircleDot, CloudCog, Database, FileCode2, FolderTree, HelpCircle, Layers3,
+  Activity, AppWindow, Bell, Boxes, ChevronDown, CircleDot, CloudCog, Database, FileCode2, FolderTree, HelpCircle, Layers3,
   KeyRound, LayoutDashboard, LogOut, Menu, Moon, Network, Package, ScrollText, Search, Server, Settings2, ShieldCheck, Sun, X,
   type LucideIcon,
 } from "lucide-react";
@@ -21,6 +21,7 @@ import { useResourcePreferencesSync } from "@/features/preferences/use-preferenc
 
 const nav: Array<{ href: string; label: string; icon: LucideIcon; adminOnly?: boolean; match: (path: string) => boolean }> = [
   { href: "/", label: "总览", icon: LayoutDashboard, match: (path: string) => path === "/" },
+  { href: "/applications", label: "应用工作台", icon: AppWindow, match: (path: string) => path.startsWith("/applications") },
   { href: "/cluster/config", label: "集群配置", icon: CloudCog, match: (path: string) => path.startsWith("/cluster/config") },
   { href: "/nodes", label: "节点管理", icon: Server, match: (path: string) => path.startsWith("/nodes") },
   { href: "/workloads", label: "工作负载", icon: Boxes, match: (path: string) => path.startsWith("/workloads") || path.startsWith("/pods") },

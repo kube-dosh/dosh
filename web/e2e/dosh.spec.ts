@@ -1190,6 +1190,9 @@ async function installApiMocks(page: Page, options: { authenticated?: boolean; a
     if (path === "/api/v1/workloads/deployment/default/web/scale" && method === "POST") {
       return json(route, { status: "ok" });
     }
+    if (path === "/api/v1/workloads/deployment/default/web/restart" && method === "POST") {
+      return json(route, { status: "ok" });
+    }
     if (path === "/api/v1/workloads/deployment/default/web/image" && method === "POST") {
       return json(route, { status: "updated" });
     }
@@ -3236,6 +3239,7 @@ test("移动端逐页布局无页面级横向溢出", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   const routes = [
     { path: "/", name: "overview" },
+    { path: "/applications?namespace=default", name: "application-workspace" },
     { path: "/cluster/config", name: "cluster-config" },
     { path: "/yaml/create", name: "yaml-create" },
     { path: "/nodes", name: "nodes" },
@@ -3359,6 +3363,7 @@ test("320px 窄屏关键页面无横向溢出", async ({ page }) => {
   await page.setViewportSize({ width: 320, height: 720 });
   for (const route of [
     { path: "/", name: "overview" },
+    { path: "/applications?namespace=default", name: "application-workspace" },
     { path: "/nodes", name: "nodes" },
     { path: "/nodes/worker-0001?tab=labels", name: "node-labels" },
     { path: "/nodes/worker-0001?tab=taints", name: "node-taints" },
@@ -3821,6 +3826,42 @@ test("移动端节点排空与回滚预览不产生横向溢出", async ({ page 
     await expectNoPageOverflow(page, `${viewport.width}px Helm rollback dialog`);
     await page.screenshot({ path: `test-results/mobile-interactions/helm-rollback-${viewport.width}.png`, fullPage: true });
     await page.keyboard.press("Escape");
+  }
+});
+
+test("应用工作台聚合应用资源并完成页内扩缩容与重启", async ({ page }) => {
+  await installApiMocks(page);
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.goto("/applications?namespace=default");
+
+  await expect(page.getByRole("heading", { name: "应用工作台" })).toBeVisible();
+  await expect(page.getByText("命名空间健康")).toBeVisible();
+  await expect(page.getByRole("link", { name: "app-config" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "web", exact: true }).first()).toBeVisible();
+  await expectNoPageOverflow(page, "application workspace desktop");
+
+  await page.getByRole("button", { name: "操作 Deployment default/web" }).click();
+  await page.getByRole("menuitem", { name: "扩缩容" }).click();
+  let dialog = page.getByRole("dialog", { name: "调整副本数" });
+  await expect(dialog).toBeVisible();
+  await dialog.getByLabel("期望副本数").fill("3");
+  await dialog.getByRole("button", { name: "确认调整" }).click();
+  await expect(page.getByText("web 副本数已调整为 3")).toBeVisible();
+
+  await page.getByRole("button", { name: "操作 Deployment default/web" }).click();
+  await page.getByRole("menuitem", { name: "滚动重启" }).click();
+  dialog = page.getByRole("alertdialog", { name: "滚动重启 web？" });
+  await expect(dialog).toBeVisible();
+  await dialog.getByRole("button", { name: "确认重启" }).click();
+  await expect(page.getByText("web 已触发滚动重启")).toBeVisible();
+
+  for (const viewport of [{ width: 390, height: 844 }, { width: 360, height: 800 }, { width: 320, height: 720 }]) {
+    await page.setViewportSize(viewport);
+    await page.goto("/applications?namespace=default");
+    await expect(page.getByRole("heading", { name: "应用工作台" })).toBeVisible();
+    await expect(page.getByText("命名空间健康")).toBeVisible();
+    await expectNoPageOverflow(page, `application workspace ${viewport.width}px`);
+    await page.screenshot({ path: `test-results/mobile-workspace/application-workspace-${viewport.width}.png`, fullPage: true });
   }
 });
 

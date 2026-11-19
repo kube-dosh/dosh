@@ -48,6 +48,7 @@ Dosh 不替代 Kubernetes，也不绕过 Kubernetes。所有身份、权限和�
 | 集群总览 | 集群版本、CNI、节点与 Pod 健康度、工作负载数量、CPU/内存使用和调度容量；Metrics API 不可用时自动回退到 requests 数据 |
 | 节点管理 | 节点状态、角色、容量、标签、污点、Pod 分布、事件和日志；按权限执行停止/恢复调度，以及带 PodDisruptionBudget 预检的排空计划与执行 |
 | 工作负载 | Deployment、StatefulSet、DaemonSet、Job、CronJob；详情、实例、多应用容器、Init Container、容器配置、关联 Service、事件、日志和 YAML；Deployment 展示发布进度与 ReplicaSet，StatefulSet 展示 Partition，DaemonSet 展示滚动发布状态，Job/CronJob 展示批处理结果与近期 Job |
+| 应用工作台 | 以命名空间为应用边界，聚合工作负载、Pod、Service、Ingress、ConfigMap、PVC、HPA、PDB 和近期 Warning 事件；提供就绪汇总、依赖关系与健康问题解释，并支持在工作台内查看详情、日志、扩缩容和滚动重启；单类数据无权访问时保留其他区域并明确降级 |
 | 工作负载操作 | 创建 Deployment、StatefulSet、DaemonSet、Job、CronJob，支持多应用容器、Init Container、ConfigMap/Secret/PVC 存储卷与挂载、Secret/ConfigMap/FieldRef 环境变量来源、HTTP/TCP/Exec/gRPC 探针、ImagePullSecrets、RuntimeClass、优雅终止时间、NodeSelector、容忍、节点亲和性、拓扑分布、ServiceAccount、PriorityClass 和 Pod/容器 SecurityContext；扩缩容、滚动重启、更新镜像、暂停/恢复 CronJob、调整 Deployment 的暂停状态与 maxSurge/maxUnavailable、设置 StatefulSet Partition、配置 DaemonSet maxSurge/maxUnavailable、指定容器并覆盖 Command/Args 从 CronJob 立即执行一次性 Job、完成 Job 参数配置、删除、查看发布历史及回滚前 Pod 模板 Diff 并回滚，以及按资源级权限编辑 YAML |
 | Pod | 状态、普通/Init/Ephemeral Container、重启次数、资源、归属控制器与节点深链、事件、日志和 YAML；在具备 `pods/exec` 权限时提供经审计的浏览器交互终端，并允许有权限的用户为无 Shell 镜像创建受控的 Ephemeral 调试容器；具备 `pods/portforward` 权限时可创建回环、限时、自动回收的 Pod/Service 临时 HTTP 隧道 |
 | 一键故障诊断 | 对 Pod、Deployment、StatefulSet、DaemonSet、Job、CronJob、Service、Ingress、PVC 和 Node 提供只读、确定性、证据驱动的诊断；按严重程度展示检查项、原因、证据、相关资源与可复制的 `kubectl` 命令，不自动执行修复。事件和有界近期日志受 Kubernetes RBAC 约束，权限不足时会明确降级为“跳过”，不会中断其余检查 |

@@ -443,6 +443,49 @@ describe("dosh application", () => {
     expect(screen.getByPlaceholderText("搜索命名空间")).toHaveValue("production");
   });
 
+  it("aggregates an application workspace and scales a workload in place", async () => {
+    let scaleBody: Record<string, unknown> | undefined;
+    server.use(
+      http.get("/api/v1/workloads", () => HttpResponse.json({ items: [workload], meta: { total: 1, totalKnown: true, page: 1, pageSize: 200, totalPages: 1, hasMore: false } })),
+      http.get("/api/v1/pods", () => HttpResponse.json({ items: [{ ...pod, status: "CrashLoopBackOff", ready: "0/1", restarts: 4 }], meta: { total: 1, totalKnown: true, page: 1, pageSize: 200, totalPages: 1, hasMore: false } })),
+      http.get("/api/v1/services", () => HttpResponse.json({ items: [{ name: "web", namespace: "default", type: "ClusterIP", headless: false, clusterIP: "10.96.0.10", externalIP: "", ports: serviceDetail.ports, endpointCount: 1, createdAt: "2026-11-02T00:00:00Z" }], meta: { total: 1, totalKnown: true, page: 1, pageSize: 200, totalPages: 1, hasMore: false } })),
+      http.get("/api/v1/ingresses", () => HttpResponse.json({ items: [{ name: "web", namespace: "default", class: "nginx", paths: ingressDetail.paths, tlsHosts: ["web.example.test"], createdAt: "2026-11-02T00:00:00Z" }], meta: { total: 1, totalKnown: true, page: 1, pageSize: 200, totalPages: 1, hasMore: false } })),
+      http.get("/api/v1/configmaps", () => HttpResponse.json({ items: [{ name: "app-config", namespace: "default", keys: ["mode"], dataBytes: 12, createdAt: "2026-11-02T00:00:00Z" }], meta: { total: 1 } })),
+      http.get("/api/v1/persistentvolumeclaims", () => HttpResponse.json({ items: [{ ...persistentVolumeClaimDetail, namespace: "default" }], meta: { total: 1 } })),
+      http.get("/api/v1/events", () => HttpResponse.json({ items: [{ uid: "event-warning", namespace: "default", type: "Warning", reason: "BackOff", message: "container is restarting", objectKind: "Pod", objectName: "web-abcdef-12345", count: 3, firstSeen: "2026-11-02T00:00:00Z", lastSeen: "2026-11-02T00:05:00Z" }], meta: { total: 1 } })),
+      http.post("/api/v1/workloads/deployment/default/web/scale", async ({ request }) => {
+        scaleBody = await request.json() as Record<string, unknown>;
+        return HttpResponse.json({ status: "ok" });
+      }),
+    );
+    renderRoute("/applications?namespace=default");
+
+    expect(await screen.findByRole("heading", { name: "应用工作台" })).toBeInTheDocument();
+    expect(await screen.findByText("需要关注")).toBeInTheDocument();
+    expect(screen.getByText(/container is restarting/)).toBeInTheDocument();
+    expect(screen.getAllByRole("link", { name: "web" }).some((link) => link.getAttribute("href") === "/workloads/deployment/default/web")).toBe(true);
+    expect(screen.getByRole("link", { name: "app-config" })).toHaveAttribute("href", "/configuration?namespace=default&tab=configmaps&q=app-config");
+
+    openResourceMenu("Deployment default/web");
+    fireEvent.click(await screen.findByRole("menuitem", { name: "扩缩容" }));
+    const dialog = await screen.findByRole("dialog", { name: "调整副本数" });
+    fireEvent.change(within(dialog).getByLabelText("期望副本数"), { target: { value: "3" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "确认调整" }));
+    await waitFor(() => expect(scaleBody).toEqual({ replicas: 3 }));
+  });
+
+  it("keeps application workspace sections visible when one data source is forbidden", async () => {
+    server.use(
+      http.get("/api/v1/workloads", () => HttpResponse.json({ items: [workload], meta: { total: 1, totalKnown: true, page: 1, pageSize: 200, totalPages: 1, hasMore: false } })),
+      http.get("/api/v1/pods", () => HttpResponse.json({ code: "forbidden", message: "pods are forbidden" }, { status: 403 })),
+    );
+    renderRoute("/applications?namespace=default");
+
+    expect(await screen.findByRole("heading", { name: "应用工作台" })).toBeInTheDocument();
+    expect(await screen.findByText(/部分数据加载失败：Pod/)).toBeInTheDocument();
+    expect(screen.getAllByRole("link", { name: "web" }).some((link) => link.getAttribute("href") === "/workloads/deployment/default/web")).toBe(true);
+  });
+
   it("creates a namespace from the namespace table", async () => {
     let createBody: Record<string, unknown> | undefined;
     let csrf: string | null = null;
