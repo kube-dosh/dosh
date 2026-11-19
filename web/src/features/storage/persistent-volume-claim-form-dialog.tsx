@@ -3,13 +3,13 @@ import { useMutation } from "@tanstack/react-query";
 import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { ApiError, api } from "@/api/client";
-import type { PersistentVolumeClaimDetail, StorageClass } from "@/api/types";
+import type { PersistentVolumeClaimDetail, StorageClass, VolumeSnapshot } from "@/api/types";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { cn } from "@/lib/utils";
+import { cn, formatMemory } from "@/lib/utils";
 
 const ACCESS_MODES = ["ReadWriteOnce", "ReadOnlyMany", "ReadWriteMany", "ReadWriteOncePod"] as const;
 const VOLUME_MODES = ["Filesystem", "Block"] as const;
@@ -40,10 +40,15 @@ function capacityDraft(bytes?: number): Pick<FormState, "capacity" | "unit"> {
   return { capacity: String(Math.max(1, Math.ceil(bytes / UNIT_BYTES.Mi))), unit: "Mi" };
 }
 
-function initialForm(item?: PersistentVolumeClaimDetail): FormState {
-  const capacity = capacityDraft(item?.requestedCapacityBytes);
+function restoreName(snapshot?: VolumeSnapshot): string {
+  if (!snapshot) return "";
+  return `${snapshot.name}-restore`.slice(0, 63).replace(/-+$/, "");
+}
+
+function initialForm(item?: PersistentVolumeClaimDetail, snapshot?: VolumeSnapshot): FormState {
+  const capacity = capacityDraft(item?.requestedCapacityBytes ?? snapshot?.restoreSizeBytes);
   return {
-    name: item?.name || "",
+    name: item?.name || restoreName(snapshot),
     storageClass: item?.storageClass || "",
     accessModes: item?.accessModes?.length ? item.accessModes : ["ReadWriteOnce"],
     volumeMode: item?.volumeMode || "Filesystem",
@@ -58,28 +63,30 @@ function parseCapacity(form: FormState): number | null {
   return Number.isSafeInteger(bytes) && bytes > 0 && bytes <= 2 ** 50 ? bytes : null;
 }
 
-export function PersistentVolumeClaimFormDialog({ open, onOpenChange, namespace, item, storageClasses, onSaved }: {
+export function PersistentVolumeClaimFormDialog({ open, onOpenChange, namespace, item, snapshot, storageClasses, onSaved }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   namespace: string;
   item?: PersistentVolumeClaimDetail;
+  snapshot?: VolumeSnapshot;
   storageClasses: StorageClass[];
   onSaved: () => Promise<void> | void;
 }) {
   const creating = !item;
-  const [form, setForm] = useState<FormState>(() => initialForm(item));
+  const [form, setForm] = useState<FormState>(() => initialForm(item, snapshot));
   const [formError, setFormError] = useState("");
   useEffect(() => {
     if (!open) return;
-    setForm(initialForm(item));
+    setForm(initialForm(item, snapshot));
     setFormError("");
-  }, [open, item]);
+  }, [open, item, snapshot]);
 
   const save = useMutation({
     mutationFn: async () => {
       if (creating && !DNS_LABEL.test(form.name)) throw new Error("PVC 名称必须是小写 DNS-1123 标签");
       const requestedCapacityBytes = parseCapacity(form);
       if (!requestedCapacityBytes) throw new Error("容量必须是大于 0 的整数，且不超过 1 PiB");
+      if (snapshot?.restoreSizeBytes && requestedCapacityBytes < snapshot.restoreSizeBytes) throw new Error(`恢复容量不能小于快照大小 ${formatMemory(snapshot.restoreSizeBytes)}`);
       if (!form.accessModes.length) throw new Error("请至少选择一种访问模式");
       if (creating) {
         return api.createPersistentVolumeClaim({
@@ -89,6 +96,7 @@ export function PersistentVolumeClaimFormDialog({ open, onOpenChange, namespace,
           accessModes: form.accessModes,
           requestedCapacityBytes,
           volumeMode: form.volumeMode,
+          snapshotName: snapshot?.name,
         });
       }
       if (requestedCapacityBytes < item.requestedCapacityBytes) throw new Error("PVC 容量只能扩容，不能缩容");
@@ -98,7 +106,7 @@ export function PersistentVolumeClaimFormDialog({ open, onOpenChange, namespace,
       });
     },
     onSuccess: async (saved) => {
-      toast.success(creating ? `PVC ${saved.name} 已创建` : `PVC ${saved.name} 扩容请求已提交`);
+      toast.success(creating ? `PVC ${saved.name} ${snapshot ? "已从快照发起恢复" : "已创建"}` : `PVC ${saved.name} 扩容请求已提交`);
       await onSaved();
       onOpenChange(false);
     },
@@ -117,12 +125,13 @@ export function PersistentVolumeClaimFormDialog({ open, onOpenChange, namespace,
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-2xl">
         <DialogHeader>
-          <DialogTitle>{creating ? "创建 PersistentVolumeClaim" : "扩容 PersistentVolumeClaim"}</DialogTitle>
+          <DialogTitle>{creating ? (snapshot ? "从快照恢复 PersistentVolumeClaim" : "创建 PersistentVolumeClaim") : "扩容 PersistentVolumeClaim"}</DialogTitle>
           <DialogDescription>
-            {namespace}{item ? ` / ${item.name}` : ""} · {creating ? "填写存储容量和访问模式，绑定结果取决于 StorageClass 与存储驱动。" : "StorageClass、访问模式和卷模式创建后不可修改；容量只能增加。"}
+            {namespace}{item ? ` / ${item.name}` : ""} · {creating ? (snapshot ? `来源快照 ${snapshot.namespace}/${snapshot.name}；容量不得小于快照恢复大小。` : "填写存储容量和访问模式，绑定结果取决于 StorageClass 与存储驱动。") : "StorageClass、访问模式和卷模式创建后不可修改；容量只能增加。"}
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-5">
+          {snapshot ? <div className="min-w-0 rounded-md border border-primary/30 bg-primary/5 px-3 py-2 text-sm"><p className="break-words">从 VolumeSnapshot <span className="font-mono text-xs">{snapshot.namespace}/{snapshot.name}</span> 恢复</p><p className="mt-1 text-xs text-muted-foreground">恢复大小 {formatMemory(snapshot.restoreSizeBytes || 0)} · 快照状态 {snapshot.status}</p></div> : null}
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="space-y-2">
               <Label htmlFor="pvc-name">PVC 名称</Label>
@@ -189,7 +198,7 @@ export function PersistentVolumeClaimFormDialog({ open, onOpenChange, namespace,
           <Button variant="outline" onClick={() => onOpenChange(false)} disabled={save.isPending}>取消</Button>
           <Button onClick={() => save.mutate()} disabled={save.isPending}>
             {save.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-            {creating ? "创建 PVC" : "提交扩容"}
+            {creating ? (snapshot ? "从快照恢复" : "创建 PVC") : "提交扩容"}
           </Button>
         </DialogFooter>
       </DialogContent>

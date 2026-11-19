@@ -30,8 +30,9 @@ const session: SessionResponse = {
       configmaps: { create: true, update: true, delete: true, scale: false },
       secrets: { create: true, update: true, delete: true, scale: false },
       persistentvolumeclaims: { create: true, update: true, delete: true, scale: false },
-      persistentvolumes: { create: false, update: false, delete: false, scale: false },
-      storageclasses: { create: false, update: false, delete: false, scale: false },
+      persistentvolumes: { create: true, update: true, delete: true, scale: false },
+      storageclasses: { create: true, update: true, delete: true, scale: false },
+      volumesnapshots: { create: true, update: false, delete: true, scale: false },
       nodes: { create: false, update: true, delete: false, scale: false },
       namespaces: { create: true, update: false, delete: true, scale: false },
       horizontalpodautoscalers: { create: true, update: true, delete: true, scale: false },
@@ -129,6 +130,8 @@ const persistentVolumeDetail: PersistentVolumeDetail = {
   status: "Bound", claim: "production/data-claim", storageClass: "data-standard", createdAt: "2026-11-02T00:00:00Z",
   labels: { tier: "gold" }, annotations: { owner: "platform" }, volumeMode: "Filesystem", mountOptions: ["discard"],
   claimNamespace: "production", claimName: "data-claim", csiDriver: "csi.example.test",
+  source: { type: "CSI", csiDriver: "csi.example.test", csiVolumeHandle: "vol-1", csiFsType: "ext4" },
+  impact: { mountCount: 1, volumeSnapshotCount: 1, mounts: [{ pod: "db-0", namespace: "production", workloadKind: "StatefulSet", workloadName: "db", containers: ["postgres", "metrics"], mountPaths: ["/var/lib/postgresql/data"] }] },
 };
 
 const persistentVolumeClaimDetail: PersistentVolumeClaimDetail = {
@@ -136,6 +139,8 @@ const persistentVolumeClaimDetail: PersistentVolumeClaimDetail = {
   accessModes: ["ReadWriteOnce"], storageClass: "data-standard", createdAt: "2026-11-02T00:00:00Z",
   labels: { app: "database" }, annotations: { backup: "daily" }, volumeMode: "Filesystem", requestedCapacityBytes: 5 * 1024 * 1024 * 1024,
   conditions: [{ type: "Resizing", status: "True", reason: "Expanding", message: "volume expansion in progress", lastTransitionTime: "2026-11-02T01:00:00Z" }],
+  storageClassAvailable: true, allowVolumeExpansion: true,
+  impact: { mountCount: 1, volumeSnapshotCount: 1, mounts: [{ pod: "db-0", namespace: "production", workloadKind: "StatefulSet", workloadName: "db", containers: ["postgres"], mountPaths: ["/var/lib/postgresql/data"] }] },
 };
 
 const server = setupServer(
@@ -213,6 +218,8 @@ const server = setupServer(
   http.get("/api/v1/persistentvolumes/pv-data", () => HttpResponse.json(persistentVolumeDetail)),
   http.get("/api/v1/persistentvolumeclaims", () => HttpResponse.json({ items: [], meta: { total: 0, page: 1, pageSize: 20, totalPages: 0, filters: {} } })),
   http.get("/api/v1/persistentvolumeclaims/production/data-claim", () => HttpResponse.json(persistentVolumeClaimDetail)),
+  http.get("/api/v1/volume-snapshots/feature", () => HttpResponse.json({ available: false, reason: "VolumeSnapshot CRD 未安装", classes: [] })),
+  http.get("/api/v1/volume-snapshots", () => HttpResponse.json({ items: [], meta: { total: 0, page: 1, pageSize: 20, totalPages: 0, filters: {} } })),
   http.get("/api/v1/events", () => HttpResponse.json({ items: [], meta: { total: 0, page: 1, pageSize: 1, totalPages: 0, filters: {} } })),
   http.get("/api/v1/configmaps", () => HttpResponse.json({ items: [], meta: { total: 0, page: 1, pageSize: 20, totalPages: 0, filters: {} } })),
   http.get("/api/v1/secrets", () => HttpResponse.json({ items: [], meta: { total: 0, page: 1, pageSize: 20, totalPages: 0, filters: {} } })),
@@ -513,6 +520,131 @@ describe("dosh application", () => {
     fireEvent.mouseDown(classesTab);
     fireEvent.click(classesTab);
     expect(await screen.findByText("没有访问权限")).toBeInTheDocument();
+  });
+
+  it("degrades the snapshot tab to an explained unavailable state without CSI snapshot CRDs", async () => {
+    server.use(
+      http.get("/api/v1/storageclasses", () => HttpResponse.json({ items: [], meta: { total: 0 } })),
+      http.get("/api/v1/persistentvolumes", () => HttpResponse.json({ items: [], meta: { total: 0 } })),
+      http.get("/api/v1/persistentvolumeclaims", () => HttpResponse.json({ items: [], meta: { total: 0 } })),
+      http.get("/api/v1/volume-snapshots/feature", () => HttpResponse.json({ available: false, reason: "未检测到 VolumeSnapshot CRD", classes: [] })),
+    );
+    renderRoute("/storage?tab=snapshots");
+
+    expect(await screen.findByRole("tab", { name: /快照 \(不可用\)/ })).toHaveAttribute("aria-selected", "true");
+    expect(await screen.findByText("CSI 快照能力不可用")).toBeInTheDocument();
+    expect(screen.getByText("未检测到 VolumeSnapshot CRD")).toBeInTheDocument();
+  });
+
+  it("creates a StorageClass through the structured form with dry-run-backed API contract", async () => {
+    let body: Record<string, unknown> | undefined;
+    server.use(
+      http.get("/api/v1/storageclasses", () => HttpResponse.json({ items: [], meta: { total: 0 } })),
+      http.get("/api/v1/persistentvolumes", () => HttpResponse.json({ items: [], meta: { total: 0 } })),
+      http.get("/api/v1/persistentvolumeclaims", () => HttpResponse.json({ items: [], meta: { total: 0 } })),
+      http.post("/api/v1/storageclasses", async ({ request }) => {
+        body = await request.json() as Record<string, unknown>;
+        return HttpResponse.json({ ...storageClassDetail, name: "fast-ssd", provisioner: "csi.example.test", allowVolumeExpansion: true }, { status: 201 });
+      }),
+    );
+    renderRoute("/storage");
+
+    const createButton = await screen.findByRole("button", { name: "创建 StorageClass" });
+    await waitFor(() => expect(createButton).toBeEnabled());
+    fireEvent.click(createButton);
+    const dialog = await screen.findByRole("dialog", { name: "创建 StorageClass" });
+    fireEvent.change(within(dialog).getByLabelText("名称"), { target: { value: "fast-ssd" } });
+    fireEvent.change(within(dialog).getByLabelText("Provisioner"), { target: { value: "csi.example.test" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: /允许在线扩容/ }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "创建 StorageClass" }));
+
+    await waitFor(() => expect(body).toMatchObject({
+      name: "fast-ssd", provisioner: "csi.example.test", reclaimPolicy: "Delete", volumeBinding: "Immediate", allowVolumeExpansion: true,
+    }));
+    expect(await screen.findByText("StorageClass fast-ssd 已创建")).toBeInTheDocument();
+  });
+
+  it("creates a structured CSI PersistentVolume", async () => {
+    let body: Record<string, unknown> | undefined;
+    server.use(
+      http.get("/api/v1/storageclasses", () => HttpResponse.json({ items: [], meta: { total: 0 } })),
+      http.get("/api/v1/persistentvolumes", () => HttpResponse.json({ items: [], meta: { total: 0 } })),
+      http.get("/api/v1/persistentvolumeclaims", () => HttpResponse.json({ items: [], meta: { total: 0 } })),
+      http.post("/api/v1/persistentvolumes", async ({ request }) => {
+        body = await request.json() as Record<string, unknown>;
+        return HttpResponse.json({ ...persistentVolumeDetail, name: "pv-new", status: "Available", claim: undefined }, { status: 201 });
+      }),
+    );
+    renderRoute("/storage?tab=volumes");
+
+    const createButton = await screen.findByRole("button", { name: "创建 PV" });
+    await waitFor(() => expect(createButton).toBeEnabled());
+    fireEvent.click(createButton);
+    const dialog = await screen.findByRole("dialog", { name: "创建 PersistentVolume" });
+    fireEvent.change(within(dialog).getByLabelText("名称"), { target: { value: "pv-new" } });
+    fireEvent.change(within(dialog).getByLabelText("CSI Driver"), { target: { value: "csi.example.test" } });
+    fireEvent.change(within(dialog).getByLabelText("VolumeHandle"), { target: { value: "vol-new" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "创建 PersistentVolume" }));
+
+    await waitFor(() => expect(body).toMatchObject({
+      name: "pv-new", capacityBytes: 10 * 1024 ** 3, reclaimPolicy: "Retain", volumeMode: "Filesystem",
+      csi: { driver: "csi.example.test", volumeHandle: "vol-new" },
+    }));
+    expect(await screen.findByText("PersistentVolume pv-new 已创建")).toBeInTheDocument();
+  });
+
+  it("restores a PVC from a ready VolumeSnapshot with a minimum restore size", async () => {
+    const snapshot = {
+      name: "snap-daily", namespace: "production", resourceVersion: "21", sourcePvc: "data-claim", volumeSnapshotClassName: "csi-snap",
+      status: "Ready" as const, readyToUse: true, restoreSizeBytes: 5 * 1024 ** 3, createdAt: "2026-11-19T01:00:00Z",
+    };
+    let body: Record<string, unknown> | undefined;
+    server.use(
+      http.get("/api/v1/storageclasses", () => HttpResponse.json({ items: [storageClassDetail], meta: { total: 1 } })),
+      http.get("/api/v1/persistentvolumes", () => HttpResponse.json({ items: [], meta: { total: 0 } })),
+      http.get("/api/v1/persistentvolumeclaims", () => HttpResponse.json({ items: [persistentVolumeClaimDetail], meta: { total: 1 } })),
+      http.get("/api/v1/volume-snapshots/feature", () => HttpResponse.json({ available: true, apiVersion: "snapshot.storage.k8s.io/v1", classes: ["csi-snap"], defaultClass: "csi-snap" })),
+      http.get("/api/v1/volume-snapshots", () => HttpResponse.json({ items: [snapshot], meta: { total: 1, totalKnown: true, page: 1, pageSize: 20, totalPages: 1, hasMore: false } })),
+      http.post("/api/v1/persistentvolumeclaims", async ({ request }) => {
+        body = await request.json() as Record<string, unknown>;
+        return HttpResponse.json({ ...persistentVolumeClaimDetail, name: "snap-daily-restore", requestedCapacityBytes: 6 * 1024 ** 3 }, { status: 201 });
+      }),
+    );
+    renderRoute("/storage?tab=snapshots&namespace=production");
+
+    expect(await screen.findByRole("cell", { name: "snap-daily" })).toBeInTheDocument();
+    openResourceMenu("VolumeSnapshot production/snap-daily");
+    fireEvent.click(await screen.findByRole("menuitem", { name: "从快照恢复 PVC" }));
+    const dialog = await screen.findByRole("dialog", { name: "从快照恢复 PersistentVolumeClaim" });
+    expect(dialog).toHaveTextContent("production/snap-daily");
+    expect(dialog).toHaveTextContent("恢复大小 5.0 GiB");
+    fireEvent.change(within(dialog).getByLabelText("申请容量"), { target: { value: "6" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "从快照恢复" }));
+
+    await waitFor(() => expect(body).toMatchObject({
+      name: "snap-daily-restore", namespace: "production", requestedCapacityBytes: 6 * 1024 ** 3, snapshotName: "snap-daily",
+    }));
+    expect(await screen.findByText("PVC snap-daily-restore 已从快照发起恢复")).toBeInTheDocument();
+  });
+
+  it("explains blocked PVC expansion and shows live mount impact", async () => {
+    server.use(
+      http.get("/api/v1/persistentvolumeclaims/production/data-claim", () => HttpResponse.json({
+        ...persistentVolumeClaimDetail,
+        storageClassAvailable: false, allowVolumeExpansion: false, expansionStatus: "blocked",
+        expansionMessage: "StorageClass data-standard 未启用 allowVolumeExpansion，PVC 无法扩容。",
+      })),
+    );
+    renderRoute("/storage/claims/production/data-claim");
+
+    expect(await screen.findByRole("heading", { name: "data-claim" })).toBeInTheDocument();
+    expect(screen.getByText("扩容受阻")).toBeInTheDocument();
+    expect(screen.getByText(/未启用 allowVolumeExpansion/)).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "扩容" })).toBeDisabled();
+    expect(screen.getByText("PVC 使用者与影响")).toBeInTheDocument();
+    expect(screen.getByText("production/db-0")).toBeInTheDocument();
+    expect(screen.getByText(/容器：postgres/)).toBeInTheDocument();
+    expect(screen.getByText(/挂载：\/var\/lib\/postgresql\/data/)).toBeInTheDocument();
   });
 
   it("shows Secret text as plaintext while retaining binary values as base64", async () => {

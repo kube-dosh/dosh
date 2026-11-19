@@ -528,7 +528,7 @@ func TestPersistentVolumeClaimWritesCheckConflictAndForbidShrink(t *testing.T) {
 	client, clientset := newFakeKubeClient(claim)
 	updated, err := client.UpdatePersistentVolumeClaim(context.Background(), "prod", "data", domain.PersistentVolumeClaimUpdateSpec{
 		RequestedCapacityBytes: 2 << 30, ResourceVersion: "10", Labels: map[string]string{"team": "platform"},
-	})
+	}, false)
 	if err != nil || updated.RequestedCapacityBytes != 2<<30 || updated.Labels["team"] != "platform" {
 		t.Fatalf("UpdatePersistentVolumeClaim() = (%#v, %v)", updated, err)
 	}
@@ -538,12 +538,12 @@ func TestPersistentVolumeClaimWritesCheckConflictAndForbidShrink(t *testing.T) {
 	}
 	if _, err := client.UpdatePersistentVolumeClaim(context.Background(), "prod", "data", domain.PersistentVolumeClaimUpdateSpec{
 		RequestedCapacityBytes: 1 << 30, ResourceVersion: "10",
-	}); !errors.Is(err, domain.ErrInvalid) {
+	}, false); !errors.Is(err, domain.ErrInvalid) {
 		t.Fatalf("shrink error = %v, want ErrInvalid", err)
 	}
 	if _, err := client.UpdatePersistentVolumeClaim(context.Background(), "prod", "data", domain.PersistentVolumeClaimUpdateSpec{
 		RequestedCapacityBytes: 3 << 30, ResourceVersion: "stale",
-	}); !errors.Is(err, domain.ErrConflict) {
+	}, false); !errors.Is(err, domain.ErrConflict) {
 		t.Fatalf("stale update error = %v, want ErrConflict", err)
 	}
 }

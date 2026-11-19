@@ -114,7 +114,7 @@ func TestModuleRoutesAreScoped(t *testing.T) {
 		{name: "configuration", mount: deps.configuration.Mount, prefixes: []string{"/configmaps", "/secrets"}},
 		{name: "diagnostics", mount: deps.diagnostics.Mount, prefixes: []string{"/diagnostics"}},
 		{name: "certificates", mount: deps.certificates.Mount, prefixes: []string{"/certificate"}},
-		{name: "storage", mount: deps.storage.Mount, prefixes: []string{"/storageclasses", "/persistentvolumes", "/persistentvolumeclaims"}},
+		{name: "storage", mount: deps.storage.Mount, prefixes: []string{"/storageclasses", "/persistentvolumes", "/persistentvolumeclaims", "/volume-snapshots"}},
 		{name: "yaml", mount: deps.yaml.Mount, prefixes: []string{"/yaml"}},
 		{name: "audit-history", mount: deps.auditHistory.Mount, prefixes: []string{"/audit-events"}},
 	}

@@ -9,6 +9,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	storagev1 "k8s.io/api/storage/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -56,7 +57,15 @@ func storageClassSummary(item storagev1.StorageClass) domain.StorageClass {
 		binding = string(*item.VolumeBindingMode)
 	}
 	_, defaultClass := item.Annotations["storageclass.kubernetes.io/is-default-class"]
-	return domain.StorageClass{Name: item.Name, Provisioner: item.Provisioner, ReclaimPolicy: reclaim, VolumeBinding: binding, Default: defaultClass, CreatedAt: item.CreationTimestamp.Time}
+	allowExpansion := false
+	if item.AllowVolumeExpansion != nil {
+		allowExpansion = *item.AllowVolumeExpansion
+	}
+	return domain.StorageClass{
+		Name: item.Name, ResourceVersion: item.ResourceVersion, Provisioner: item.Provisioner,
+		ReclaimPolicy: reclaim, VolumeBinding: binding, AllowVolumeExpansion: allowExpansion,
+		Default: defaultClass, CreatedAt: item.CreationTimestamp.Time,
+	}
 }
 
 func (c *Client) GetStorageClass(ctx context.Context, name string) (domain.StorageClassDetail, error) {
@@ -122,9 +131,9 @@ func persistentVolumeSummary(item corev1.PersistentVolume) domain.PersistentVolu
 		claim = item.Spec.ClaimRef.Namespace + "/" + item.Spec.ClaimRef.Name
 	}
 	return domain.PersistentVolume{
-		Name: item.Name, CapacityBytes: item.Spec.Capacity.Storage().Value(), AccessModes: accessModes(item.Spec.AccessModes),
+		Name: item.Name, ResourceVersion: item.ResourceVersion, CapacityBytes: item.Spec.Capacity.Storage().Value(), AccessModes: accessModes(item.Spec.AccessModes),
 		ReclaimPolicy: string(item.Spec.PersistentVolumeReclaimPolicy), Status: string(item.Status.Phase), Claim: claim,
-		StorageClass: item.Spec.StorageClassName, CreatedAt: item.CreationTimestamp.Time,
+		StorageClass: item.Spec.StorageClassName, VolumeMode: volumeMode(item.Spec.VolumeMode), CreatedAt: item.CreationTimestamp.Time,
 	}
 }
 
@@ -135,7 +144,9 @@ func (c *Client) GetPersistentVolume(ctx context.Context, name string) (domain.P
 	if err != nil {
 		return domain.PersistentVolumeDetail{}, mapKubeError(err)
 	}
-	return persistentVolumeDetail(*item), nil
+	detail := persistentVolumeDetail(*item)
+	detail.Impact = c.storageImpactForClaim(ctx, detail.ClaimNamespace, detail.ClaimName)
+	return detail, nil
 }
 
 func persistentVolumeDetail(item corev1.PersistentVolume) domain.PersistentVolumeDetail {
@@ -152,6 +163,10 @@ func persistentVolumeDetail(item corev1.PersistentVolume) domain.PersistentVolum
 	}
 	if item.Spec.CSI != nil {
 		detail.CSIDriver = item.Spec.CSI.Driver
+		detail.Source = domain.PersistentVolumeSource{
+			Type: "CSI", CSIDriver: item.Spec.CSI.Driver, CSIVolumeHandle: item.Spec.CSI.VolumeHandle,
+			CSIFSType: item.Spec.CSI.FSType, CSIReadOnly: item.Spec.CSI.ReadOnly,
+		}
 	}
 	return detail
 }
@@ -218,23 +233,84 @@ func (c *Client) GetPersistentVolumeClaim(ctx context.Context, namespace, name s
 	if err != nil {
 		return domain.PersistentVolumeClaimDetail{}, mapKubeError(err)
 	}
-	return persistentVolumeClaimDetail(*item), nil
+	detail := persistentVolumeClaimDetail(*item)
+	c.enrichPersistentVolumeClaimDetail(ctx, item, &detail)
+	return detail, nil
 }
 
-func (c *Client) CreatePersistentVolumeClaim(ctx context.Context, spec domain.PersistentVolumeClaimCreateSpec) (domain.PersistentVolumeClaimDetail, error) {
+func (c *Client) enrichPersistentVolumeClaimDetail(ctx context.Context, item *corev1.PersistentVolumeClaim, detail *domain.PersistentVolumeClaimDetail) {
+	detail.Impact = c.storageImpactForClaim(ctx, item.Namespace, item.Name)
+	if detail.Impact.VolumeSnapshotCount == 0 {
+		detail.Impact.VolumeSnapshotCount = c.volumeSnapshotCountForPVC(ctx, item.Namespace, item.Name)
+	}
+	if detail.StorageClass == "" {
+		detail.ExpansionStatus = "blocked"
+		detail.ExpansionMessage = "PVC 没有 StorageClass，无法自动扩容。"
+		return
+	}
+	class, err := c.clientset.StorageV1().StorageClasses().Get(ctx, detail.StorageClass, metav1.GetOptions{})
+	if err != nil {
+		detail.ExpansionStatus = "blocked"
+		detail.ExpansionMessage = fmt.Sprintf("无法读取 StorageClass %s 的扩容策略，扩容请求会被拒绝。", detail.StorageClass)
+		if apierrors.IsNotFound(err) {
+			detail.ExpansionMessage = fmt.Sprintf("StorageClass %s 已不存在，扩容请求会被拒绝。", detail.StorageClass)
+		}
+		return
+	}
+	detail.StorageClassAvailable = true
+	detail.AllowVolumeExpansion = class.AllowVolumeExpansion != nil && *class.AllowVolumeExpansion
+	if !detail.AllowVolumeExpansion {
+		detail.ExpansionStatus = "blocked"
+		detail.ExpansionMessage = fmt.Sprintf("StorageClass %s 未启用 allowVolumeExpansion，PVC 无法扩容。", detail.StorageClass)
+		return
+	}
+	for _, condition := range item.Status.Conditions {
+		if condition.Type == corev1.PersistentVolumeClaimResizing && condition.Status == corev1.ConditionTrue {
+			detail.ExpansionStatus = "expanding"
+			detail.ExpansionMessage = condition.Message
+			if detail.ExpansionMessage == "" {
+				detail.ExpansionMessage = "扩容已提交，等待 CSI 驱动完成卷扩展。"
+			}
+			return
+		}
+	}
+	if detail.RequestedCapacityBytes > detail.CapacityBytes {
+		detail.ExpansionStatus = "expanding"
+		detail.ExpansionMessage = "扩容已提交，等待完成并从文件系统侧确认新的容量。"
+		return
+	}
+	detail.ExpansionStatus = "ready"
+	detail.ExpansionMessage = "StorageClass 允许在线扩容；提交后由 CSI 驱动完成卷扩展。"
+}
+
+func (c *Client) CreatePersistentVolumeClaim(ctx context.Context, spec domain.PersistentVolumeClaimCreateSpec, dryRun bool) (domain.PersistentVolumeClaimDetail, error) {
 	ctx, cancel := c.withTimeout(ctx)
 	defer cancel()
 	item := &corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{
 		Name: spec.Name, Namespace: spec.Namespace, Labels: cloneStringMap(spec.Labels), Annotations: cloneStringMap(spec.Annotations),
 	}}
 	applyPVCSpec(&item.Spec, spec.StorageClass, spec.AccessModes, spec.RequestedCapacityBytes, spec.VolumeMode)
-	if _, err := c.clientset.CoreV1().PersistentVolumeClaims(spec.Namespace).Create(ctx, item, metav1.CreateOptions{}); err != nil {
+	if spec.SnapshotName != "" {
+		apiGroup := "snapshot.storage.k8s.io"
+		item.Spec.DataSource = &corev1.TypedLocalObjectReference{APIGroup: &apiGroup, Kind: "VolumeSnapshot", Name: spec.SnapshotName}
+	}
+	options := metav1.CreateOptions{}
+	if dryRun {
+		options.DryRun = []string{metav1.DryRunAll}
+	}
+	created, err := c.clientset.CoreV1().PersistentVolumeClaims(spec.Namespace).Create(ctx, item, options)
+	if err != nil {
 		return domain.PersistentVolumeClaimDetail{}, mapKubeError(err)
+	}
+	if dryRun {
+		detail := persistentVolumeClaimDetail(*created)
+		c.enrichPersistentVolumeClaimDetail(ctx, created, &detail)
+		return detail, nil
 	}
 	return c.GetPersistentVolumeClaim(ctx, spec.Namespace, spec.Name)
 }
 
-func (c *Client) UpdatePersistentVolumeClaim(ctx context.Context, namespace, name string, update domain.PersistentVolumeClaimUpdateSpec) (domain.PersistentVolumeClaimDetail, error) {
+func (c *Client) UpdatePersistentVolumeClaim(ctx context.Context, namespace, name string, update domain.PersistentVolumeClaimUpdateSpec, dryRun bool) (domain.PersistentVolumeClaimDetail, error) {
 	ctx, cancel := c.withTimeout(ctx)
 	defer cancel()
 	item, err := c.clientset.CoreV1().PersistentVolumeClaims(namespace).Get(ctx, name, metav1.GetOptions{})
@@ -255,8 +331,18 @@ func (c *Client) UpdatePersistentVolumeClaim(ctx context.Context, namespace, nam
 	if update.Annotations != nil {
 		item.Annotations = cloneStringMap(update.Annotations)
 	}
-	if _, err := c.clientset.CoreV1().PersistentVolumeClaims(namespace).Update(ctx, item, metav1.UpdateOptions{}); err != nil {
+	options := metav1.UpdateOptions{}
+	if dryRun {
+		options.DryRun = []string{metav1.DryRunAll}
+	}
+	updated, err := c.clientset.CoreV1().PersistentVolumeClaims(namespace).Update(ctx, item, options)
+	if err != nil {
 		return domain.PersistentVolumeClaimDetail{}, mapKubeError(err)
+	}
+	if dryRun {
+		detail := persistentVolumeClaimDetail(*updated)
+		c.enrichPersistentVolumeClaimDetail(ctx, updated, &detail)
+		return detail, nil
 	}
 	return c.GetPersistentVolumeClaim(ctx, namespace, name)
 }

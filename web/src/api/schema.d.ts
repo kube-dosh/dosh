@@ -4214,7 +4214,36 @@ export interface paths {
             };
         };
         put?: never;
-        post?: never;
+        /** Create a StorageClass with API Server dry-run validation */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["StorageClassWrite"];
+                };
+            };
+            responses: {
+                /** @description Created StorageClass detail */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["StorageClassDetail"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+                409: components["responses"]["Conflict"];
+                503: components["responses"]["DependencyUnavailable"];
+            };
+        };
         delete?: never;
         options?: never;
         head?: never;
@@ -4253,9 +4282,69 @@ export interface paths {
                 404: components["responses"]["NotFound"];
             };
         };
-        put?: never;
+        /** Update StorageClass policy and metadata */
+        put: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    name: components["parameters"]["Name"];
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["StorageClassWrite"];
+                };
+            };
+            responses: {
+                /** @description Updated StorageClass detail */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["StorageClassDetail"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+                409: components["responses"]["Conflict"];
+                503: components["responses"]["DependencyUnavailable"];
+            };
+        };
         post?: never;
-        delete?: never;
+        /** Delete a StorageClass */
+        delete: {
+            parameters: {
+                query?: {
+                    resourceVersion?: string;
+                };
+                header?: never;
+                path: {
+                    name: components["parameters"]["Name"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description StorageClass deletion accepted */
+                202: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["OperationStatus"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+                409: components["responses"]["Conflict"];
+                503: components["responses"]["DependencyUnavailable"];
+            };
+        };
         options?: never;
         head?: never;
         patch?: never;
@@ -4304,7 +4393,36 @@ export interface paths {
             };
         };
         put?: never;
-        post?: never;
+        /** Create a CSI PersistentVolume with API Server dry-run validation */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["PersistentVolumeCreate"];
+                };
+            };
+            responses: {
+                /** @description Created PersistentVolume detail */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["PersistentVolumeDetail"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+                409: components["responses"]["Conflict"];
+                503: components["responses"]["DependencyUnavailable"];
+            };
+        };
         delete?: never;
         options?: never;
         head?: never;
@@ -4343,9 +4461,69 @@ export interface paths {
                 404: components["responses"]["NotFound"];
             };
         };
-        put?: never;
+        /** Update PersistentVolume capacity, reclaim policy and metadata */
+        put: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    name: components["parameters"]["Name"];
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["PersistentVolumeUpdate"];
+                };
+            };
+            responses: {
+                /** @description Updated PersistentVolume detail */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["PersistentVolumeDetail"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+                409: components["responses"]["Conflict"];
+                503: components["responses"]["DependencyUnavailable"];
+            };
+        };
         post?: never;
-        delete?: never;
+        /** Delete a PersistentVolume */
+        delete: {
+            parameters: {
+                query?: {
+                    resourceVersion?: string;
+                };
+                header?: never;
+                path: {
+                    name: components["parameters"]["Name"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description PersistentVolume deletion accepted */
+                202: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["OperationStatus"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+                409: components["responses"]["Conflict"];
+                503: components["responses"]["DependencyUnavailable"];
+            };
+        };
         options?: never;
         head?: never;
         patch?: never;
@@ -4531,6 +4709,166 @@ export interface paths {
                 403: components["responses"]["Forbidden"];
                 404: components["responses"]["NotFound"];
                 409: components["responses"]["Conflict"];
+                503: components["responses"]["DependencyUnavailable"];
+            };
+        };
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/volume-snapshots/feature": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Detect CSI VolumeSnapshot CRDs and list available snapshot classes */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description VolumeSnapshot feature availability */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["VolumeSnapshotFeature"];
+                    };
+                };
+                401: components["responses"]["Unauthorized"];
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/volume-snapshots": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List CSI VolumeSnapshots */
+        get: {
+            parameters: {
+                query?: {
+                    namespace?: components["parameters"]["Namespace"];
+                    q?: components["parameters"]["Search"];
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description VolumeSnapshot list */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            items: components["schemas"]["VolumeSnapshot"][];
+                            meta: components["schemas"]["ListMeta"];
+                        };
+                    };
+                };
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+                501: components["responses"]["NotSupported"];
+            };
+        };
+        put?: never;
+        /** Create a CSI VolumeSnapshot with API Server dry-run validation */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["VolumeSnapshotCreate"];
+                };
+            };
+            responses: {
+                /** @description Created VolumeSnapshot */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["VolumeSnapshot"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+                409: components["responses"]["Conflict"];
+                501: components["responses"]["NotSupported"];
+                503: components["responses"]["DependencyUnavailable"];
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/volume-snapshots/{namespace}/{name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete a CSI VolumeSnapshot */
+        delete: {
+            parameters: {
+                query?: {
+                    resourceVersion?: string;
+                };
+                header?: never;
+                path: {
+                    namespace: components["parameters"]["NamespacePath"];
+                    name: components["parameters"]["Name"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description VolumeSnapshot deletion accepted */
+                202: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["OperationStatus"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+                404: components["responses"]["NotFound"];
+                409: components["responses"]["Conflict"];
+                501: components["responses"]["NotSupported"];
                 503: components["responses"]["DependencyUnavailable"];
             };
         };
@@ -6748,9 +7086,11 @@ export interface components {
         };
         StorageClass: {
             name: string;
+            resourceVersion?: string;
             provisioner: string;
             reclaimPolicy: string;
             volumeBinding: string;
+            allowVolumeExpansion: boolean;
             default: boolean;
             /** Format: date-time */
             createdAt: string;
@@ -6768,8 +7108,30 @@ export interface components {
             mountOptions?: string[];
             allowVolumeExpansion: boolean;
         };
+        StorageClassWrite: {
+            name?: string;
+            provisioner: string;
+            /** @enum {string} */
+            reclaimPolicy: "Delete" | "Retain";
+            /** @enum {string} */
+            volumeBinding: "Immediate" | "WaitForFirstConsumer";
+            allowVolumeExpansion: boolean;
+            default: boolean;
+            parameters?: {
+                [key: string]: string;
+            };
+            mountOptions?: string[];
+            labels?: {
+                [key: string]: string;
+            };
+            annotations?: {
+                [key: string]: string;
+            };
+            resourceVersion?: string;
+        };
         PersistentVolume: {
             name: string;
+            resourceVersion?: string;
             /** Format: int64 */
             capacityBytes: number;
             accessModes: string[];
@@ -6777,8 +7139,10 @@ export interface components {
             status: string;
             claim?: string;
             storageClass: string;
+            volumeMode: string;
             /** Format: date-time */
             createdAt: string;
+            impact: components["schemas"]["StorageImpact"];
         };
         PersistentVolumeDetail: components["schemas"]["PersistentVolume"] & {
             labels?: {
@@ -6792,6 +7156,57 @@ export interface components {
             claimNamespace?: string;
             claimName?: string;
             csiDriver?: string;
+            source?: components["schemas"]["PersistentVolumeSource"];
+        };
+        PersistentVolumeSource: {
+            /** @enum {string} */
+            type: "CSI";
+            csiDriver?: string;
+            csiVolumeHandle?: string;
+            csiFsType?: string;
+            csiReadOnly?: boolean;
+        };
+        CSIPersistentVolumeSource: {
+            driver: string;
+            volumeHandle: string;
+            fsType?: string;
+            readOnly?: boolean;
+        };
+        PersistentVolumeCreate: {
+            name: string;
+            /** Format: int64 */
+            capacityBytes: number;
+            accessModes: ("ReadWriteOnce" | "ReadOnlyMany" | "ReadWriteMany" | "ReadWriteOncePod")[];
+            /** @enum {string} */
+            reclaimPolicy: "Retain" | "Delete" | "Recycle";
+            /**
+             * @default Filesystem
+             * @enum {string}
+             */
+            volumeMode: "Filesystem" | "Block";
+            storageClass?: string;
+            mountOptions?: string[];
+            labels?: {
+                [key: string]: string;
+            };
+            annotations?: {
+                [key: string]: string;
+            };
+            csi: components["schemas"]["CSIPersistentVolumeSource"];
+        };
+        PersistentVolumeUpdate: {
+            /** Format: int64 */
+            capacityBytes: number;
+            /** @enum {string} */
+            reclaimPolicy: "Retain" | "Delete" | "Recycle";
+            mountOptions?: string[];
+            labels?: {
+                [key: string]: string;
+            };
+            annotations?: {
+                [key: string]: string;
+            };
+            resourceVersion: string;
         };
         PersistentVolumeClaim: {
             name: string;
@@ -6817,6 +7232,12 @@ export interface components {
             /** Format: int64 */
             requestedCapacityBytes: number;
             conditions: components["schemas"]["Condition"][];
+            storageClassAvailable: boolean;
+            allowVolumeExpansion: boolean;
+            /** @enum {string} */
+            expansionStatus: "ready" | "expanding" | "blocked";
+            expansionMessage?: string;
+            impact: components["schemas"]["StorageImpact"];
         };
         PersistentVolumeClaimCreate: {
             name: string;
@@ -6836,6 +7257,7 @@ export interface components {
             annotations?: {
                 [key: string]: string;
             };
+            snapshotName?: string;
         };
         PersistentVolumeClaimUpdate: {
             /** Format: int64 */
@@ -6847,6 +7269,51 @@ export interface components {
                 [key: string]: string;
             };
             resourceVersion?: string;
+        };
+        StorageMount: {
+            pod: string;
+            namespace: string;
+            workloadKind?: string;
+            workloadName?: string;
+            containers: string[];
+            mountPaths: string[];
+        };
+        StorageImpact: {
+            mounts: components["schemas"]["StorageMount"][];
+            mountCount: number;
+            volumeSnapshotCount: number;
+            warnings?: string[];
+        };
+        VolumeSnapshot: {
+            name: string;
+            namespace: string;
+            resourceVersion?: string;
+            sourcePvc: string;
+            volumeSnapshotClassName?: string;
+            volumeSnapshotContent?: string;
+            /** @enum {string} */
+            status: "Ready" | "Pending" | "Error";
+            readyToUse: boolean;
+            /** Format: int64 */
+            restoreSizeBytes?: number;
+            errorMessage?: string;
+            /** Format: date-time */
+            creationTime?: string;
+            /** Format: date-time */
+            createdAt: string;
+        };
+        VolumeSnapshotCreate: {
+            name: string;
+            namespace: string;
+            sourcePvc: string;
+            volumeSnapshotClassName?: string;
+        };
+        VolumeSnapshotFeature: {
+            available: boolean;
+            apiVersion?: string;
+            reason?: string;
+            classes: string[];
+            defaultClass?: string;
         };
         /** @enum {string} */
         ResourceType: "node" | "namespace" | "pod" | "deployment" | "statefulset" | "daemonset" | "job" | "cronjob" | "service" | "ingress" | "configmap" | "secret" | "storageclass" | "persistentvolume" | "persistentvolumeclaim";

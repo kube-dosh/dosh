@@ -16,9 +16,19 @@ type Repository interface {
 	GetStorageClass(ctx context.Context, name string) (domain.StorageClassDetail, error)
 	GetPersistentVolume(ctx context.Context, name string) (domain.PersistentVolumeDetail, error)
 	GetPersistentVolumeClaim(ctx context.Context, namespace, name string) (domain.PersistentVolumeClaimDetail, error)
-	CreatePersistentVolumeClaim(ctx context.Context, spec domain.PersistentVolumeClaimCreateSpec) (domain.PersistentVolumeClaimDetail, error)
-	UpdatePersistentVolumeClaim(ctx context.Context, namespace, name string, update domain.PersistentVolumeClaimUpdateSpec) (domain.PersistentVolumeClaimDetail, error)
+	CreateStorageClass(ctx context.Context, spec domain.StorageClassWriteSpec, dryRun bool) (domain.StorageClassDetail, error)
+	UpdateStorageClass(ctx context.Context, name string, spec domain.StorageClassWriteSpec, dryRun bool) (domain.StorageClassDetail, error)
+	DeleteStorageClass(ctx context.Context, name, resourceVersion string) error
+	CreatePersistentVolume(ctx context.Context, spec domain.PersistentVolumeCreateSpec, dryRun bool) (domain.PersistentVolumeDetail, error)
+	UpdatePersistentVolume(ctx context.Context, name string, update domain.PersistentVolumeUpdateSpec, dryRun bool) (domain.PersistentVolumeDetail, error)
+	DeletePersistentVolume(ctx context.Context, name, resourceVersion string) error
+	CreatePersistentVolumeClaim(ctx context.Context, spec domain.PersistentVolumeClaimCreateSpec, dryRun bool) (domain.PersistentVolumeClaimDetail, error)
+	UpdatePersistentVolumeClaim(ctx context.Context, namespace, name string, update domain.PersistentVolumeClaimUpdateSpec, dryRun bool) (domain.PersistentVolumeClaimDetail, error)
 	DeletePersistentVolumeClaim(ctx context.Context, namespace, name, resourceVersion string) error
+	VolumeSnapshotFeature(ctx context.Context) (domain.VolumeSnapshotFeature, error)
+	ListVolumeSnapshots(ctx context.Context, query domain.ListQuery) ([]domain.VolumeSnapshot, error)
+	CreateVolumeSnapshot(ctx context.Context, spec domain.VolumeSnapshotCreateSpec, dryRun bool) (domain.VolumeSnapshot, error)
+	DeleteVolumeSnapshot(ctx context.Context, namespace, name, resourceVersion string) error
 }
 
 type Service struct {

@@ -54,11 +54,13 @@ import type {
   NodeTaintUpdate,
   Overview,
   PersistentVolume,
+  PersistentVolumeCreateInput,
   PersistentVolumeClaim,
   PersistentVolumeClaimCreateInput,
   PersistentVolumeClaimDetail,
   PersistentVolumeClaimUpdateInput,
   PersistentVolumeDetail,
+  PersistentVolumeUpdateInput,
   PodDetail,
   PodEphemeralContainerInput,
   PodEphemeralContainerResult,
@@ -81,6 +83,10 @@ import type {
   ServerCertificate,
   StorageClass,
   StorageClassDetail,
+  StorageClassWriteInput,
+  VolumeSnapshot,
+  VolumeSnapshotCreateInput,
+  VolumeSnapshotFeature,
   UserPreferences,
   CronJobRunInput,
   WorkloadDetail,
@@ -295,11 +301,21 @@ function normalizeStorageClassDetail(value: StorageClassDetail): StorageClassDet
 }
 
 function normalizePersistentVolumeDetail(value: PersistentVolumeDetail): PersistentVolumeDetail {
-  return { ...value, accessModes: list(value.accessModes), mountOptions: list(value.mountOptions) };
+  return {
+    ...value,
+    accessModes: list(value.accessModes),
+    mountOptions: list(value.mountOptions),
+    impact: value.impact ? { ...value.impact, mounts: list(value.impact.mounts), warnings: list(value.impact.warnings) } : undefined,
+  };
 }
 
 function normalizePersistentVolumeClaimDetail(value: PersistentVolumeClaimDetail): PersistentVolumeClaimDetail {
-  return { ...value, accessModes: list(value.accessModes), conditions: list(value.conditions) };
+  return {
+    ...value,
+    accessModes: list(value.accessModes),
+    conditions: list(value.conditions),
+    impact: value.impact ? { ...value.impact, mounts: list(value.impact.mounts), warnings: list(value.impact.warnings) } : undefined,
+  };
 }
 
 function normalizeServerCertificate(value: ServerCertificate): ServerCertificate {
@@ -613,8 +629,16 @@ export const api = {
     request<{ status: string }>(`/api/v1/secrets/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}${resourceVersion ? `?resourceVersion=${encodeURIComponent(resourceVersion)}` : ""}`, { method: "DELETE" }),
   storageclasses: (params?: ListParams) => listRequest<StorageClass>(`/api/v1/storageclasses${query(params)}`),
   storageclass: async (name: string) => normalizeStorageClassDetail(await request<StorageClassDetail>(`/api/v1/storageclasses/${encodeURIComponent(name)}`)),
+  createStorageClass: async (input: StorageClassWriteInput) => normalizeStorageClassDetail(await request<StorageClassDetail>("/api/v1/storageclasses", { method: "POST", body: JSON.stringify(input) })),
+  updateStorageClass: async (name: string, input: StorageClassWriteInput) => normalizeStorageClassDetail(await request<StorageClassDetail>(`/api/v1/storageclasses/${encodeURIComponent(name)}`, { method: "PUT", body: JSON.stringify(input) })),
+  deleteStorageClass: (name: string, resourceVersion?: string) =>
+    request<{ status: string }>(`/api/v1/storageclasses/${encodeURIComponent(name)}${resourceVersion ? `?resourceVersion=${encodeURIComponent(resourceVersion)}` : ""}`, { method: "DELETE" }),
   persistentvolumes: (params?: ListParams) => listRequest<PersistentVolume>(`/api/v1/persistentvolumes${query(params)}`),
   persistentvolume: async (name: string) => normalizePersistentVolumeDetail(await request<PersistentVolumeDetail>(`/api/v1/persistentvolumes/${encodeURIComponent(name)}`)),
+  createPersistentVolume: async (input: PersistentVolumeCreateInput) => normalizePersistentVolumeDetail(await request<PersistentVolumeDetail>("/api/v1/persistentvolumes", { method: "POST", body: JSON.stringify(input) })),
+  updatePersistentVolume: async (name: string, input: PersistentVolumeUpdateInput) => normalizePersistentVolumeDetail(await request<PersistentVolumeDetail>(`/api/v1/persistentvolumes/${encodeURIComponent(name)}`, { method: "PUT", body: JSON.stringify(input) })),
+  deletePersistentVolume: (name: string, resourceVersion?: string) =>
+    request<{ status: string }>(`/api/v1/persistentvolumes/${encodeURIComponent(name)}${resourceVersion ? `?resourceVersion=${encodeURIComponent(resourceVersion)}` : ""}`, { method: "DELETE" }),
   persistentvolumeclaims: (params?: ListParams) =>
     listRequest<PersistentVolumeClaim>(`/api/v1/persistentvolumeclaims${query(params)}`),
   persistentvolumeclaim: async (namespace: string, name: string) =>
@@ -625,6 +649,11 @@ export const api = {
     normalizePersistentVolumeClaimDetail(await request<PersistentVolumeClaimDetail>(`/api/v1/persistentvolumeclaims/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}`, { method: "PUT", body: JSON.stringify(input) })),
   deletePersistentVolumeClaim: (namespace: string, name: string, resourceVersion?: string) =>
     request<{ status: string }>(`/api/v1/persistentvolumeclaims/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}${resourceVersion ? `?resourceVersion=${encodeURIComponent(resourceVersion)}` : ""}`, { method: "DELETE" }),
+  volumeSnapshotFeature: () => request<VolumeSnapshotFeature>("/api/v1/volume-snapshots/feature"),
+  volumeSnapshots: (params?: ListParams) => listRequest<VolumeSnapshot>(`/api/v1/volume-snapshots${query(params)}`),
+  createVolumeSnapshot: (input: VolumeSnapshotCreateInput) => request<VolumeSnapshot>("/api/v1/volume-snapshots", { method: "POST", body: JSON.stringify(input) }),
+  deleteVolumeSnapshot: (namespace: string, name: string, resourceVersion?: string) =>
+    request<{ status: string }>(`/api/v1/volume-snapshots/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}${resourceVersion ? `?resourceVersion=${encodeURIComponent(resourceVersion)}` : ""}`, { method: "DELETE" }),
   yaml: (type: string, name: string, namespace?: string) =>
     request<YAMLResource>(`/api/v1/yaml?${new URLSearchParams({ type, name, ...(namespace ? { namespace } : {}) }).toString()}`),
   resourceDiscovery: async (namespace?: string) => {

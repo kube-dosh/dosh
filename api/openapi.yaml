@@ -2217,6 +2217,28 @@ paths:
                     items: { $ref: "#/components/schemas/StorageClass" }
                   meta: { $ref: "#/components/schemas/ListMeta" }
         "401": { $ref: "#/components/responses/Unauthorized" }
+    post:
+      tags: [storage]
+      summary: Create a StorageClass with API Server dry-run validation
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/StorageClassWrite" }
+      responses:
+        "201":
+          description: Created StorageClass detail
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/StorageClassDetail" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
   /api/v1/storageclasses/{name}:
     get:
       tags: [storage]
@@ -2231,6 +2253,52 @@ paths:
               schema: { $ref: "#/components/schemas/StorageClassDetail" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "404": { $ref: "#/components/responses/NotFound" }
+    put:
+      tags: [storage]
+      summary: Update StorageClass policy and metadata
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      parameters:
+        - { $ref: "#/components/parameters/Name" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/StorageClassWrite" }
+      responses:
+        "200":
+          description: Updated StorageClass detail
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/StorageClassDetail" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
+    delete:
+      tags: [storage]
+      summary: Delete a StorageClass
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      parameters:
+        - { $ref: "#/components/parameters/Name" }
+        - name: resourceVersion
+          in: query
+          schema: { type: string }
+      responses:
+        "202":
+          description: StorageClass deletion accepted
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OperationStatus" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
   /api/v1/persistentvolumes:
     get:
       tags: [storage]
@@ -2256,6 +2324,28 @@ paths:
                     items: { $ref: "#/components/schemas/PersistentVolume" }
                   meta: { $ref: "#/components/schemas/ListMeta" }
         "401": { $ref: "#/components/responses/Unauthorized" }
+    post:
+      tags: [storage]
+      summary: Create a CSI PersistentVolume with API Server dry-run validation
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PersistentVolumeCreate" }
+      responses:
+        "201":
+          description: Created PersistentVolume detail
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PersistentVolumeDetail" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
   /api/v1/persistentvolumes/{name}:
     get:
       tags: [storage]
@@ -2270,6 +2360,52 @@ paths:
               schema: { $ref: "#/components/schemas/PersistentVolumeDetail" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "404": { $ref: "#/components/responses/NotFound" }
+    put:
+      tags: [storage]
+      summary: Update PersistentVolume capacity, reclaim policy and metadata
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      parameters:
+        - { $ref: "#/components/parameters/Name" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PersistentVolumeUpdate" }
+      responses:
+        "200":
+          description: Updated PersistentVolume detail
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PersistentVolumeDetail" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
+    delete:
+      tags: [storage]
+      summary: Delete a PersistentVolume
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      parameters:
+        - { $ref: "#/components/parameters/Name" }
+        - name: resourceVersion
+          in: query
+          schema: { type: string }
+      responses:
+        "202":
+          description: PersistentVolume deletion accepted
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OperationStatus" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
   /api/v1/persistentvolumeclaims:
     get:
       tags: [storage]
@@ -2383,6 +2519,89 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "409": { $ref: "#/components/responses/Conflict" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
+  /api/v1/volume-snapshots/feature:
+    get:
+      tags: [storage]
+      summary: Detect CSI VolumeSnapshot CRDs and list available snapshot classes
+      responses:
+        "200":
+          description: VolumeSnapshot feature availability
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/VolumeSnapshotFeature" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /api/v1/volume-snapshots:
+    get:
+      tags: [storage]
+      summary: List CSI VolumeSnapshots
+      parameters:
+        - { $ref: "#/components/parameters/Namespace" }
+        - { $ref: "#/components/parameters/Search" }
+      responses:
+        "200":
+          description: VolumeSnapshot list
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, meta]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/VolumeSnapshot" }
+                  meta: { $ref: "#/components/schemas/ListMeta" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "501": { $ref: "#/components/responses/NotSupported" }
+    post:
+      tags: [storage]
+      summary: Create a CSI VolumeSnapshot with API Server dry-run validation
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/VolumeSnapshotCreate" }
+      responses:
+        "201":
+          description: Created VolumeSnapshot
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/VolumeSnapshot" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "501": { $ref: "#/components/responses/NotSupported" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
+  /api/v1/volume-snapshots/{namespace}/{name}:
+    delete:
+      tags: [storage]
+      summary: Delete a CSI VolumeSnapshot
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      parameters:
+        - { $ref: "#/components/parameters/NamespacePath" }
+        - { $ref: "#/components/parameters/Name" }
+        - name: resourceVersion
+          in: query
+          schema: { type: string }
+      responses:
+        "202":
+          description: VolumeSnapshot deletion accepted
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OperationStatus" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "501": { $ref: "#/components/responses/NotSupported" }
         "503": { $ref: "#/components/responses/DependencyUnavailable" }
   /api/v1/yaml:
     get:
@@ -4692,12 +4911,14 @@ components:
         meta: { $ref: "#/components/schemas/ListMeta" }
     StorageClass:
       type: object
-      required: [name, provisioner, reclaimPolicy, volumeBinding, default, createdAt]
+      required: [name, provisioner, reclaimPolicy, volumeBinding, allowVolumeExpansion, default, createdAt]
       properties:
         name: { type: string }
+        resourceVersion: { type: string }
         provisioner: { type: string }
         reclaimPolicy: { type: string }
         volumeBinding: { type: string }
+        allowVolumeExpansion: { type: boolean }
         default: { type: boolean }
         createdAt: { type: string, format: date-time }
     StorageClassDetail:
@@ -4719,11 +4940,35 @@ components:
               type: array
               items: { type: string }
             allowVolumeExpansion: { type: boolean }
-    PersistentVolume:
+    StorageClassWrite:
       type: object
-      required: [name, capacityBytes, accessModes, reclaimPolicy, status, storageClass, createdAt]
+      required: [provisioner, reclaimPolicy, volumeBinding, allowVolumeExpansion, default]
       properties:
         name: { type: string }
+        provisioner: { type: string }
+        reclaimPolicy: { type: string, enum: [Delete, Retain] }
+        volumeBinding: { type: string, enum: [Immediate, WaitForFirstConsumer] }
+        allowVolumeExpansion: { type: boolean }
+        default: { type: boolean }
+        parameters:
+          type: object
+          additionalProperties: { type: string }
+        mountOptions:
+          type: array
+          items: { type: string }
+        labels:
+          type: object
+          additionalProperties: { type: string }
+        annotations:
+          type: object
+          additionalProperties: { type: string }
+        resourceVersion: { type: string }
+    PersistentVolume:
+      type: object
+      required: [name, capacityBytes, accessModes, reclaimPolicy, status, storageClass, volumeMode, createdAt, impact]
+      properties:
+        name: { type: string }
+        resourceVersion: { type: string }
         capacityBytes: { type: integer, format: int64 }
         accessModes:
           type: array
@@ -4732,7 +4977,9 @@ components:
         status: { type: string }
         claim: { type: string }
         storageClass: { type: string }
+        volumeMode: { type: string }
         createdAt: { type: string, format: date-time }
+        impact: { $ref: "#/components/schemas/StorageImpact" }
     PersistentVolumeDetail:
       allOf:
         - { $ref: "#/components/schemas/PersistentVolume" }
@@ -4752,6 +4999,65 @@ components:
             claimNamespace: { type: string }
             claimName: { type: string }
             csiDriver: { type: string }
+            source: { $ref: "#/components/schemas/PersistentVolumeSource" }
+    PersistentVolumeSource:
+      type: object
+      required: [type]
+      properties:
+        type: { type: string, enum: [CSI] }
+        csiDriver: { type: string }
+        csiVolumeHandle: { type: string }
+        csiFsType: { type: string }
+        csiReadOnly: { type: boolean }
+    CSIPersistentVolumeSource:
+      type: object
+      required: [driver, volumeHandle]
+      properties:
+        driver: { type: string }
+        volumeHandle: { type: string }
+        fsType: { type: string }
+        readOnly: { type: boolean }
+    PersistentVolumeCreate:
+      type: object
+      required: [name, capacityBytes, accessModes, reclaimPolicy, csi]
+      properties:
+        name: { type: string }
+        capacityBytes: { type: integer, format: int64, minimum: 1, maximum: 1125899906842624 }
+        accessModes:
+          type: array
+          minItems: 1
+          items:
+            type: string
+            enum: [ReadWriteOnce, ReadOnlyMany, ReadWriteMany, ReadWriteOncePod]
+        reclaimPolicy: { type: string, enum: [Retain, Delete, Recycle] }
+        volumeMode: { type: string, enum: [Filesystem, Block], default: Filesystem }
+        storageClass: { type: string }
+        mountOptions:
+          type: array
+          items: { type: string }
+        labels:
+          type: object
+          additionalProperties: { type: string }
+        annotations:
+          type: object
+          additionalProperties: { type: string }
+        csi: { $ref: "#/components/schemas/CSIPersistentVolumeSource" }
+    PersistentVolumeUpdate:
+      type: object
+      required: [capacityBytes, reclaimPolicy, resourceVersion]
+      properties:
+        capacityBytes: { type: integer, format: int64, minimum: 1, maximum: 1125899906842624 }
+        reclaimPolicy: { type: string, enum: [Retain, Delete, Recycle] }
+        mountOptions:
+          type: array
+          items: { type: string }
+        labels:
+          type: object
+          additionalProperties: { type: string }
+        annotations:
+          type: object
+          additionalProperties: { type: string }
+        resourceVersion: { type: string }
     PersistentVolumeClaim:
       type: object
       required: [name, namespace, status, capacityBytes, accessModes, storageClass, createdAt]
@@ -4771,7 +5077,7 @@ components:
       allOf:
         - { $ref: "#/components/schemas/PersistentVolumeClaim" }
         - type: object
-          required: [volumeMode, requestedCapacityBytes, conditions]
+          required: [volumeMode, requestedCapacityBytes, conditions, storageClassAvailable, allowVolumeExpansion, expansionStatus, impact]
           properties:
             labels:
               type: object
@@ -4784,6 +5090,11 @@ components:
             conditions:
               type: array
               items: { $ref: "#/components/schemas/Condition" }
+            storageClassAvailable: { type: boolean }
+            allowVolumeExpansion: { type: boolean }
+            expansionStatus: { type: string, enum: [ready, expanding, blocked] }
+            expansionMessage: { type: string }
+            impact: { $ref: "#/components/schemas/StorageImpact" }
     PersistentVolumeClaimCreate:
       type: object
       required: [name, namespace, accessModes, requestedCapacityBytes]
@@ -4805,6 +5116,7 @@ components:
         annotations:
           type: object
           additionalProperties: { type: string }
+        snapshotName: { type: string }
     PersistentVolumeClaimUpdate:
       type: object
       required: [requestedCapacityBytes]
@@ -4817,6 +5129,67 @@ components:
           type: object
           additionalProperties: { type: string }
         resourceVersion: { type: string }
+    StorageMount:
+      type: object
+      required: [pod, namespace, containers, mountPaths]
+      properties:
+        pod: { type: string }
+        namespace: { type: string }
+        workloadKind: { type: string }
+        workloadName: { type: string }
+        containers:
+          type: array
+          items: { type: string }
+        mountPaths:
+          type: array
+          items: { type: string }
+    StorageImpact:
+      type: object
+      required: [mounts, mountCount, volumeSnapshotCount]
+      properties:
+        mounts:
+          type: array
+          items: { $ref: "#/components/schemas/StorageMount" }
+        mountCount: { type: integer }
+        volumeSnapshotCount: { type: integer }
+        warnings:
+          type: array
+          items: { type: string }
+    VolumeSnapshot:
+      type: object
+      required: [name, namespace, sourcePvc, status, readyToUse, createdAt]
+      properties:
+        name: { type: string }
+        namespace: { type: string }
+        resourceVersion: { type: string }
+        sourcePvc: { type: string }
+        volumeSnapshotClassName: { type: string }
+        volumeSnapshotContent: { type: string }
+        status: { type: string, enum: [Ready, Pending, Error] }
+        readyToUse: { type: boolean }
+        restoreSizeBytes: { type: integer, format: int64 }
+        errorMessage: { type: string }
+        creationTime: { type: string, format: date-time }
+        createdAt: { type: string, format: date-time }
+    VolumeSnapshotCreate:
+      type: object
+      required: [name, namespace, sourcePvc]
+      properties:
+        name: { type: string }
+        namespace: { type: string }
+        sourcePvc: { type: string }
+        volumeSnapshotClassName: { type: string }
+    VolumeSnapshotFeature:
+      type: object
+      required: [available, classes]
+      properties:
+        available: { type: boolean }
+        apiVersion: { type: string }
+        reason: { type: string }
+        classes:
+          type: array
+          items: { type: string }
+        defaultClass: { type: string }
     ResourceType:
       type: string
       enum: [node, namespace, pod, deployment, statefulset, daemonset, job, cronjob, service, ingress, configmap, secret, storageclass, persistentvolume, persistentvolumeclaim]

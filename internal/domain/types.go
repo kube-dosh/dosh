@@ -1081,12 +1081,14 @@ type SecretWriteSpec struct {
 }
 
 type StorageClass struct {
-	Name          string    `json:"name"`
-	Provisioner   string    `json:"provisioner"`
-	ReclaimPolicy string    `json:"reclaimPolicy"`
-	VolumeBinding string    `json:"volumeBinding"`
-	Default       bool      `json:"default"`
-	CreatedAt     time.Time `json:"createdAt"`
+	Name                 string    `json:"name"`
+	ResourceVersion      string    `json:"resourceVersion,omitempty"`
+	Provisioner          string    `json:"provisioner"`
+	ReclaimPolicy        string    `json:"reclaimPolicy"`
+	VolumeBinding        string    `json:"volumeBinding"`
+	AllowVolumeExpansion bool      `json:"allowVolumeExpansion"`
+	Default              bool      `json:"default"`
+	CreatedAt            time.Time `json:"createdAt"`
 }
 
 type StorageClassDetail struct {
@@ -1098,26 +1100,81 @@ type StorageClassDetail struct {
 	AllowVolumeExpansion bool              `json:"allowVolumeExpansion"`
 }
 
+type StorageClassWriteSpec struct {
+	Name                 string            `json:"name,omitempty"`
+	Provisioner          string            `json:"provisioner"`
+	ReclaimPolicy        string            `json:"reclaimPolicy"`
+	VolumeBinding        string            `json:"volumeBinding"`
+	AllowVolumeExpansion bool              `json:"allowVolumeExpansion"`
+	Default              bool              `json:"default"`
+	Parameters           map[string]string `json:"parameters,omitempty"`
+	MountOptions         []string          `json:"mountOptions,omitempty"`
+	Labels               map[string]string `json:"labels,omitempty"`
+	Annotations          map[string]string `json:"annotations,omitempty"`
+	ResourceVersion      string            `json:"resourceVersion,omitempty"`
+}
+
 type PersistentVolume struct {
-	Name          string    `json:"name"`
-	CapacityBytes int64     `json:"capacityBytes"`
-	AccessModes   []string  `json:"accessModes"`
-	ReclaimPolicy string    `json:"reclaimPolicy"`
-	Status        string    `json:"status"`
-	Claim         string    `json:"claim,omitempty"`
-	StorageClass  string    `json:"storageClass"`
-	CreatedAt     time.Time `json:"createdAt"`
+	Name            string        `json:"name"`
+	ResourceVersion string        `json:"resourceVersion,omitempty"`
+	CapacityBytes   int64         `json:"capacityBytes"`
+	AccessModes     []string      `json:"accessModes"`
+	ReclaimPolicy   string        `json:"reclaimPolicy"`
+	Status          string        `json:"status"`
+	Claim           string        `json:"claim,omitempty"`
+	StorageClass    string        `json:"storageClass"`
+	VolumeMode      string        `json:"volumeMode"`
+	CreatedAt       time.Time     `json:"createdAt"`
+	Impact          StorageImpact `json:"impact"`
 }
 
 type PersistentVolumeDetail struct {
 	PersistentVolume
-	Labels         map[string]string `json:"labels,omitempty"`
-	Annotations    map[string]string `json:"annotations,omitempty"`
-	VolumeMode     string            `json:"volumeMode"`
-	MountOptions   []string          `json:"mountOptions,omitempty"`
-	ClaimNamespace string            `json:"claimNamespace,omitempty"`
-	ClaimName      string            `json:"claimName,omitempty"`
-	CSIDriver      string            `json:"csiDriver,omitempty"`
+	Labels         map[string]string      `json:"labels,omitempty"`
+	Annotations    map[string]string      `json:"annotations,omitempty"`
+	VolumeMode     string                 `json:"volumeMode"`
+	MountOptions   []string               `json:"mountOptions,omitempty"`
+	ClaimNamespace string                 `json:"claimNamespace,omitempty"`
+	ClaimName      string                 `json:"claimName,omitempty"`
+	CSIDriver      string                 `json:"csiDriver,omitempty"`
+	Source         PersistentVolumeSource `json:"source"`
+}
+
+type PersistentVolumeSource struct {
+	Type            string `json:"type"`
+	CSIDriver       string `json:"csiDriver,omitempty"`
+	CSIVolumeHandle string `json:"csiVolumeHandle,omitempty"`
+	CSIFSType       string `json:"csiFsType,omitempty"`
+	CSIReadOnly     bool   `json:"csiReadOnly,omitempty"`
+}
+
+type PersistentVolumeCreateSpec struct {
+	Name          string                     `json:"name"`
+	CapacityBytes int64                      `json:"capacityBytes"`
+	AccessModes   []string                   `json:"accessModes"`
+	ReclaimPolicy string                     `json:"reclaimPolicy"`
+	VolumeMode    string                     `json:"volumeMode,omitempty"`
+	StorageClass  string                     `json:"storageClass,omitempty"`
+	MountOptions  []string                   `json:"mountOptions,omitempty"`
+	Labels        map[string]string          `json:"labels,omitempty"`
+	Annotations   map[string]string          `json:"annotations,omitempty"`
+	CSI           *CSIPersistentVolumeSource `json:"csi,omitempty"`
+}
+
+type CSIPersistentVolumeSource struct {
+	Driver       string `json:"driver"`
+	VolumeHandle string `json:"volumeHandle"`
+	FSType       string `json:"fsType,omitempty"`
+	ReadOnly     bool   `json:"readOnly,omitempty"`
+}
+
+type PersistentVolumeUpdateSpec struct {
+	CapacityBytes   int64             `json:"capacityBytes"`
+	ReclaimPolicy   string            `json:"reclaimPolicy"`
+	MountOptions    []string          `json:"mountOptions,omitempty"`
+	Labels          map[string]string `json:"labels,omitempty"`
+	Annotations     map[string]string `json:"annotations,omitempty"`
+	ResourceVersion string            `json:"resourceVersion,omitempty"`
 }
 
 type PersistentVolumeClaim struct {
@@ -1139,6 +1196,11 @@ type PersistentVolumeClaimDetail struct {
 	VolumeMode             string            `json:"volumeMode"`
 	RequestedCapacityBytes int64             `json:"requestedCapacityBytes"`
 	Conditions             []Condition       `json:"conditions"`
+	StorageClassAvailable  bool              `json:"storageClassAvailable"`
+	AllowVolumeExpansion   bool              `json:"allowVolumeExpansion"`
+	ExpansionStatus        string            `json:"expansionStatus"`
+	ExpansionMessage       string            `json:"expansionMessage,omitempty"`
+	Impact                 StorageImpact     `json:"impact"`
 }
 
 type PersistentVolumeClaimCreateSpec struct {
@@ -1150,6 +1212,7 @@ type PersistentVolumeClaimCreateSpec struct {
 	VolumeMode             string            `json:"volumeMode,omitempty"`
 	Labels                 map[string]string `json:"labels,omitempty"`
 	Annotations            map[string]string `json:"annotations,omitempty"`
+	SnapshotName           string            `json:"snapshotName,omitempty"`
 }
 
 type PersistentVolumeClaimUpdateSpec struct {
@@ -1157,6 +1220,54 @@ type PersistentVolumeClaimUpdateSpec struct {
 	Labels                 map[string]string `json:"labels,omitempty"`
 	Annotations            map[string]string `json:"annotations,omitempty"`
 	ResourceVersion        string            `json:"resourceVersion,omitempty"`
+}
+
+// StorageMount describes a live Pod reference to a claim. Workload identity is
+// derived from the Pod owner reference when Kubernetes exposes it.
+type StorageMount struct {
+	Pod          string   `json:"pod"`
+	Namespace    string   `json:"namespace"`
+	WorkloadKind string   `json:"workloadKind,omitempty"`
+	WorkloadName string   `json:"workloadName,omitempty"`
+	Containers   []string `json:"containers"`
+	MountPaths   []string `json:"mountPaths"`
+}
+
+type StorageImpact struct {
+	Mounts              []StorageMount `json:"mounts"`
+	MountCount          int            `json:"mountCount"`
+	VolumeSnapshotCount int            `json:"volumeSnapshotCount"`
+	Warnings            []string       `json:"warnings,omitempty"`
+}
+
+type VolumeSnapshot struct {
+	Name                    string    `json:"name"`
+	Namespace               string    `json:"namespace"`
+	ResourceVersion         string    `json:"resourceVersion,omitempty"`
+	SourcePVC               string    `json:"sourcePvc"`
+	VolumeSnapshotClassName string    `json:"volumeSnapshotClassName,omitempty"`
+	VolumeSnapshotContent   string    `json:"volumeSnapshotContent,omitempty"`
+	Status                  string    `json:"status"`
+	ReadyToUse              bool      `json:"readyToUse"`
+	RestoreSizeBytes        int64     `json:"restoreSizeBytes,omitempty"`
+	ErrorMessage            string    `json:"errorMessage,omitempty"`
+	CreationTime            time.Time `json:"creationTime,omitempty"`
+	CreatedAt               time.Time `json:"createdAt"`
+}
+
+type VolumeSnapshotCreateSpec struct {
+	Name                    string `json:"name"`
+	Namespace               string `json:"namespace"`
+	SourcePVC               string `json:"sourcePvc"`
+	VolumeSnapshotClassName string `json:"volumeSnapshotClassName,omitempty"`
+}
+
+type VolumeSnapshotFeature struct {
+	Available    bool     `json:"available"`
+	APIVersion   string   `json:"apiVersion,omitempty"`
+	Reason       string   `json:"reason,omitempty"`
+	Classes      []string `json:"classes"`
+	DefaultClass string   `json:"defaultClass,omitempty"`
 }
 
 type YAMLResource struct {

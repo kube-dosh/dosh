@@ -33,6 +33,7 @@ import type {
   ServiceDetail,
   SessionResponse,
   StorageClassDetail,
+  VolumeSnapshot,
   WorkloadDetail,
   WorkloadRevision,
   WorkloadSummary,
@@ -88,8 +89,9 @@ const session: SessionResponse = {
       configmaps: { create: true, update: true, delete: true, scale: false },
       secrets: { create: true, update: true, delete: true, scale: false },
       persistentvolumeclaims: { create: true, update: true, delete: true, scale: false },
-      persistentvolumes: { create: false, update: false, delete: false, scale: false },
-      storageclasses: { create: false, update: false, delete: false, scale: false },
+      persistentvolumes: { create: true, update: true, delete: true, scale: false },
+      storageclasses: { create: true, update: true, delete: true, scale: false },
+      volumesnapshots: { create: true, update: false, delete: true, scale: false },
       nodes: { create: false, update: true, delete: false, scale: false },
       namespaces: { create: true, update: false, delete: true, scale: false },
       horizontalpodautoscalers: { create: true, update: true, delete: true, scale: false },
@@ -570,6 +572,8 @@ const persistentVolumeDetail: PersistentVolumeDetail = {
   status: "Bound", claim: "production/data-claim", storageClass: "data-standard", createdAt: "2026-11-02T00:00:00Z",
   labels: { tier: "gold" }, annotations: { owner: "platform" }, volumeMode: "Filesystem", mountOptions: ["discard"],
   claimNamespace: "production", claimName: "data-claim", csiDriver: "csi.example.test",
+  source: { type: "CSI", csiDriver: "csi.example.test", csiVolumeHandle: "vol-1", csiFsType: "ext4" },
+  impact: { mountCount: 1, volumeSnapshotCount: 1, mounts: [{ pod: "db-0", namespace: "production", workloadKind: "StatefulSet", workloadName: "db", containers: ["postgres", "metrics"], mountPaths: ["/var/lib/postgresql/data"] }] },
 };
 
 const persistentVolumeClaimDetail: PersistentVolumeClaimDetail = {
@@ -577,6 +581,13 @@ const persistentVolumeClaimDetail: PersistentVolumeClaimDetail = {
   accessModes: ["ReadWriteOnce"], storageClass: "data-standard", createdAt: "2026-11-02T00:00:00Z",
   labels: { app: "database" }, annotations: { backup: "daily" }, volumeMode: "Filesystem", requestedCapacityBytes: 5 * 1024 * 1024 * 1024,
   conditions: [{ type: "Resizing", status: "True", reason: "Expanding", message: "volume expansion in progress", lastTransitionTime: "2026-11-02T01:00:00Z" }],
+  storageClassAvailable: true, allowVolumeExpansion: true,
+  impact: { mountCount: 1, volumeSnapshotCount: 1, mounts: [{ pod: "db-0", namespace: "production", workloadKind: "StatefulSet", workloadName: "db", containers: ["postgres"], mountPaths: ["/var/lib/postgresql/data"] }] },
+};
+
+const volumeSnapshot: VolumeSnapshot = {
+  name: "snap-daily", namespace: "production", resourceVersion: "21", sourcePvc: "data-claim", volumeSnapshotClassName: "csi-snap",
+  status: "Ready", readyToUse: true, restoreSizeBytes: 5 * 1024 * 1024 * 1024, createdAt: "2026-11-19T01:00:00Z",
 };
 
 const overview: Overview = {
@@ -1321,18 +1332,36 @@ async function installApiMocks(page: Page, options: { authenticated?: boolean; a
       const name = body.yaml.match(/^  name:\s*(\S+)/m)?.[1] ?? "web";
       return json(route, { kind, namespace: "default", name, yaml: body.yaml });
     }
-    if (path === "/api/v1/storageclasses") {
+    if (path === "/api/v1/storageclasses" && method === "GET") {
       const q = new URL(request.url()).searchParams.get("q") ?? "";
       return json(route, list([
         { name: "data-standard", provisioner: "csi.example.test", reclaimPolicy: "Delete", volumeBinding: "Immediate", default: true, createdAt: "2026-11-02T00:00:00Z" },
         { name: "logs-fast", provisioner: "csi.example.test", reclaimPolicy: "Retain", volumeBinding: "WaitForFirstConsumer", default: false, createdAt: "2026-11-02T00:00:00Z" },
       ].filter((item) => item.name.includes(q))));
     }
+    if (path === "/api/v1/storageclasses" && method === "POST") {
+      const body = request.postDataJSON() as { name: string };
+      return json(route, { ...storageClassDetail, name: body.name, resourceVersion: "31" }, 201);
+    }
     if (path === "/api/v1/storageclasses/data-standard") return json(route, storageClassDetail);
-    if (path === "/api/v1/persistentvolumes") return json(route, list([]));
+    if (path === "/api/v1/persistentvolumes" && method === "GET") return json(route, list([]));
+    if (path === "/api/v1/persistentvolumes" && method === "POST") {
+      const body = request.postDataJSON() as { name: string; capacityBytes: number; csi?: { driver?: string; volumeHandle?: string } };
+      return json(route, { ...persistentVolumeDetail, name: body.name, capacityBytes: body.capacityBytes, status: "Available", claim: undefined, csiDriver: body.csi?.driver, source: { type: "CSI", csiDriver: body.csi?.driver, csiVolumeHandle: body.csi?.volumeHandle }, resourceVersion: "32" }, 201);
+    }
     if (path === "/api/v1/persistentvolumes/pv-data") return json(route, persistentVolumeDetail);
-    if (path === "/api/v1/persistentvolumeclaims") return json(route, list([]));
+    if (path === "/api/v1/persistentvolumeclaims" && method === "GET") return json(route, list([]));
+    if (path === "/api/v1/persistentvolumeclaims" && method === "POST") {
+      const body = request.postDataJSON() as { name: string; namespace: string; requestedCapacityBytes: number };
+      return json(route, { ...persistentVolumeClaimDetail, name: body.name, namespace: body.namespace, requestedCapacityBytes: body.requestedCapacityBytes, status: "Pending", resourceVersion: "33" }, 201);
+    }
     if (path === "/api/v1/persistentvolumeclaims/production/data-claim") return json(route, persistentVolumeClaimDetail);
+    if (path === "/api/v1/volume-snapshots/feature") return json(route, { available: true, apiVersion: "snapshot.storage.k8s.io/v1", classes: ["csi-snap"], defaultClass: "csi-snap" });
+    if (path === "/api/v1/volume-snapshots" && method === "GET") return json(route, list([volumeSnapshot]));
+    if (path === "/api/v1/volume-snapshots" && method === "POST") {
+      const body = request.postDataJSON() as { name: string; namespace: string; sourcePvc: string; volumeSnapshotClassName?: string };
+      return json(route, { ...volumeSnapshot, ...body, status: "Pending", readyToUse: false, createdAt: new Date().toISOString(), resourceVersion: "34" }, 201);
+    }
     if (path === "/api/v1/services" && method === "GET") return json(route, list(services));
     if (path === "/api/v1/ingresses") return json(route, list([{
       name: "web", namespace: "default", class: "nginx", createdAt: "2026-11-02T00:00:00Z",
@@ -3910,6 +3939,94 @@ test("PersistentVolumeClaim 详情展示申请容量、PV 和状态条件", asyn
 
   await page.getByRole("tab", { name: "YAML", exact: true }).click();
   await expect(page).toHaveURL(/tab=yaml/);
+});
+
+test("N15 存储运维在桌面与移动端完成创建、快照恢复且无横向溢出", async ({ page }) => {
+  test.setTimeout(180_000);
+  await installApiMocks(page);
+  await page.setViewportSize({ width: 1280, height: 900 });
+
+  await page.goto("/storage");
+  await expect(page.locator("main h1")).toBeVisible();
+  await expectNoPageOverflow(page, "desktop storage classes");
+  await page.getByRole("button", { name: "创建 StorageClass" }).click();
+  let dialog = page.getByRole("dialog", { name: "创建 StorageClass" });
+  await expect(dialog).toBeVisible();
+  await expectElementInsideViewport(page, dialog, "desktop StorageClass dialog");
+  await expectNoPageOverflow(page, "desktop StorageClass dialog");
+  await dialog.getByLabel("名称").fill("fast-ssd");
+  await dialog.getByLabel("Provisioner").fill("csi.example.test");
+  await dialog.getByRole("button", { name: /允许在线扩容/ }).click();
+  const classRequest = page.waitForRequest((request) => request.method() === "POST" && new URL(request.url()).pathname === "/api/v1/storageclasses");
+  await dialog.getByRole("button", { name: "创建 StorageClass" }).click();
+  expect((await classRequest).postDataJSON()).toMatchObject({ name: "fast-ssd", provisioner: "csi.example.test", allowVolumeExpansion: true });
+  await expect(page.getByText("StorageClass fast-ssd 已创建")).toBeVisible();
+
+  await page.goto("/storage?tab=volumes");
+  await page.getByRole("button", { name: "创建 PV" }).click();
+  dialog = page.getByRole("dialog", { name: "创建 PersistentVolume" });
+  await expect(dialog).toBeVisible();
+  await expectElementInsideViewport(page, dialog, "desktop PersistentVolume dialog");
+  await expectNoPageOverflow(page, "desktop PersistentVolume dialog");
+  await dialog.getByLabel("名称").fill("pv-new");
+  await dialog.getByLabel("CSI Driver").fill("csi.example.test");
+  await dialog.getByLabel("VolumeHandle").fill("vol-new");
+  const volumeRequest = page.waitForRequest((request) => request.method() === "POST" && new URL(request.url()).pathname === "/api/v1/persistentvolumes");
+  await dialog.getByRole("button", { name: "创建 PersistentVolume" }).click();
+  expect((await volumeRequest).postDataJSON()).toMatchObject({ name: "pv-new", csi: { driver: "csi.example.test", volumeHandle: "vol-new" } });
+  await expect(page.getByText("PersistentVolume pv-new 已创建")).toBeVisible();
+
+  await page.goto("/storage?tab=snapshots&namespace=production");
+  await expect(page.getByRole("cell", { name: "snap-daily", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "操作 VolumeSnapshot production/snap-daily" }).click();
+  await page.getByRole("menuitem", { name: "从快照恢复 PVC" }).click();
+  dialog = page.getByRole("dialog", { name: "从快照恢复 PersistentVolumeClaim" });
+  await expect(dialog).toContainText("production/snap-daily");
+  await expect(dialog).toContainText("恢复大小 5.0 GiB");
+  await expectElementInsideViewport(page, dialog, "desktop snapshot restore dialog");
+  await expectNoPageOverflow(page, "desktop snapshot restore dialog");
+  await dialog.getByLabel("申请容量").fill("6");
+  const restoreRequest = page.waitForRequest((request) => request.method() === "POST" && new URL(request.url()).pathname === "/api/v1/persistentvolumeclaims");
+  await dialog.getByRole("button", { name: "从快照恢复" }).click();
+  expect((await restoreRequest).postDataJSON()).toMatchObject({ name: "snap-daily-restore", namespace: "production", snapshotName: "snap-daily", requestedCapacityBytes: 6 * 1024 ** 3 });
+  await expect(page.getByText("PVC snap-daily-restore 已从快照发起恢复")).toBeVisible();
+
+  for (const viewport of [{ width: 390, height: 844 }, { width: 360, height: 800 }, { width: 320, height: 720 }]) {
+    await page.setViewportSize(viewport);
+    await page.goto("/storage?tab=snapshots&namespace=production");
+    await expect(page.getByRole("cell", { name: "snap-daily", exact: true })).toBeVisible();
+    await expectNoPageOverflow(page, `${viewport.width}px snapshot table`);
+
+    await page.getByRole("button", { name: "操作 VolumeSnapshot production/snap-daily" }).click();
+    const menu = page.getByRole("menu");
+    await expect(menu).toBeVisible();
+    await expectElementInsideViewport(page, menu, `${viewport.width}px snapshot actions`);
+    await expectNoPageOverflow(page, `${viewport.width}px snapshot actions`);
+    await page.getByRole("menuitem", { name: "从快照恢复 PVC" }).click();
+    dialog = page.getByRole("dialog", { name: "从快照恢复 PersistentVolumeClaim" });
+    await expect(dialog).toBeVisible();
+    await expectElementInsideViewport(page, dialog, `${viewport.width}px snapshot restore dialog`);
+    await expectNoPageOverflow(page, `${viewport.width}px snapshot restore dialog`);
+    await page.screenshot({ path: `test-results/mobile-storage/restore-${viewport.width}.png`, fullPage: false });
+    await page.keyboard.press("Escape");
+    await expect(dialog).toBeHidden();
+
+    await page.goto("/storage?tab=volumes");
+    await page.getByRole("button", { name: "创建 PV" }).click();
+    dialog = page.getByRole("dialog", { name: "创建 PersistentVolume" });
+    await expectElementInsideViewport(page, dialog, `${viewport.width}px PersistentVolume dialog`);
+    await expectNoPageOverflow(page, `${viewport.width}px PersistentVolume page`);
+    await page.keyboard.press("Escape");
+    await expect(dialog).toBeHidden();
+
+    await page.goto("/storage");
+    await page.getByRole("button", { name: "创建 StorageClass" }).click();
+    dialog = page.getByRole("dialog", { name: "创建 StorageClass" });
+    await expectElementInsideViewport(page, dialog, `${viewport.width}px StorageClass dialog`);
+    await expectNoPageOverflow(page, `${viewport.width}px StorageClass page`);
+    await page.keyboard.press("Escape");
+    await expect(dialog).toBeHidden();
+  }
 });
 
 test("网络标签写入 URL 并在刷新后保持", async ({ page }) => {

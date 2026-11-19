@@ -57,7 +57,7 @@ Dosh 不替代 Kubernetes，也不绕过 Kubernetes。所有身份、权限和�
 | 弹性与可用性 | 独立的 HPA 与 PDB 管理流程：CPU/内存扩缩目标、副本上下限、当前指标与 Condition 解释、minAvailable/maxUnavailable 中断预算、允许驱逐与健康副本说明、可搜索工作负载选择、创建前 Dry Run、基于 resourceVersion 的并发保护、按 RBAC 显隐操作，以及带审计的创建/更新/删除 |
 | 网络 | Service 与 Ingress 列表和详情；按权限创建、编辑、删除 ClusterIP、NodePort、LoadBalancer 和 Ingress |
 | 配置与密钥 | ConfigMap、Secret 的查看、创建、编辑、删除、数据查看和 YAML；Secret 数据仅对有权限且经过审计的请求返回 |
-| 存储 | PVC 创建与管理；PV、StorageClass 查看与关联关系导航 |
+| 存储 | StorageClass、CSI PersistentVolume、PVC 的结构化创建/编辑/删除；PVC 扩容前置检查与进度、回收与绑定影响提示；CSI VolumeSnapshot 列表、创建、删除和快照恢复；未安装快照 CRD 时自动降级并给出明确说明 |
 | 命名空间 | 创建、详情、YAML 和受保护的级联删除；`default` 与 `kube-*` 始终拒绝删除 |
 | 事件 | 集群事件检索、命名空间过滤、Warning 识别、对象快速跳转和实时事件流 |
 | 资源浏览器 | 通过 Kubernetes API Discovery 浏览全部 served version 的内置资源与 CRD 类型；按 API Group、Kind、资源名筛选并切换版本；提供收藏、最近资源、保存视图、隐藏列、通用列表/详情/事件、可筛选的跨资源关系拓扑、带字段搜索的 Schema 动态表单、StatefulSet/DaemonSet/Job/CronJob/PV/StorageClass 推荐模板、YAML 创建/编辑/删除、变更 Diff、本地模板/草稿恢复、全屏编辑和 Owner References，所有读写均受 Kubernetes RBAC 约束；通用 Secret 写入仍由专用页面承担 |
@@ -244,7 +244,7 @@ TLS 证书更新后，Dosh 默认每 30 秒检查一次挂载文件并热加载�
 - **Kubernetes**：Chart 要求 Kubernetes `1.30+`。
 - **Metrics**：未安装 Metrics Server 时，CPU/内存展示 Pod requests 和节点 allocatable，不影响资源管理。
 - **YAML 创建**：`/yaml/create` 使用受控的内置资源白名单，暂不开放 Namespace 和 Node；CRD 与其他已发现资源通过资源浏览器的 Schema 动态表单或 YAML 编辑器创建、更新和删除。Schema 不可用时回退 YAML，API Server Dry Run 仍是权威校验；Namespace、Node、CRD、准入 Webhook、集群 RBAC、PV/StorageClass 等高风险写入需要名称确认。Secret 通用写入关闭并继续使用专用页面。
-- **存储**：PVC 支持受权限保护的创建、编辑和删除；PV、StorageClass 以查看和关联导航为主。
+- **存储**：StorageClass、CSI PersistentVolume 和 PVC 写入均受权限保护，提交前执行 API Server Dry Run，更新与删除要求 resourceVersion。仅当关联 StorageClass 设置 `allowVolumeExpansion=true` 时才允许 PVC 扩容；默认 StorageClass 与 `kube-*` 受删除保护。检测到 `snapshot.storage.k8s.io` 时自动启用 VolumeSnapshot，否则快照页保持可用并明确说明缺失的 CRD 或控制器。
 - **Secret**：拥有读取权限的用户可以查看 Secret 数据；该行为受 RBAC 约束并写入审计，不提供额外的二次遮蔽层。
 - **浏览器**：遵循同一套响应式界面，建议使用较新的 Chrome、Edge、Firefox 或 Safari。
 

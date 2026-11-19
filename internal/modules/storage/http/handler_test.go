@@ -14,17 +14,27 @@ import (
 )
 
 type httpStorageRepository struct {
-	classes      []domain.StorageClass
-	volumes      []domain.PersistentVolume
-	claims       []domain.PersistentVolumeClaim
-	classDetail  domain.StorageClassDetail
-	volumeDetail domain.PersistentVolumeDetail
-	claimDetail  domain.PersistentVolumeClaimDetail
-	classesErr   error
-	volumesErr   error
-	claimsErr    error
-	detailErr    error
-	lastPVCQry   domain.ListQuery
+	classes          []domain.StorageClass
+	volumes          []domain.PersistentVolume
+	claims           []domain.PersistentVolumeClaim
+	snapshots        []domain.VolumeSnapshot
+	feature          domain.VolumeSnapshotFeature
+	classDetail      domain.StorageClassDetail
+	volumeDetail     domain.PersistentVolumeDetail
+	claimDetail      domain.PersistentVolumeClaimDetail
+	classesErr       error
+	volumesErr       error
+	claimsErr        error
+	detailErr        error
+	lastPVCQry       domain.ListQuery
+	lastSnapshotQry  domain.ListQuery
+	lastClassSpec    domain.StorageClassWriteSpec
+	lastVolumeCreate domain.PersistentVolumeCreateSpec
+	lastVolumeUpdate domain.PersistentVolumeUpdateSpec
+	lastSnapshotSpec domain.VolumeSnapshotCreateSpec
+	lastDeleteRV     string
+	lastDryRun       bool
+	writeCalls       int
 }
 
 func (r *httpStorageRepository) ListStorageClasses(context.Context, domain.ListQuery) ([]domain.StorageClass, error) {
@@ -60,13 +70,64 @@ func (r *httpStorageRepository) GetPersistentVolume(context.Context, string) (do
 func (r *httpStorageRepository) GetPersistentVolumeClaim(context.Context, string, string) (domain.PersistentVolumeClaimDetail, error) {
 	return r.claimDetail, r.detailErr
 }
-func (r *httpStorageRepository) CreatePersistentVolumeClaim(context.Context, domain.PersistentVolumeClaimCreateSpec) (domain.PersistentVolumeClaimDetail, error) {
+func (r *httpStorageRepository) CreateStorageClass(_ context.Context, spec domain.StorageClassWriteSpec, dryRun bool) (domain.StorageClassDetail, error) {
+	r.lastClassSpec, r.lastDryRun = spec, dryRun
+	r.writeCalls++
+	return r.classDetail, r.detailErr
+}
+func (r *httpStorageRepository) UpdateStorageClass(_ context.Context, _ string, spec domain.StorageClassWriteSpec, dryRun bool) (domain.StorageClassDetail, error) {
+	r.lastClassSpec, r.lastDryRun = spec, dryRun
+	r.writeCalls++
+	return r.classDetail, r.detailErr
+}
+func (r *httpStorageRepository) DeleteStorageClass(_ context.Context, _, resourceVersion string) error {
+	r.lastDeleteRV = resourceVersion
+	r.writeCalls++
+	return r.detailErr
+}
+func (r *httpStorageRepository) CreatePersistentVolume(_ context.Context, spec domain.PersistentVolumeCreateSpec, dryRun bool) (domain.PersistentVolumeDetail, error) {
+	r.lastVolumeCreate, r.lastDryRun = spec, dryRun
+	r.writeCalls++
+	return r.volumeDetail, r.detailErr
+}
+func (r *httpStorageRepository) UpdatePersistentVolume(_ context.Context, _ string, update domain.PersistentVolumeUpdateSpec, dryRun bool) (domain.PersistentVolumeDetail, error) {
+	r.lastVolumeUpdate, r.lastDryRun = update, dryRun
+	r.writeCalls++
+	return r.volumeDetail, r.detailErr
+}
+func (r *httpStorageRepository) DeletePersistentVolume(_ context.Context, _, resourceVersion string) error {
+	r.lastDeleteRV = resourceVersion
+	r.writeCalls++
+	return r.detailErr
+}
+func (r *httpStorageRepository) CreatePersistentVolumeClaim(context.Context, domain.PersistentVolumeClaimCreateSpec, bool) (domain.PersistentVolumeClaimDetail, error) {
+	r.writeCalls++
 	return r.claimDetail, r.detailErr
 }
-func (r *httpStorageRepository) UpdatePersistentVolumeClaim(context.Context, string, string, domain.PersistentVolumeClaimUpdateSpec) (domain.PersistentVolumeClaimDetail, error) {
+func (r *httpStorageRepository) UpdatePersistentVolumeClaim(context.Context, string, string, domain.PersistentVolumeClaimUpdateSpec, bool) (domain.PersistentVolumeClaimDetail, error) {
 	return r.claimDetail, r.detailErr
 }
 func (r *httpStorageRepository) DeletePersistentVolumeClaim(context.Context, string, string, string) error {
+	return r.detailErr
+}
+func (r *httpStorageRepository) VolumeSnapshotFeature(context.Context) (domain.VolumeSnapshotFeature, error) {
+	if r.feature.Reason != "" || r.feature.Available || r.feature.Classes != nil {
+		return r.feature, r.detailErr
+	}
+	return domain.VolumeSnapshotFeature{Available: false, Reason: "CRD unavailable", Classes: []string{}}, r.detailErr
+}
+func (r *httpStorageRepository) ListVolumeSnapshots(_ context.Context, query domain.ListQuery) ([]domain.VolumeSnapshot, error) {
+	r.lastSnapshotQry = query
+	return r.snapshots, r.detailErr
+}
+func (r *httpStorageRepository) CreateVolumeSnapshot(_ context.Context, spec domain.VolumeSnapshotCreateSpec, dryRun bool) (domain.VolumeSnapshot, error) {
+	r.lastSnapshotSpec, r.lastDryRun = spec, dryRun
+	r.writeCalls++
+	return domain.VolumeSnapshot{Name: spec.Name, Namespace: spec.Namespace, SourcePVC: spec.SourcePVC}, r.detailErr
+}
+func (r *httpStorageRepository) DeleteVolumeSnapshot(_ context.Context, _, _ string, resourceVersion string) error {
+	r.lastDeleteRV = resourceVersion
+	r.writeCalls++
 	return r.detailErr
 }
 
@@ -87,6 +148,14 @@ func storageTestRouter(repo *httpStorageRepository) http.Handler {
 func storageRequest(handler http.Handler, path string) *httptest.ResponseRecorder {
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, path, nil))
+	return response
+}
+
+func storageWriteRequest(handler http.Handler, method, path, body string) *httptest.ResponseRecorder {
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(method, path, strings.NewReader(body))
+	request.Header.Set("Content-Type", "application/json")
+	handler.ServeHTTP(response, request)
 	return response
 }
 
@@ -172,6 +241,93 @@ func TestStorageDetailRoutesMapErrors(t *testing.T) {
 		response := storageRequest(router, path)
 		if response.Code != http.StatusNotFound {
 			t.Fatalf("%s status = %d, want %d, body = %s", path, response.Code, http.StatusNotFound, response.Body.String())
+		}
+	}
+}
+
+func TestStorageWriteRoutesEnforceContractsAndResourceVersions(t *testing.T) {
+	repo := &httpStorageRepository{
+		classDetail:  domain.StorageClassDetail{StorageClass: domain.StorageClass{Name: "fast", Provisioner: "csi.example.test"}},
+		volumeDetail: domain.PersistentVolumeDetail{PersistentVolume: domain.PersistentVolume{Name: "pv-new", CapacityBytes: 1 << 30}},
+	}
+	router := storageTestRouter(repo)
+
+	response := storageWriteRequest(router, http.MethodPost, "/storageclasses", `{
+		"name":"fast","provisioner":"csi.example.test","reclaimPolicy":"Delete","volumeBinding":"Immediate","allowVolumeExpansion":true
+	}`)
+	if response.Code != http.StatusCreated || repo.writeCalls != 2 || repo.lastDryRun || repo.lastClassSpec.Name != "fast" || !repo.lastClassSpec.AllowVolumeExpansion {
+		t.Fatalf("create StorageClass status=%d calls=%d spec=%#v body=%s", response.Code, repo.writeCalls, repo.lastClassSpec, response.Body.String())
+	}
+	response = storageWriteRequest(router, http.MethodPut, "/storageclasses/fast", `{
+		"provisioner":"csi.example.test","reclaimPolicy":"Retain","volumeBinding":"WaitForFirstConsumer","allowVolumeExpansion":true,"resourceVersion":"7"
+	}`)
+	if response.Code != http.StatusOK || repo.writeCalls != 4 || repo.lastClassSpec.ResourceVersion != "7" || repo.lastClassSpec.ReclaimPolicy != "Retain" {
+		t.Fatalf("update StorageClass status=%d calls=%d spec=%#v body=%s", response.Code, repo.writeCalls, repo.lastClassSpec, response.Body.String())
+	}
+	response = storageWriteRequest(router, http.MethodDelete, "/storageclasses/fast?resourceVersion=7", "")
+	if response.Code != http.StatusAccepted || repo.writeCalls != 5 || repo.lastDeleteRV != "7" {
+		t.Fatalf("delete StorageClass status=%d calls=%d rv=%q body=%s", response.Code, repo.writeCalls, repo.lastDeleteRV, response.Body.String())
+	}
+
+	response = storageWriteRequest(router, http.MethodPost, "/persistentvolumes", `{
+		"name":"pv-new","capacityBytes":1073741824,"accessModes":["ReadWriteOnce"],"reclaimPolicy":"Retain",
+		"csi":{"driver":"csi.example.test","volumeHandle":"vol-1"}
+	}`)
+	if response.Code != http.StatusCreated || repo.writeCalls != 7 || repo.lastVolumeCreate.Name != "pv-new" || repo.lastVolumeCreate.CSI.VolumeHandle != "vol-1" {
+		t.Fatalf("create PV status=%d calls=%d spec=%#v body=%s", response.Code, repo.writeCalls, repo.lastVolumeCreate, response.Body.String())
+	}
+	response = storageWriteRequest(router, http.MethodPut, "/persistentvolumes/pv-new", `{
+		"capacityBytes":2147483648,"reclaimPolicy":"Delete","resourceVersion":"9"
+	}`)
+	if response.Code != http.StatusOK || repo.writeCalls != 9 || repo.lastVolumeUpdate.ResourceVersion != "9" || repo.lastVolumeUpdate.CapacityBytes != 2<<30 {
+		t.Fatalf("update PV status=%d calls=%d spec=%#v body=%s", response.Code, repo.writeCalls, repo.lastVolumeUpdate, response.Body.String())
+	}
+	response = storageWriteRequest(router, http.MethodDelete, "/persistentvolumes/pv-new?resourceVersion=9", "")
+	if response.Code != http.StatusAccepted || repo.writeCalls != 10 || repo.lastDeleteRV != "9" {
+		t.Fatalf("delete PV status=%d calls=%d rv=%q body=%s", response.Code, repo.writeCalls, repo.lastDeleteRV, response.Body.String())
+	}
+}
+
+func TestVolumeSnapshotRoutesExposeFeatureAndWriteContracts(t *testing.T) {
+	repo := &httpStorageRepository{
+		feature:   domain.VolumeSnapshotFeature{Available: true, APIVersion: "snapshot.storage.k8s.io/v1", Classes: []string{"csi-snap"}},
+		snapshots: []domain.VolumeSnapshot{{Name: "snap-a", Namespace: "prod", SourcePVC: "data", Status: "Ready"}},
+	}
+	router := storageTestRouter(repo)
+
+	response := storageRequest(router, "/volume-snapshots/feature")
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"available":true`) || !strings.Contains(response.Body.String(), `"apiVersion":"snapshot.storage.k8s.io/v1"`) {
+		t.Fatalf("snapshot feature status=%d body=%s", response.Code, response.Body.String())
+	}
+	response = storageRequest(router, "/volume-snapshots?namespace=%20prod%20&q=snap")
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"name":"snap-a"`) || repo.lastSnapshotQry.Namespace != "prod" || repo.lastSnapshotQry.Search != "snap" {
+		t.Fatalf("snapshot list status=%d query=%#v body=%s", response.Code, repo.lastSnapshotQry, response.Body.String())
+	}
+	response = storageWriteRequest(router, http.MethodPost, "/volume-snapshots", `{"name":"snap-b","namespace":"prod","sourcePvc":"data","volumeSnapshotClassName":"csi-snap"}`)
+	if response.Code != http.StatusCreated || repo.writeCalls != 2 || repo.lastSnapshotSpec.SourcePVC != "data" || repo.lastSnapshotSpec.VolumeSnapshotClassName != "csi-snap" {
+		t.Fatalf("create snapshot status=%d calls=%d spec=%#v body=%s", response.Code, repo.writeCalls, repo.lastSnapshotSpec, response.Body.String())
+	}
+	response = storageWriteRequest(router, http.MethodDelete, "/volume-snapshots/prod/snap-b?resourceVersion=13", "")
+	if response.Code != http.StatusAccepted || repo.writeCalls != 3 || repo.lastDeleteRV != "13" {
+		t.Fatalf("delete snapshot status=%d calls=%d rv=%q body=%s", response.Code, repo.writeCalls, repo.lastDeleteRV, response.Body.String())
+	}
+}
+
+func TestVolumeSnapshotRoutesReportUnsupportedCRD(t *testing.T) {
+	repo := &httpStorageRepository{detailErr: domain.ErrUnsupported}
+	router := storageTestRouter(repo)
+	for _, test := range []struct {
+		method string
+		path   string
+		body   string
+	}{
+		{method: http.MethodGet, path: "/volume-snapshots"},
+		{method: http.MethodPost, path: "/volume-snapshots", body: `{"name":"snap-a","namespace":"prod","sourcePvc":"data"}`},
+		{method: http.MethodDelete, path: "/volume-snapshots/prod/snap-a?resourceVersion=1"},
+	} {
+		response := storageWriteRequest(router, test.method, test.path, test.body)
+		if response.Code != http.StatusNotImplemented || !strings.Contains(response.Body.String(), "not_supported") {
+			t.Fatalf("%s %s status=%d body=%s", test.method, test.path, response.Code, response.Body.String())
 		}
 	}
 }

@@ -1121,9 +1121,11 @@ export interface SecretWriteInput {
 
 export interface StorageClass {
   name: string;
+  resourceVersion?: string;
   provisioner: string;
   reclaimPolicy: string;
   volumeBinding: string;
+  allowVolumeExpansion?: boolean;
   default: boolean;
   createdAt: string;
 }
@@ -1136,14 +1138,31 @@ export interface StorageClassDetail extends StorageClass {
   allowVolumeExpansion: boolean;
 }
 
+export interface StorageClassWriteInput {
+  name?: string;
+  provisioner: string;
+  reclaimPolicy: string;
+  volumeBinding: string;
+  allowVolumeExpansion: boolean;
+  default: boolean;
+  parameters?: Record<string, string>;
+  mountOptions?: string[];
+  labels?: Record<string, string>;
+  annotations?: Record<string, string>;
+  resourceVersion?: string;
+}
+
 export interface PersistentVolume {
   name: string;
+  resourceVersion?: string;
   capacityBytes: number;
   accessModes: string[];
   reclaimPolicy: string;
   status: string;
   claim?: string;
   storageClass: string;
+  volumeMode?: string;
+  impact?: StorageImpact;
   createdAt: string;
 }
 
@@ -1155,6 +1174,42 @@ export interface PersistentVolumeDetail extends PersistentVolume {
   claimNamespace?: string;
   claimName?: string;
   csiDriver?: string;
+  source?: PersistentVolumeSource;
+}
+
+export interface PersistentVolumeSource {
+  type: "CSI";
+  csiDriver?: string;
+  csiVolumeHandle?: string;
+  csiFsType?: string;
+  csiReadOnly?: boolean;
+}
+
+export interface PersistentVolumeCreateInput {
+  name: string;
+  capacityBytes: number;
+  accessModes: string[];
+  reclaimPolicy: string;
+  volumeMode?: string;
+  storageClass?: string;
+  mountOptions?: string[];
+  labels?: Record<string, string>;
+  annotations?: Record<string, string>;
+  csi: {
+    driver: string;
+    volumeHandle: string;
+    fsType?: string;
+    readOnly?: boolean;
+  };
+}
+
+export interface PersistentVolumeUpdateInput {
+  capacityBytes: number;
+  reclaimPolicy: string;
+  mountOptions?: string[];
+  labels?: Record<string, string>;
+  annotations?: Record<string, string>;
+  resourceVersion: string;
 }
 
 export interface PersistentVolumeClaim {
@@ -1175,6 +1230,11 @@ export interface PersistentVolumeClaimDetail extends PersistentVolumeClaim {
   volumeMode: string;
   requestedCapacityBytes: number;
   conditions: Condition[];
+  storageClassAvailable?: boolean;
+  allowVolumeExpansion?: boolean;
+  expansionStatus?: "ready" | "expanding" | "blocked";
+  expansionMessage?: string;
+  impact?: StorageImpact;
 }
 
 export interface PersistentVolumeClaimCreateInput {
@@ -1186,6 +1246,7 @@ export interface PersistentVolumeClaimCreateInput {
   volumeMode?: string;
   labels?: Record<string, string>;
   annotations?: Record<string, string>;
+  snapshotName?: string;
 }
 
 export interface PersistentVolumeClaimUpdateInput {
@@ -1193,6 +1254,52 @@ export interface PersistentVolumeClaimUpdateInput {
   labels?: Record<string, string>;
   annotations?: Record<string, string>;
   resourceVersion?: string;
+}
+
+export interface StorageMount {
+  pod: string;
+  namespace: string;
+  workloadKind?: string;
+  workloadName?: string;
+  containers: string[];
+  mountPaths: string[];
+}
+
+export interface StorageImpact {
+  mounts: StorageMount[];
+  mountCount: number;
+  volumeSnapshotCount: number;
+  warnings?: string[];
+}
+
+export interface VolumeSnapshot {
+  name: string;
+  namespace: string;
+  resourceVersion?: string;
+  sourcePvc: string;
+  volumeSnapshotClassName?: string;
+  volumeSnapshotContent?: string;
+  status: "Ready" | "Pending" | "Error";
+  readyToUse: boolean;
+  restoreSizeBytes?: number;
+  errorMessage?: string;
+  creationTime?: string;
+  createdAt: string;
+}
+
+export interface VolumeSnapshotCreateInput {
+  name: string;
+  namespace: string;
+  sourcePvc: string;
+  volumeSnapshotClassName?: string;
+}
+
+export interface VolumeSnapshotFeature {
+  available: boolean;
+  apiVersion?: string;
+  reason?: string;
+  classes: string[];
+  defaultClass?: string;
 }
 
 export interface YAMLResource {
