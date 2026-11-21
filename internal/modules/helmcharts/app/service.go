@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"net"
 	"net/url"
+	"path"
 	"regexp"
 	"sort"
 	"strings"
@@ -444,11 +445,28 @@ func normalizeRepository(input domain.HelmRepositoryUpsert, current domain.HelmR
 		return domain.HelmRepository{}, fmt.Errorf("%w: repository URL is required and must not exceed %d bytes", domain.ErrInvalid, maxRepositoryURLSize)
 	}
 	parsed, err := url.Parse(rawURL)
-	if err != nil || (parsed.Scheme != "https" && parsed.Scheme != "http") || parsed.Host == "" {
-		return domain.HelmRepository{}, fmt.Errorf("%w: repository URL must be an absolute HTTP or HTTPS URL", domain.ErrInvalid)
+	if err != nil {
+		return domain.HelmRepository{}, fmt.Errorf("%w: repository URL is invalid", domain.ErrInvalid)
+	}
+	parsed.Scheme = strings.ToLower(parsed.Scheme)
+	if parsed.Scheme != "https" && parsed.Scheme != "http" && parsed.Scheme != "oci" {
+		return domain.HelmRepository{}, fmt.Errorf("%w: repository URL must use HTTP, HTTPS or OCI", domain.ErrInvalid)
+	}
+	if parsed.Host == "" {
+		return domain.HelmRepository{}, fmt.Errorf("%w: repository URL must include a host", domain.ErrInvalid)
 	}
 	if parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
 		return domain.HelmRepository{}, fmt.Errorf("%w: repository URL must not contain credentials, a query or a fragment", domain.ErrInvalid)
+	}
+	if parsed.Scheme == "oci" {
+		cleanPath := strings.Trim(parsed.Path, "/")
+		if cleanPath == "" || strings.ContainsAny(cleanPath, " \t\r\n@") {
+			return domain.HelmRepository{}, fmt.Errorf("%w: OCI repository URL must point to one Chart path", domain.ErrInvalid)
+		}
+		chartName := path.Base(cleanPath)
+		if !chartNamePattern.MatchString(chartName) || strings.Contains(chartName, ":") {
+			return domain.HelmRepository{}, fmt.Errorf("%w: OCI repository URL must end with a valid Chart name and must not include a tag", domain.ErrInvalid)
+		}
 	}
 	host := strings.ToLower(parsed.Hostname())
 	if host == "localhost" || strings.HasSuffix(host, ".localhost") {

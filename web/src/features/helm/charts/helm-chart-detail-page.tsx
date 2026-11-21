@@ -76,7 +76,7 @@ export function HelmChartDetailPage() {
           <CardHeader className="p-4 sm:p-5"><CardTitle className="text-base">安装前检查</CardTitle><CardDescription>计划阶段不会写入集群。</CardDescription></CardHeader>
           <CardContent className="min-w-0 space-y-2 px-4 pb-4 text-sm sm:px-5">
             <p className="break-words text-muted-foreground">Dosh 会校验 Chart 包 SHA-256，渲染资源并逐项检查目标命名空间的 create/update/patch 权限。</p>
-            <div className="flex flex-wrap gap-1.5"><Badge variant="outline">固定版本</Badge><Badge variant="outline">摘要校验</Badge><Badge variant="outline">RBAC 预检</Badge><Badge variant="outline">操作审计</Badge></div>
+            <div className="flex flex-wrap gap-1.5"><Badge variant="outline">固定版本</Badge><Badge variant="outline">摘要校验</Badge><Badge variant="outline">RBAC 预检</Badge>{chart.schema ? <Badge variant="outline">Schema 校验</Badge> : null}<Badge variant="outline">操作审计</Badge></div>
             <Button className="mt-2 w-full" onClick={() => setInstallOpen(true)}><PackageSearch className="h-4 w-4" />打开安装计划</Button>
           </CardContent>
         </Card>
@@ -107,7 +107,14 @@ export function HelmChartDetailPage() {
             {chart.dependencies?.length ? <div className="space-y-2">{chart.dependencies.map((dependency, index) => <div key={`${dependency.name}-${index}`} className="min-w-0 rounded-md border px-3 py-2"><p className="break-all font-mono text-sm">{dependency.name} {dependency.version}</p>{dependency.repository ? <p className="mt-1 break-all text-xs text-muted-foreground">{dependency.repository}</p> : null}</div>)}</div> : <p className="text-sm text-muted-foreground">该 Chart 没有声明子 Chart 依赖。</p>}
           </CardContent></Card>
         </TabsContent>
-        <TabsContent value="schema" className="min-w-0"><Card className="min-w-0"><CardContent className="p-0"><pre className="max-h-[65vh] overflow-auto whitespace-pre-wrap break-words p-4 text-xs">{chart.schema || "该 Chart 未提供 values.schema.json。"}</pre></CardContent></Card></TabsContent>
+        <TabsContent value="schema" className="min-w-0">
+          <Card className="min-w-0">
+            <CardContent className="min-w-0 p-0">
+              {chart.schema ? <p className="border-b px-4 py-3 text-xs text-muted-foreground">生成安装或升级计划时，服务端会使用该 JSON Schema 校验合并后的 Values；校验失败会阻止执行。</p> : null}
+              <pre className="max-h-[65vh] overflow-auto whitespace-pre-wrap break-words p-4 text-xs">{chart.schema || "该 Chart 未提供 values.schema.json。"}</pre>
+            </CardContent>
+          </Card>
+        </TabsContent>
       </Tabs>
 
       <HelmInstallDialog chart={chart} open={installOpen} onOpenChange={setInstallOpen} />

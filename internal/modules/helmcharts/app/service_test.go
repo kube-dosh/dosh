@@ -139,6 +139,29 @@ func TestCreateRepositoryStripsSecretsAndRecordsAuthType(t *testing.T) {
 	}
 }
 
+func TestCreateRepositoryAcceptsOCIPathAndRejectsTag(t *testing.T) {
+	t.Parallel()
+	repository := &memoryHelmRepository{}
+	service := New(repository, fakeHelmSource{}, &fakeHelmExecutor{}, authz.NewLocal(false), nil)
+
+	created, err := service.CreateRepository(context.Background(), testHelmActor(), domain.HelmRepositoryUpsert{
+		Name: "OCI", URL: "oci://registry.example.com/team/charts/demo", AuthType: domain.HelmRepositoryAuthAnonymous,
+	})
+	if err != nil {
+		t.Fatalf("CreateRepository() OCI error = %v", err)
+	}
+	if created.URL != "oci://registry.example.com/team/charts/demo" || created.ChartCount != 1 || created.LastSync == nil || !created.LastSync.OK {
+		t.Fatalf("CreateRepository() OCI = %#v", created)
+	}
+
+	_, err = service.CreateRepository(context.Background(), testHelmActor(), domain.HelmRepositoryUpsert{
+		Name: "Invalid OCI", URL: "oci://registry.example.com/team/charts/demo:1.2.3",
+	})
+	if !errors.Is(err, domain.ErrInvalid) {
+		t.Fatalf("CreateRepository() tagged OCI error = %v", err)
+	}
+}
+
 func TestUpdateRepositoryAnonymousClearsAuthButKeepsCA(t *testing.T) {
 	t.Parallel()
 	repository := &memoryHelmRepository{items: []domain.HelmRepository{{

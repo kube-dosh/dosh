@@ -339,12 +339,17 @@ kubectl auth can-i create pods/exec -n <namespace> --subresource=exec
 
 若页面显示 403，请使用下方权限检查页面确认是 RBAC 拒绝、只读模式还是授权服务不可用。
 
-### 2.1.10 Helm Release 只读可见性
+### 2.1.10 Helm Chart 与 Release 生命周期
 
 `Helm Releases` 页面读取 Helm v3 存放在目标命名空间的 release Secret，要求当前身份具备
 `list secrets`。页面展示最新 revision、chart、status、values、rendered manifest、notes、
 warnings 和 revision history；单个损坏或无法解码的 Secret 会以 warning 返回，不应阻断其他
 Release。
+
+`Chart 仓库` 与 `Chart 目录` 支持 HTTP/HTTPS `index.yaml` 和指向单个 Chart 的 `oci://`
+仓库。安装、Chart 目录升级、增量 Values 升级、卸载与回滚都需要 Secret 写入权限和渲染资源
+权限，并在执行前经过计划摘要校验、Release 名称确认和审计。Release 详情中的增量 Values
+升级复用当前 revision 的 Chart；需要更换 Chart 版本时，应从 Chart 目录选择目标版本并发起升级。
 
 ```bash
 kubectl -n <namespace> get secret -l owner=helm
@@ -356,8 +361,9 @@ kubectl auth can-i list secrets -n <namespace>
 - values、manifest 和 Secret `data`/`stringData` 中的常见敏感键在服务端遮蔽；遮蔽不等于完整
   Secret 审计，不能据此认为响应中一定不存在业务敏感信息。
 - 敏感环境变量按 `name` 识别并遮蔽相邻 `value`；不要通过构造特殊 key 绕过脱敏。
-- 当前只提供只读可见性，不提供 Helm 升级、回滚或 diff。任何后续写能力都必须独立授权、二次确认
-  和审计，不能复用 `helmReleases` 只读 capability 自动放行。
+- Helm 写能力必须独立授权、二次确认和审计，不能复用 `helmReleases` 只读 capability 自动放行。
+- OCI 仓库当前不聚合整个 namespace 下的多个 Chart，也不验证 Referrers、Cosign 签名或 SBOM 证明；
+  供应链验证仍应在仓库发布流水线或集群策略层完成。
 - 解压后的 Release 内容有大小上限；超出上限或格式异常时返回可理解的错误，不加载到浏览器。
 
 ### 2.1.11 当前身份权限检查

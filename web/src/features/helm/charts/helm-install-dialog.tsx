@@ -208,7 +208,7 @@ export function HelmInstallDialog({ chart, open, onOpenChange }: { chart: HelmCh
             <div className="min-w-0 space-y-1.5">
               <Label htmlFor="helm-install-values">Values YAML</Label>
               <Textarea id="helm-install-values" value={values} onChange={(event) => changeValues(event.target.value)} className="min-h-44 max-h-72 resize-y font-mono text-xs" spellCheck={false} />
-              <p className="text-xs text-muted-foreground">默认 values 来自当前 Chart 包；服务端会对敏感字段做遮蔽后再返回计划。</p>
+              <p className="text-xs text-muted-foreground">默认 values 来自当前 Chart 包；服务端会先用 values.schema.json 校验合并结果，并对敏感字段做遮蔽后再返回计划。</p>
             </div>
 
             {error ? <p role="alert" className="break-words rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive-strong">{error}</p> : null}
@@ -223,6 +223,7 @@ export function HelmInstallDialog({ chart, open, onOpenChange }: { chart: HelmCh
               <p className="min-w-0 break-all"><span className="text-muted-foreground">Release：</span><span className="font-medium">{plan.namespace}/{plan.releaseName}</span></p>
               <p className="min-w-0 break-all"><span className="text-muted-foreground">Chart：</span><span className="font-medium">{plan.chartName} v{plan.chartVersion}</span></p>
               <p className="min-w-0 break-all"><span className="text-muted-foreground">资源：</span>{plan.resources.length} 项 · {plan.hookCount} Hook · {plan.crdCount} CRD</p>
+              {chart.schema ? <p className="min-w-0 break-all"><span className="text-muted-foreground">Values Schema：</span>已通过校验</p> : null}
               <p className="min-w-0 break-all font-mono text-xs"><span className="text-muted-foreground">包摘要：</span>{plan.digest}</p>
               <p className="min-w-0 break-all font-mono text-xs"><span className="text-muted-foreground">计划摘要：</span>{plan.planDigest}</p>
             </div>

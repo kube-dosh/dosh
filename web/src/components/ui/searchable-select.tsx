@@ -157,7 +157,7 @@ export function SearchableSelect({ id, label, value, options, onChange, onManual
         <ChevronDown className="h-4 w-4 shrink-0 opacity-50" />
       </button>
       {open ? createPortal(
-        <div ref={panelRef} className="fixed z-50 flex flex-col overflow-hidden rounded-md border bg-popover text-popover-foreground shadow-lg" style={position}>
+        <div ref={panelRef} className="pointer-events-auto fixed z-[70] flex flex-col overflow-hidden rounded-md border bg-popover text-popover-foreground shadow-lg" style={position}>
           <div className="flex shrink-0 items-center gap-2 border-b px-2.5 py-2">
             <Search className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
             <input

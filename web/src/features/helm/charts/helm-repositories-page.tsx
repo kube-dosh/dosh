@@ -23,8 +23,10 @@ import { HelmSectionNav } from "@/features/helm/helm-section-nav";
 import { formatDate } from "@/lib/utils";
 
 type AuthType = "anonymous" | "basic" | "bearer";
+type RepositoryProtocol = "http" | "oci";
 
 type FormState = {
+  protocol: RepositoryProtocol;
   name: string;
   url: string;
   description: string;
@@ -41,13 +43,14 @@ type FormState = {
 };
 
 const emptyForm: FormState = {
-  name: "", url: "https://", description: "", authType: "anonymous", username: "", password: "", token: "", caPEM: "",
+  protocol: "http", name: "", url: "https://", description: "", authType: "anonymous", username: "", password: "", token: "", caPEM: "",
   default: false, enabled: true, insecureSkipTLSVerify: false, replaceCredentials: false, clearCredentials: false,
 };
 
 function formFor(repository?: HelmRepository): FormState {
   if (!repository) return { ...emptyForm };
   return {
+    protocol: repository.url.startsWith("oci://") ? "oci" : "http",
     name: repository.name,
     url: repository.url,
     description: repository.description ?? "",
@@ -134,12 +137,37 @@ export function HelmRepositoriesPage() {
     setFormError("");
   };
 
+  const updateProtocol = (protocol: RepositoryProtocol) => {
+    setForm((current) => ({
+      ...current,
+      protocol,
+      url: protocol === "oci"
+        ? (current.url.startsWith("oci://") ? current.url : "oci://")
+        : (current.url.startsWith("oci://") ? "https://" : current.url),
+    }));
+    setFormError("");
+  };
+
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    const url = form.url.trim();
+    if (form.protocol === "oci") {
+      const match = /^oci:\/\/([^/]+)\/(.+)$/i.exec(url);
+      const chartPath = match?.[2]?.replace(/\/+$/, "") ?? "";
+      const chartName = chartPath.split("/").filter(Boolean).pop() ?? "";
+      if (!match || !chartName || chartName.includes(":")) {
+        setFormError("OCI 地址必须指向单个 Chart 且不能包含 :tag，例如 oci://registry.example.com/charts/nginx");
+        return;
+      }
+    }
+    if (form.protocol === "http" && !/^https?:\/\//i.test(url)) {
+      setFormError("HTTP Chart 仓库地址必须以 http:// 或 https:// 开头");
+      return;
+    }
     const replace = !editing || form.replaceCredentials;
     const input: HelmRepositoryUpsertInput = {
       name: form.name,
-      url: form.url,
+      url,
       description: form.description,
       default: form.default,
       enabled: form.enabled,
@@ -173,7 +201,7 @@ export function HelmRepositoriesPage() {
       <PageHeader
         title="Chart 仓库"
         breadcrumb="应用 / Helm / 仓库管理"
-        description="仅管理员登记的仓库会进入 Chart 目录。凭据保存在控制面 Secret 中，不会返回浏览器。"
+        description="仅管理员登记的 HTTP/HTTPS 或 OCI Chart 仓库会进入目录。凭据保存在控制面 Secret 中，不会返回浏览器。"
         actions={<Button onClick={() => { setEditing(undefined); setEditorOpen(true); }} disabled={!canWrite}><Plus className="h-4 w-4" />添加仓库</Button>}
       />
       <HelmSectionNav active="repositories" />
@@ -189,7 +217,7 @@ export function HelmRepositoriesPage() {
       ) : (repositories.data?.length ?? 0) === 0 ? (
         <EmptyState
           title="尚未配置 Chart 仓库"
-          description="登记一个提供有效 index.yaml 的 HTTPS 仓库后，即可浏览并安装固定版本的 Chart。"
+          description="登记提供 index.yaml 的 HTTPS 仓库，或指向单个 Chart 的 OCI 地址后，即可浏览并安装固定版本。"
           action={canWrite ? <Button onClick={() => { setEditing(undefined); setEditorOpen(true); }}><Plus className="h-4 w-4" />添加第一个仓库</Button> : undefined}
         />
       ) : (
@@ -213,6 +241,7 @@ export function HelmRepositoriesPage() {
                   {repository.hasCustomCA ? <Badge variant="secondary">自定义 CA</Badge> : null}
                   {repository.insecureSkipTLSVerify ? <Badge variant="warning">跳过 TLS 校验</Badge> : null}
                   {repository.url.startsWith("http://") ? <Badge variant="destructive">明文 HTTP</Badge> : null}
+                  {repository.url.startsWith("oci://") ? <Badge variant="outline">OCI</Badge> : null}
                 </div>
                 <div className={`rounded-md border px-3 py-2 text-xs ${repository.lastSync?.ok ? "border-success/25 bg-success/5" : "border-warning/30 bg-warning/5"}`}>
                   <div className="flex min-w-0 items-start gap-2">
@@ -240,12 +269,27 @@ export function HelmRepositoriesPage() {
         <DialogContent className="max-h-[calc(100dvh-1rem)] w-[calc(100vw-1rem)] max-w-2xl overflow-y-auto p-4 sm:w-[calc(100%-2rem)] sm:p-6">
           <DialogHeader>
             <DialogTitle>{editing ? "编辑 Chart 仓库" : "添加 Chart 仓库"}</DialogTitle>
-            <DialogDescription className="break-words">填写提供 index.yaml 的仓库根地址。HTTPS 可保护索引和 Chart 包，明文 HTTP 仅建议用于隔离的受控网络。</DialogDescription>
+            <DialogDescription className="break-words">
+              {form.protocol === "oci"
+                ? "OCI 地址应指向单个 Chart，版本从镜像 Tag 读取。例如 oci://registry.example.com/charts/nginx。"
+                : "填写提供 index.yaml 的仓库根地址。HTTPS 可保护索引和 Chart 包，明文 HTTP 仅建议用于隔离的受控网络。"}
+            </DialogDescription>
           </DialogHeader>
           <form className="min-w-0 space-y-4" onSubmit={submit}>
             <div className="grid min-w-0 gap-4 sm:grid-cols-2">
               <div className="min-w-0 space-y-1.5"><Label htmlFor="helm-repo-name">名称</Label><Input id="helm-repo-name" value={form.name} onChange={(event) => update("name", event.target.value)} placeholder="Bitnami" maxLength={128} required /></div>
-              <div className="min-w-0 space-y-1.5"><Label htmlFor="helm-repo-url">仓库地址</Label><Input id="helm-repo-url" value={form.url} onChange={(event) => update("url", event.target.value)} placeholder="https://charts.example.com" className="font-mono" autoComplete="off" spellCheck={false} required /></div>
+              <div className="min-w-0 space-y-1.5">
+                <Label htmlFor="helm-repo-protocol">仓库类型</Label>
+                <Select value={form.protocol} onValueChange={(value) => updateProtocol(value as RepositoryProtocol)}>
+                  <SelectTrigger id="helm-repo-protocol"><SelectValue /></SelectTrigger>
+                  <SelectContent><SelectItem value="http">HTTP / HTTPS 索引</SelectItem><SelectItem value="oci">OCI Chart</SelectItem></SelectContent>
+                </Select>
+              </div>
+              <div className="min-w-0 space-y-1.5 sm:col-span-2">
+                <Label htmlFor="helm-repo-url">{form.protocol === "oci" ? "OCI Chart 地址" : "仓库地址"}</Label>
+                <Input id="helm-repo-url" value={form.url} onChange={(event) => update("url", event.target.value)} placeholder={form.protocol === "oci" ? "oci://registry.example.com/charts/nginx" : "https://charts.example.com"} className="font-mono" autoComplete="off" spellCheck={false} required />
+                <p className="break-words text-xs text-muted-foreground">{form.protocol === "oci" ? "地址应指向一个 Chart，不能包含 :tag；版本将通过 OCI Tag 自动列出。" : "仓库根地址必须提供标准 index.yaml，Chart 包必须位于同一主机。"}</p>
+              </div>
               <div className="min-w-0 space-y-1.5 sm:col-span-2"><Label htmlFor="helm-repo-description">说明（可选）</Label><Input id="helm-repo-description" value={form.description} onChange={(event) => update("description", event.target.value)} placeholder="生产环境内部 Chart 仓库" maxLength={500} /></div>
               <div className="flex min-w-0 flex-col justify-end gap-2 text-sm">
                 <label className="flex items-center gap-2"><input type="checkbox" checked={form.default} onChange={(event) => update("default", event.target.checked)} />设为默认仓库</label>

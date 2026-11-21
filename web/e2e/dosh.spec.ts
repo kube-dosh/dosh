@@ -2072,6 +2072,73 @@ test("Chart 仓库编辑保留凭据语义并支持显式替换", async ({ page 
   await expect(page.getByText("Chart 仓库 Internal 已创建")).toBeVisible();
 });
 
+test("Chart 仓库支持 OCI 地址并在提交前拒绝带 Tag 的引用", async ({ page }) => {
+  await installApiMocks(page);
+  const repositoryPosts: string[] = [];
+  page.on("request", (request) => {
+    if (new URL(request.url()).pathname === "/api/v1/helm/repositories" && request.method() === "POST") repositoryPosts.push(request.postData() ?? "");
+  });
+  await page.goto("/helm/repositories");
+
+  await page.getByRole("button", { name: "添加仓库" }).click();
+  const dialog = page.getByRole("dialog", { name: "添加 Chart 仓库" });
+  await dialog.getByLabel("名称").fill("OCI Demo");
+  await dialog.getByRole("combobox", { name: "仓库类型" }).click();
+  await page.getByRole("option", { name: "OCI Chart", exact: true }).click();
+  await expect(dialog.getByLabel("OCI Chart 地址")).toHaveValue("oci://");
+
+  await dialog.getByLabel("OCI Chart 地址").fill("oci://registry.example.com/charts/nginx:1.2.3");
+  await dialog.getByRole("button", { name: "添加仓库" }).click();
+  await expect(dialog.getByText(/^OCI 地址必须指向单个 Chart 且不能包含 :tag/)).toBeVisible();
+  expect(repositoryPosts).toHaveLength(0);
+
+  await dialog.getByLabel("OCI Chart 地址").fill("oci://registry.example.com/charts/nginx");
+  const createRequest = page.waitForRequest((request) => new URL(request.url()).pathname === "/api/v1/helm/repositories" && request.method() === "POST");
+  await dialog.getByRole("button", { name: "添加仓库" }).click();
+  expect((await createRequest).postDataJSON()).toMatchObject({
+    name: "OCI Demo",
+    url: "oci://registry.example.com/charts/nginx",
+    authType: "anonymous",
+  });
+  await expect(page.getByText("Chart 仓库 OCI Demo 已创建")).toBeVisible();
+  await expect(page.getByText("OCI", { exact: true })).toBeVisible();
+});
+
+test("Chart 目录可为已有 Release 选择新 Chart 版本升级并展示 Schema 预检", async ({ page }) => {
+  await installApiMocks(page);
+  await page.goto("/helm/charts/repo-bitnami/nginx");
+  await page.getByRole("button", { name: "安装 / 升级" }).click();
+  const dialog = page.getByRole("dialog", { name: "安装 nginx" });
+
+  await dialog.getByRole("combobox", { name: "操作类型" }).click();
+  await page.getByRole("option", { name: "升级已有 Release", exact: true }).click();
+  const upgradeDialog = page.getByRole("dialog", { name: "升级 nginx" });
+  await upgradeDialog.getByRole("combobox", { name: "Chart 安装命名空间" }).click();
+  await page.getByRole("option", { name: "default", exact: true }).click();
+
+  await upgradeDialog.getByRole("combobox", { name: "Release" }).click();
+  const releaseSearch = page.getByRole("searchbox", { name: "搜索 Release", exact: true });
+  await releaseSearch.fill("web");
+  await expect(page.getByRole("option", { name: /web · rev 2 · deployed/ })).toBeVisible();
+  await page.getByRole("option", { name: /web · rev 2 · deployed/ }).click();
+  await upgradeDialog.getByRole("combobox", { name: "Chart 版本" }).click();
+  const versionSearch = page.getByRole("searchbox", { name: "搜索 Chart 版本", exact: true });
+  await versionSearch.fill("18.1.0");
+  await expect(page.getByRole("option", { name: /^v18\.1\.0/ })).toBeVisible();
+  await page.getByRole("option", { name: /^v18\.1\.0/ }).click();
+
+  const planRequest = page.waitForRequest((request) => new URL(request.url()).pathname === "/api/v1/helm/charts/plan" && request.method() === "POST");
+  await upgradeDialog.getByRole("button", { name: "生成安装计划" }).click();
+  expect((await planRequest).postDataJSON()).toMatchObject({
+    mode: "upgrade",
+    namespace: "default",
+    releaseName: "web",
+    version: "18.1.0",
+  });
+  await expect(upgradeDialog.getByText("Values Schema：")).toBeVisible();
+  await expect(upgradeDialog.getByText("已通过校验")).toBeVisible();
+});
+
 test("权限检查联动选择资源、子资源和对象，并保留手动输入回退", async ({ page }) => {
   await installApiMocks(page);
   await page.goto("/access");
@@ -3816,6 +3883,17 @@ test("Helm Chart 安装计划与仓库弹窗在移动端无溢出", async ({ pag
     await expectNoHorizontalOverflowInside(repositoryDialog, `${viewport.width}px Helm repository replacement form`);
     await page.screenshot({ path: `test-results/mobile-interactions/helm-repository-dialog-${viewport.width}.png`, fullPage: true });
     await repositoryDialog.getByRole("button", { name: "取消" }).click();
+
+    await page.getByRole("button", { name: "添加仓库" }).click();
+    const ociDialog = page.getByRole("dialog", { name: "添加 Chart 仓库" });
+    await expect(ociDialog).toBeVisible();
+    await ociDialog.getByRole("combobox", { name: "仓库类型" }).click();
+    await page.getByRole("option", { name: "OCI Chart", exact: true }).click();
+    await ociDialog.getByLabel("OCI Chart 地址").fill("oci://registry.example.com/team/charts/nginx");
+    await expectNoHorizontalOverflowInside(ociDialog, `${viewport.width}px OCI repository dialog`);
+    await expectNoPageOverflow(page, `${viewport.width}px OCI repository dialog`);
+    await page.screenshot({ path: `test-results/mobile-interactions/helm-oci-repository-dialog-${viewport.width}.png`, fullPage: true });
+    await ociDialog.getByRole("button", { name: "取消" }).click();
   }
 });
 

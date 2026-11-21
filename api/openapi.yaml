@@ -1749,7 +1749,7 @@ paths:
         "503": { $ref: "#/components/responses/DependencyUnavailable" }
     post:
       tags: [helm-charts]
-      summary: Register a Helm Chart repository
+      summary: Register an HTTP/HTTPS index or OCI Chart repository
       security:
         - cookieAuth: []
           csrfToken: []
@@ -1772,7 +1772,7 @@ paths:
   /api/v1/helm/repositories/{id}:
     put:
       tags: [helm-charts]
-      summary: Update a Helm Chart repository
+      summary: Update an HTTP/HTTPS index or OCI Chart repository
       security:
         - cookieAuth: []
           csrfToken: []
@@ -1818,7 +1818,7 @@ paths:
   /api/v1/helm/repositories/{id}/sync:
     post:
       tags: [helm-charts]
-      summary: Synchronize a repository index and record health
+      summary: Synchronize a repository catalog and record health
       security:
         - cookieAuth: []
           csrfToken: []
@@ -4860,11 +4860,15 @@ components:
           items: { type: string }
     HelmRepository:
       type: object
+      description: An administrator-managed Helm repository. HTTP/HTTPS repositories expose index.yaml; OCI repositories point at one Chart repository path.
       required: [id, name, url, default, enabled, chartCount, createdAt, updatedAt]
       properties:
         id: { type: string }
         name: { type: string }
-        url: { type: string, format: uri }
+        url:
+          type: string
+          format: uri
+          description: HTTP/HTTPS index URL or an oci:// URL pointing to a single Chart path. The protocol is inferred from this value.
         description: { type: string }
         default: { type: boolean }
         enabled: { type: boolean }
@@ -4890,7 +4894,14 @@ components:
       required: [name, url]
       properties:
         name: { type: string, maxLength: 128 }
-        url: { type: string, format: uri, maxLength: 2048 }
+        url:
+          type: string
+          format: uri
+          maxLength: 2048
+          description: HTTP/HTTPS repository root serving index.yaml, or an oci://registry/path/chart reference without a tag.
+          examples:
+            - https://charts.example.com
+            - oci://registry.example.com/team/charts/nginx
         description: { type: string }
         default: { type: boolean }
         enabled: { type: boolean }
@@ -4914,7 +4925,9 @@ components:
         description: { type: string }
         icon: { type: string }
         deprecated: { type: boolean }
-        digest: { type: string }
+        digest:
+          type: string
+          description: SHA-256 of the Chart package. For OCI repositories this is the Chart layer digest.
         createdAt: { type: string, format: date-time }
         keywords:
           type: array
@@ -4925,7 +4938,9 @@ components:
       properties:
         version: { type: string }
         appVersion: { type: string }
-        digest: { type: string }
+        digest:
+          type: string
+          description: Version-specific package digest when available. OCI details populate the latest version digest after pulling its Chart layer.
         createdAt: { type: string, format: date-time }
         deprecated: { type: boolean }
         urls:
@@ -4952,7 +4967,9 @@ components:
                   url: { type: string }
             readme: { type: string }
             values: { type: string }
-            schema: { type: string }
+            schema:
+              type: string
+              description: values.schema.json packaged in the Chart. Dosh validates merged values against it while planning install or upgrade.
             dependencies:
               type: array
               items:

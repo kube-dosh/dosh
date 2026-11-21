@@ -3355,7 +3355,7 @@ export interface paths {
             };
         };
         put?: never;
-        /** Register a Helm Chart repository */
+        /** Register an HTTP/HTTPS index or OCI Chart repository */
         post: {
             parameters: {
                 query?: never;
@@ -3399,7 +3399,7 @@ export interface paths {
             cookie?: never;
         };
         get?: never;
-        /** Update a Helm Chart repository */
+        /** Update an HTTP/HTTPS index or OCI Chart repository */
         put: {
             parameters: {
                 query?: never;
@@ -3477,7 +3477,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Synchronize a repository index and record health */
+        /** Synchronize a repository catalog and record health */
         post: {
             parameters: {
                 query?: never;
@@ -7392,10 +7392,14 @@ export interface components {
             appliedObjects: number;
             warnings?: string[];
         };
+        /** @description An administrator-managed Helm repository. HTTP/HTTPS repositories expose index.yaml; OCI repositories point at one Chart repository path. */
         HelmRepository: {
             id: string;
             name: string;
-            /** Format: uri */
+            /**
+             * Format: uri
+             * @description HTTP/HTTPS index URL or an oci:// URL pointing to a single Chart path. The protocol is inferred from this value.
+             */
             url: string;
             description?: string;
             default: boolean;
@@ -7422,7 +7426,12 @@ export interface components {
         };
         HelmRepositoryUpsert: {
             name: string;
-            /** Format: uri */
+            /**
+             * Format: uri
+             * @description HTTP/HTTPS repository root serving index.yaml, or an oci://registry/path/chart reference without a tag.
+             * @example https://charts.example.com
+             * @example oci://registry.example.com/team/charts/nginx
+             */
             url: string;
             description?: string;
             default?: boolean;
@@ -7448,6 +7457,7 @@ export interface components {
             description?: string;
             icon?: string;
             deprecated: boolean;
+            /** @description SHA-256 of the Chart package. For OCI repositories this is the Chart layer digest. */
             digest?: string;
             /** Format: date-time */
             createdAt?: string;
@@ -7456,6 +7466,7 @@ export interface components {
         HelmChartVersion: {
             version: string;
             appVersion?: string;
+            /** @description Version-specific package digest when available. OCI details populate the latest version digest after pulling its Chart layer. */
             digest?: string;
             /** Format: date-time */
             createdAt?: string;
@@ -7472,6 +7483,7 @@ export interface components {
             }[];
             readme?: string;
             values: string;
+            /** @description values.schema.json packaged in the Chart. Dosh validates merged values against it while planning install or upgrade. */
             schema?: string;
             dependencies?: {
                 name: string;

@@ -55,6 +55,9 @@ func New(timeout time.Duration) *Client {
 }
 
 func (c *Client) Index(ctx context.Context, repository domain.HelmRepository) (*repo.IndexFile, error) {
+	if isOCI(repository.URL) {
+		return nil, fmt.Errorf("%w: OCI Chart repositories do not expose index.yaml", domain.ErrUnsupported)
+	}
 	key := cacheKey(repository)
 	c.mu.Lock()
 	cached, ok := c.cache[key]
@@ -100,6 +103,9 @@ func (c *Client) Index(ctx context.Context, repository domain.HelmRepository) (*
 }
 
 func (c *Client) Download(ctx context.Context, repository domain.HelmRepository, chartName, version, expectedDigest string) ([]byte, string, error) {
+	if isOCI(repository.URL) {
+		return c.downloadOCI(ctx, repository, chartName, version, expectedDigest)
+	}
 	index, err := c.Index(ctx, repository)
 	if err != nil {
 		return nil, "", err
@@ -151,6 +157,9 @@ func (c *Client) Download(ctx context.Context, repository domain.HelmRepository,
 
 // Charts returns the latest visible version of each chart in a repository.
 func (c *Client) Charts(ctx context.Context, repository domain.HelmRepository) ([]domain.HelmChartSummary, error) {
+	if isOCI(repository.URL) {
+		return c.listOCICharts(ctx, repository)
+	}
 	index, err := c.Index(ctx, repository)
 	if err != nil {
 		return nil, err
@@ -172,6 +181,9 @@ func (c *Client) Charts(ctx context.Context, repository domain.HelmRepository) (
 // Detail returns index metadata plus the README, default values and schema
 // embedded in the latest chart package. It never returns package bytes.
 func (c *Client) Detail(ctx context.Context, repository domain.HelmRepository, chartName string) (domain.HelmChartDetail, error) {
+	if isOCI(repository.URL) {
+		return c.ociChartDetail(ctx, repository, chartName)
+	}
 	index, err := c.Index(ctx, repository)
 	if err != nil {
 		return domain.HelmChartDetail{}, err
@@ -293,16 +305,9 @@ func sortedChartVersions(versions repo.ChartVersions) []*repo.ChartVersion {
 }
 
 func (c *Client) httpClient(repository domain.HelmRepository) (*http.Client, error) {
-	tlsConfig := &tls.Config{MinVersion: tls.VersionTLS12, InsecureSkipVerify: repository.InsecureSkipTLS} //nolint:gosec // explicitly administrator-controlled
-	if ca := strings.TrimSpace(repository.Credentials.CAPEM); ca != "" {
-		pool, err := x509.SystemCertPool()
-		if err != nil || pool == nil {
-			pool = x509.NewCertPool()
-		}
-		if !pool.AppendCertsFromPEM([]byte(ca)) {
-			return nil, fmt.Errorf("%w: Helm repository custom CA is not valid PEM", domain.ErrInvalid)
-		}
-		tlsConfig.RootCAs = pool
+	tlsConfig, err := tlsConfigForRepository(repository)
+	if err != nil {
+		return nil, err
 	}
 	transport := &http.Transport{
 		Proxy:                 http.ProxyFromEnvironment,
@@ -330,6 +335,21 @@ func (c *Client) httpClient(repository domain.HelmRepository) (*http.Client, err
 			return nil
 		},
 	}, nil
+}
+
+func tlsConfigForRepository(repository domain.HelmRepository) (*tls.Config, error) {
+	tlsConfig := &tls.Config{MinVersion: tls.VersionTLS12, InsecureSkipVerify: repository.InsecureSkipTLS} //nolint:gosec // explicitly administrator-controlled
+	if ca := strings.TrimSpace(repository.Credentials.CAPEM); ca != "" {
+		pool, err := x509.SystemCertPool()
+		if err != nil || pool == nil {
+			pool = x509.NewCertPool()
+		}
+		if !pool.AppendCertsFromPEM([]byte(ca)) {
+			return nil, fmt.Errorf("%w: Helm repository custom CA is not valid PEM", domain.ErrInvalid)
+		}
+		tlsConfig.RootCAs = pool
+	}
+	return tlsConfig, nil
 }
 
 func (c *Client) get(ctx context.Context, client *http.Client, repository domain.HelmRepository, target string) (*http.Response, error) {
