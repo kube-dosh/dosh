@@ -8,7 +8,7 @@ export function NamespaceSelect({ value, onChange, className, allowAll = true, a
   const query = useQuery({ queryKey: ["namespaces", "selector"], queryFn: () => api.namespaces({ pageSize: 200 }), staleTime: 30_000 });
   return (
     <Select value={value || ALL} onValueChange={(next) => onChange(next === ALL ? "" : next)}>
-      <SelectTrigger className={className ?? "w-48"} aria-label={ariaLabel} title={query.isError ? "命名空间列表加载失败" : undefined}>
+      <SelectTrigger className={className ?? "w-full sm:w-48"} aria-label={ariaLabel} title={query.isError ? "命名空间列表加载失败" : undefined}>
         <SelectValue placeholder={query.isError ? "命名空间加载失败" : "全部命名空间"} />
       </SelectTrigger>
       <SelectContent>

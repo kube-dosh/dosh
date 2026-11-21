@@ -81,20 +81,20 @@ export function AuditPage() {
         <SearchInput value={q} onChange={(value) => updateSearch({ q: value || undefined })} placeholder="搜索用户、动作、资源或请求 ID" />
         <NamespaceSelect value={namespace} onChange={(value) => updateSearch({ namespace: value || undefined })} />
         <Select value={action || "__all__"} onValueChange={(value) => updateSearch({ action: value === "__all__" ? undefined : value })}>
-          <SelectTrigger className="w-40" aria-label="审计动作筛选"><SelectValue placeholder="全部动作" /></SelectTrigger>
+          <SelectTrigger className="w-full sm:w-40" aria-label="审计动作筛选"><SelectValue placeholder="全部动作" /></SelectTrigger>
           <SelectContent>
             <SelectItem value="__all__">全部动作</SelectItem>
             {actions.map((item) => <SelectItem key={item} value={item}>{item}</SelectItem>)}
           </SelectContent>
         </Select>
         <Select value={result || "__all__"} onValueChange={(value) => updateSearch({ result: value === "__all__" ? undefined : value })}>
-          <SelectTrigger className="w-36" aria-label="审计结果筛选"><SelectValue placeholder="全部结果" /></SelectTrigger>
+          <SelectTrigger className="w-full sm:w-36" aria-label="审计结果筛选"><SelectValue placeholder="全部结果" /></SelectTrigger>
           <SelectContent>
             <SelectItem value="__all__">全部结果</SelectItem>
             {results.map((item) => <SelectItem key={item} value={item}>{item}</SelectItem>)}
           </SelectContent>
         </Select>
-        <span className="text-xs text-muted-foreground sm:ml-auto">{query.data?.meta.total ?? 0} 条记录</span>
+        <span className="whitespace-nowrap text-xs text-muted-foreground sm:ml-auto">{query.data?.meta.total ?? 0} 条记录</span>
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button variant="outline" size="sm" disabled={exporting !== null}>

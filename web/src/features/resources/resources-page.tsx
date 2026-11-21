@@ -82,8 +82,8 @@ export function ResourcesPage() {
         breadcrumb="集群 / 资源浏览器"
         description="通过 Kubernetes API Discovery 浏览集群暴露的内置资源与 CRD 类型；对象读取仍由当前身份的 Kubernetes RBAC 决定。"
       />
-      <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center">
-        <SearchInput value={q} onChange={(value) => updateSearch({ q: value || undefined })} placeholder="搜索 Kind、资源名、API Group 或短名称" />
+      <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
+        <SearchInput value={q} onChange={(value) => updateSearch({ q: value || undefined })} placeholder="搜索 Kind、资源名或 API Group" className="sm:w-72" />
         <Select value={groupParam ?? ALL_GROUPS} onValueChange={(value) => updateSearch({ group: value === ALL_GROUPS ? undefined : value })}>
           <SelectTrigger className="w-full sm:w-56" aria-label="API Group 筛选"><SelectValue placeholder="全部 API Group" /></SelectTrigger>
           <SelectContent>
@@ -92,10 +92,10 @@ export function ResourcesPage() {
           </SelectContent>
         </Select>
         <NamespaceSelect value={namespace} onChange={(value) => updateSearch({ namespace: value || undefined })} />
-        <button type="button" aria-pressed={favoritesOnly} onClick={() => setFavoritesOnly((value) => !value)} className={cn("inline-flex h-9 items-center gap-1.5 rounded-md border px-3 text-sm transition-colors", favoritesOnly ? "border-warning/40 bg-warning/10 text-warning" : "bg-card text-muted-foreground hover:bg-accent")}>
+        <button type="button" aria-pressed={favoritesOnly} onClick={() => setFavoritesOnly((value) => !value)} className={cn("inline-flex h-9 items-center justify-center gap-1.5 whitespace-nowrap rounded-md border px-3 text-sm transition-colors", favoritesOnly ? "border-warning/40 bg-warning/10 text-warning" : "bg-card text-muted-foreground hover:bg-accent")}>
           <Star className={cn("h-3.5 w-3.5", favoritesOnly && "fill-current")} />只看收藏
         </button>
-        <span className="text-xs text-muted-foreground sm:ml-auto">共 {filtered.length} 个资源类型 · {items.length} 个 API 版本</span>
+        <span className="whitespace-nowrap text-xs text-muted-foreground sm:ml-auto">共 {filtered.length} 个资源类型 · {items.length} 个 API 版本</span>
       </div>
       {query.data?.warnings?.length ? (
         <div className="mb-3 flex items-start gap-2 rounded-md border border-warning/35 bg-warning/10 px-3 py-2 text-xs text-warning">

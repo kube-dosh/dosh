@@ -51,10 +51,10 @@ export function PodsPage() {
   return (
     <>
       <PageHeader title="Pod 实例" breadcrumb="工作负载 / Pod 实例" description="查看 Pod 运行状态、重启次数、节点分布和所属控制器。" />
-      <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center">
+      <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
         <SearchInput value={q} onChange={(value) => updateSearch({ q: value || undefined })} placeholder="搜索 Pod 名称" />
         <NamespaceSelect value={namespace} onChange={(value) => updateSearch({ namespace: value || undefined })} />
-        <span className="text-xs text-muted-foreground sm:ml-auto">{query.data?.meta.totalKnown ? `共 ${query.data.meta.total} 个 Pod` : `已加载 ${query.data?.items.length ?? 0} 个 Pod`}</span>
+        <span className="whitespace-nowrap text-xs text-muted-foreground sm:ml-auto">{query.data?.meta.totalKnown ? `共 ${query.data.meta.total} 个 Pod` : `已加载 ${query.data?.items.length ?? 0} 个 Pod`}</span>
       </div>
       <DataTable
         columns={[

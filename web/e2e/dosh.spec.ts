@@ -3515,13 +3515,69 @@ test("移动端超长固定列不会遮挡其他列", async ({ page }) => {
 
   expect(uncoveredWidth).toBeGreaterThan(20);
   expect(await firstRow.evaluate((element) => element.getBoundingClientRect().height)).toBeLessThan(64);
+
+  const actions = firstRow.getByRole("button", { name: /操作 Pod/ });
+  await actions.click();
+  await expect(page.getByRole("menu")).toBeVisible();
+  await expect(page.getByRole("menuitem", { name: "查看 YAML" })).toBeVisible();
+  await expectNoPageOverflow(page, "mobile row actions menu");
+  await page.keyboard.press("Escape");
 });
 
-test("移动端逐页布局无页面级横向溢出", async ({ page }) => {
-  test.setTimeout(360_000);
+test("响应式筛选栏在平板自动换行且移动端控件占满内容宽度", async ({ page }) => {
+  await installApiMocks(page);
+
+  await page.setViewportSize({ width: 768, height: 1024 });
+  await page.goto("/resources");
+  const tabletSearch = page.getByPlaceholder("搜索 Kind、资源名或 API Group");
+  const tabletFavorite = page.getByRole("button", { name: "只看收藏", exact: true });
+  await expect(tabletSearch).toBeVisible();
+  await expect(tabletFavorite).toBeVisible();
+  expect((await tabletSearch.boundingBox())!.width).toBeGreaterThanOrEqual(270);
+  expect((await tabletFavorite.boundingBox())!.height).toBeLessThanOrEqual(40);
+  await expect(page.getByText("左右滑动查看完整列")).toBeVisible();
+  await expectNoPageOverflow(page, "768px resource filters");
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/resources");
+  const contentWidth = await page.locator("main > div").evaluate((element) => element.getBoundingClientRect().width);
+  for (const locator of [
+    page.getByPlaceholder("搜索 Kind、资源名或 API Group"),
+    page.getByRole("combobox", { name: "命名空间筛选" }),
+    page.getByRole("button", { name: "只看收藏", exact: true }),
+  ]) {
+    await expect(locator).toBeVisible();
+    expect((await locator.boundingBox())!.width).toBeGreaterThanOrEqual(contentWidth - 1);
+  }
+  await expectNoPageOverflow(page, "390px resource filters");
+});
+
+test("移动端亮暗主题关键页面布局稳定", async ({ page }) => {
+  test.setTimeout(120_000);
   await installApiMocks(page);
   await page.setViewportSize({ width: 390, height: 844 });
-  const routes = [
+  await page.goto("/");
+
+  for (const theme of ["light", "dark"] as const) {
+    await page.evaluate((value) => localStorage.setItem("dosh-theme", value), theme);
+    for (const route of [
+      { path: "/", name: "overview" },
+      { path: "/workloads/deployment/default/web", name: "workload-detail" },
+      { path: "/resources", name: "resources" },
+      { path: "/storage", name: "storage" },
+      { path: "/access", name: "access-review" },
+      { path: "/helm/charts", name: "helm-charts" },
+    ]) {
+      await page.goto(route.path);
+      await page.locator("main h1").waitFor({ state: "visible" });
+      await expectThemeApplied(page, theme);
+      await expectNoPageOverflow(page, `390px ${theme} ${route.name}`);
+      await page.screenshot({ path: `test-results/mobile-theme-${theme}/${route.name}.png`, fullPage: true });
+    }
+  }
+});
+
+const layoutAuditRoutes = [
     { path: "/", name: "overview" },
     { path: "/applications?namespace=default", name: "application-workspace" },
     { path: "/cluster/config", name: "cluster-config" },
@@ -3583,15 +3639,55 @@ test("移动端逐页布局无页面级横向溢出", async ({ page }) => {
     { path: "/helm/charts", name: "helm-charts" },
     { path: "/helm/charts/repo-bitnami/nginx", name: "helm-chart-detail" },
     { path: "/helm/repositories", name: "helm-repositories" },
-  ];
+];
 
-  for (const route of routes) {
+test("移动端逐页布局无页面级横向溢出", async ({ page }) => {
+  test.setTimeout(360_000);
+  await installApiMocks(page);
+  await page.setViewportSize({ width: 390, height: 844 });
+
+  for (const route of layoutAuditRoutes) {
     await page.goto(route.path);
     await page.locator("main h1").waitFor({ state: "visible" });
     await page.waitForTimeout(250);
     await expectNoPageOverflow(page, route.name);
     await page.screenshot({ path: `test-results/mobile-audit/${route.name}.png`, fullPage: true });
   }
+});
+
+test("桌面与平板逐页布局稳定且无控制台异常", async ({ page }) => {
+  test.setTimeout(600_000);
+  await installApiMocks(page);
+  const runtimeErrors: string[] = [];
+  page.on("pageerror", (error) => runtimeErrors.push(`pageerror: ${error.message}`));
+  page.on("console", (message) => {
+    if (message.type() === "error") runtimeErrors.push(`console: ${message.text()}`);
+  });
+
+  for (const viewport of [{ width: 1440, height: 900 }, { width: 768, height: 1024 }]) {
+    const layoutName = viewport.width === 1440 ? "desktop-audit" : "tablet-audit";
+    await page.setViewportSize(viewport);
+
+    for (const route of layoutAuditRoutes) {
+      await page.goto(route.path);
+      await page.locator("main h1").waitFor({ state: "visible" });
+      await waitForVisualStability(page);
+      await expectNoPageOverflow(page, `${viewport.width}px ${route.name}`);
+
+      const bounds = await page.evaluate(() => {
+        const main = document.querySelector("main")!.getBoundingClientRect();
+        const heading = document.querySelector("main h1")!.getBoundingClientRect();
+        return { mainLeft: main.left, mainRight: main.right, headingLeft: heading.left, headingRight: heading.right };
+      });
+      expect(bounds.mainLeft, `${viewport.width}px ${route.name} main starts inside viewport`).toBeGreaterThanOrEqual(-1);
+      expect(bounds.mainRight, `${viewport.width}px ${route.name} main ends inside viewport`).toBeLessThanOrEqual(viewport.width + 1);
+      expect(bounds.headingLeft, `${viewport.width}px ${route.name} heading starts inside main`).toBeGreaterThanOrEqual(bounds.mainLeft - 1);
+      expect(bounds.headingRight, `${viewport.width}px ${route.name} heading ends inside main`).toBeLessThanOrEqual(bounds.mainRight + 1);
+      await page.screenshot({ path: `test-results/${layoutName}/${route.name}.png`, fullPage: true });
+    }
+  }
+
+  expect(runtimeErrors, `Unexpected browser runtime errors:\n${runtimeErrors.join("\n")}`).toEqual([]);
 });
 
 test("移动端登录、抽屉导航和全局搜索可用", async ({ page }) => {

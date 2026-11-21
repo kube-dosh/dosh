@@ -46,8 +46,8 @@ export function DataTable<T>({ columns, data, loading = false, empty, pageSize =
   const minimumWidth = Math.max(640, columns.reduce((width, column) => width + (typeof column.size === "number" ? Math.max(120, column.size) : 120), 0));
   const stickyColumnClass = "sticky left-0 z-20 w-36 min-w-36 max-w-36 overflow-hidden bg-muted shadow-[1px_0_0_hsl(var(--border))] md:static md:z-auto md:w-auto md:min-w-0 md:max-w-none md:overflow-visible md:bg-transparent md:shadow-none";
   const stickyCellClass = "sticky left-0 z-10 w-36 min-w-36 max-w-36 overflow-hidden bg-card shadow-[1px_0_0_hsl(var(--border))] md:static md:z-auto md:w-auto md:min-w-0 md:max-w-none md:overflow-visible md:bg-transparent md:shadow-none";
-  const actionHeaderClass = "sticky right-0 z-20 w-14 min-w-14 max-w-14 bg-muted shadow-[-1px_0_0_hsl(var(--border))] md:static md:z-auto md:w-16 md:min-w-16 md:max-w-16 md:bg-transparent md:shadow-none";
-  const actionCellClass = "sticky right-0 z-10 w-14 min-w-14 max-w-14 bg-card shadow-[-1px_0_0_hsl(var(--border))] md:static md:z-auto md:w-16 md:min-w-16 md:max-w-16 md:bg-transparent md:shadow-none";
+  const actionHeaderClass = "w-14 min-w-14 max-w-14 bg-muted md:w-16 md:min-w-16 md:max-w-16 md:bg-transparent";
+  const actionCellClass = "w-14 min-w-14 max-w-14 bg-card md:w-16 md:min-w-16 md:max-w-16 md:bg-transparent";
   const table = useReactTable({
     data,
     columns,

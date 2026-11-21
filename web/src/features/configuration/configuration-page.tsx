@@ -122,7 +122,7 @@ export function ConfigurationPage() {
           <ActionTooltip content={secretCreateHint}><Button onClick={() => { setEditingSecret(undefined); setSecretFormOpen(true); }} disabled={Boolean(secretCreateHint)}><Plus className="h-4 w-4" />创建 Secret</Button></ActionTooltip>
         ) : null}
       />
-      <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center"><SearchInput value={q} onChange={(value) => updateSearch({ q: value || undefined })} placeholder="搜索名称" /><NamespaceSelect value={namespace} onChange={(value) => updateSearch({ namespace: value || undefined })} /></div>
+      <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center"><SearchInput value={q} onChange={(value) => updateSearch({ q: value || undefined })} placeholder="搜索名称" /><NamespaceSelect value={namespace} onChange={(value) => updateSearch({ namespace: value || undefined })} /></div>
       <Tabs value={tab} onValueChange={(value) => updateSearch({ tab: value === "configmaps" ? undefined : value })}>
         <TabsList><TabsTrigger value="configmaps">ConfigMap ({configMaps.data?.meta.totalKnown ? configMaps.data.meta.total : configMaps.data?.items.length ?? 0})</TabsTrigger><TabsTrigger value="secrets">Secret ({secrets.data?.meta.totalKnown ? secrets.data.meta.total : secrets.data?.items.length ?? 0})</TabsTrigger><TabsTrigger value="certificate">服务端证书</TabsTrigger></TabsList>
         <TabsContent value="configmaps">

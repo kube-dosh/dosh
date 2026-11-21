@@ -97,24 +97,24 @@ export function WorkloadsPage() {
           <Button variant="outline" asChild><Link to="/pods"><CircleDot className="h-4 w-4" />Pod 实例</Link></Button>
         </>}
       />
-      <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center">
+      <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
         <SearchInput value={q} onChange={(value) => updateSearch({ q: value || undefined })} placeholder="搜索工作负载名称" />
         <NamespaceSelect value={namespace} onChange={(value) => updateSearch({ namespace: value || undefined })} />
         <Select value={kind || "__all__"} onValueChange={(value) => updateSearch({ kind: value === "__all__" ? undefined : value })}>
-          <SelectTrigger className="w-44" aria-label="工作负载类型筛选"><SelectValue placeholder="全部类型" /></SelectTrigger>
+          <SelectTrigger className="w-full sm:w-44" aria-label="工作负载类型筛选"><SelectValue placeholder="全部类型" /></SelectTrigger>
           <SelectContent>
             <SelectItem value="__all__">全部类型</SelectItem>
             {kinds.map((item) => <SelectItem key={item} value={item}>{item}</SelectItem>)}
           </SelectContent>
         </Select>
         <Select value={status || "__all__"} onValueChange={(value) => updateSearch({ status: value === "__all__" ? undefined : value })}>
-          <SelectTrigger className="w-40" aria-label="工作负载状态筛选"><SelectValue placeholder="全部状态" /></SelectTrigger>
+          <SelectTrigger className="w-full sm:w-40" aria-label="工作负载状态筛选"><SelectValue placeholder="全部状态" /></SelectTrigger>
           <SelectContent>
             <SelectItem value="__all__">全部状态</SelectItem>
             {statuses.map((item) => <SelectItem key={item} value={item}>{item}</SelectItem>)}
           </SelectContent>
         </Select>
-        <span className="text-xs text-muted-foreground sm:ml-auto">{query.data?.meta.totalKnown ? `共 ${query.data.meta.total} 个工作负载` : `已加载 ${query.data?.items.length ?? 0} 个工作负载`}</span>
+        <span className="whitespace-nowrap text-xs text-muted-foreground sm:ml-auto">{query.data?.meta.totalKnown ? `共 ${query.data.meta.total} 个工作负载` : `已加载 ${query.data?.items.length ?? 0} 个工作负载`}</span>
       </div>
       <DataTable
         columns={[

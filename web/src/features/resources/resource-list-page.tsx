@@ -169,7 +169,7 @@ export function ResourceListPage() {
         description={descriptor ? `${descriptor.namespaced ? "Namespaced" : "Cluster-scoped"} · ${descriptor.group || "core"}/${descriptor.version}${descriptor.preferred ? " · Preferred" : ""} · 当前读取受 Kubernetes RBAC 约束。` : "正在读取资源类型。"}
           actions={<div className="flex flex-wrap items-center gap-2"><Button variant="outline" size="sm" aria-pressed={favorite} onClick={() => { const active = toggleFavoriteResourceType(preferenceKey); toast.success(active ? "已收藏资源类型" : "已取消收藏"); }}><Star className={favorite ? "h-4 w-4 fill-current text-warning" : "h-4 w-4"} />{favorite ? "已收藏" : "收藏类型"}</Button>{canCreate ? <Button size="sm" disabled={createDisabled} title={createDisabled ? "请先选择命名空间" : undefined} onClick={() => setCreateOpen(true)}><Plus className="h-4 w-4" />创建 YAML</Button> : null}</div>}
       />
-      <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center">
+      <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
         <SearchInput value={q} onChange={(value) => updateSearch({ q: value || undefined })} placeholder="搜索名称或命名空间" />
         {versions.length > 1 ? (
           <Select value={version} onValueChange={changeVersion}>

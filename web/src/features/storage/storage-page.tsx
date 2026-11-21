@@ -171,7 +171,7 @@ export function StoragePage() {
         actions={createAction()}
       />
       {noClasses ? <div className="mb-4 rounded-lg border border-warning/35 bg-warning/10 px-4 py-3 text-sm text-warning"><HardDrive className="mr-2 inline h-4 w-4" />当前集群没有 StorageClass，不支持动态持久化卷申请。已有 PV/PVC 仍可正常查看。</div> : null}
-      <div className="mb-3 flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center"><SearchInput value={q} onChange={(value) => updateSearch({ q: value || undefined })} placeholder="搜索存储资源" /><NamespaceSelect value={namespace} onChange={(value) => updateSearch({ namespace: value || undefined })} /></div>
+      <div className="mb-3 flex min-w-0 flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center"><SearchInput value={q} onChange={(value) => updateSearch({ q: value || undefined })} placeholder="搜索存储资源" /><NamespaceSelect value={namespace} onChange={(value) => updateSearch({ namespace: value || undefined })} /></div>
       <Tabs value={tab} onValueChange={(value) => { if (isStorageTab(value)) updateSearch({ tab: value === "classes" ? undefined : value }); }}>
         <TabsList><TabsTrigger value="classes">StorageClass ({classes.data?.meta.totalKnown ? classes.data.meta.total : classes.data?.items.length ?? 0})</TabsTrigger><TabsTrigger value="volumes">PV ({volumes.data?.meta.totalKnown ? volumes.data.meta.total : volumes.data?.items.length ?? 0})</TabsTrigger><TabsTrigger value="claims">PVC ({claims.data?.meta.totalKnown ? claims.data.meta.total : claims.data?.items.length ?? 0})</TabsTrigger><TabsTrigger value="snapshots">快照 ({snapshotFeature.data?.available ? (snapshots.data?.meta.totalKnown ? snapshots.data.meta.total : snapshots.data?.items.length ?? 0) : "不可用"})</TabsTrigger></TabsList>
         <TabsContent value="classes">

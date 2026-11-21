@@ -51,7 +51,7 @@ export function HelmChartsPage() {
       />
       <HelmSectionNav active="charts" />
 
-      <div className="mb-4 flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center">
+      <div className="mb-4 flex min-w-0 flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
         <Select value={repositoryId} onValueChange={setRepositoryId}>
           <SelectTrigger className="w-full sm:w-56" aria-label="Chart 仓库筛选"><SelectValue placeholder="全部仓库" /></SelectTrigger>
           <SelectContent>
@@ -60,7 +60,7 @@ export function HelmChartsPage() {
           </SelectContent>
         </Select>
         <SearchInput value={search} onChange={setSearch} placeholder="搜索 Chart 名称或说明" className="sm:w-80" />
-        <span className="text-xs text-muted-foreground sm:ml-auto">{charts.isLoading ? "正在同步仓库索引" : `共 ${charts.data?.items.length ?? 0} 个 Chart`}</span>
+        <span className="whitespace-nowrap text-xs text-muted-foreground sm:ml-auto">{charts.isLoading ? "正在同步仓库索引" : `共 ${charts.data?.items.length ?? 0} 个 Chart`}</span>
       </div>
 
       {charts.data?.warnings?.length ? (

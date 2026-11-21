@@ -53,10 +53,10 @@ export function HelmReleasesPage() {
         description="只读浏览 Helm Secret 存储中的 Release、values、渲染清单和历史版本。敏感字段在服务端遮蔽。"
       />
       <HelmSectionNav active="releases" />
-      <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center">
+      <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
         <NamespaceSelect value={namespace} onChange={(value) => updateSearch({ namespace: value || undefined })} allowAll={false} ariaLabel="Helm Release 命名空间" className="w-full sm:w-56" />
         <SearchInput value={q} onChange={(value) => updateSearch({ q: value || undefined })} placeholder="搜索 Release、Chart 或状态" className="sm:w-72" />
-        {namespace ? <span className="text-xs text-muted-foreground sm:ml-auto">共 {items.length} 个 Release</span> : null}
+        {namespace ? <span className="whitespace-nowrap text-xs text-muted-foreground sm:ml-auto">共 {items.length} 个 Release</span> : null}
       </div>
       {!namespace ? (
         <EmptyState title="选择命名空间" description="Helm Release 只能从对应命名空间的 Helm Secret 中读取。请选择一个命名空间开始。" />
