@@ -26,6 +26,8 @@ import (
 	diagnosticshttp "dosh/internal/modules/diagnostics/http"
 	eventsapp "dosh/internal/modules/events/app"
 	eventshttp "dosh/internal/modules/events/http"
+	helmchartsapp "dosh/internal/modules/helmcharts/app"
+	helmchartshttp "dosh/internal/modules/helmcharts/http"
 	networkapp "dosh/internal/modules/network/app"
 	networkhttp "dosh/internal/modules/network/http"
 	nodesapp "dosh/internal/modules/nodes/app"
@@ -51,6 +53,7 @@ import (
 	"dosh/internal/platform/audit"
 	"dosh/internal/platform/authz"
 	"dosh/internal/platform/config"
+	"dosh/internal/platform/helmrepo"
 	"dosh/internal/platform/httpserver"
 	"dosh/internal/platform/httpx"
 	"dosh/internal/platform/kube"
@@ -165,6 +168,7 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 	registriesService := registriesapp.New(kubeClient, registryclient.New(cfg.RequestTimeout), authorizer, auditLogger)
 	workloadsService.SetImageRegistryResolver(registriesService)
 	releasesService := releasesapp.New(kubeClient, authorizer, auditLogger)
+	helmChartsService := helmchartsapp.New(kubeClient, helmrepo.New(cfg.RequestTimeout), kubeClient, authorizer, auditLogger)
 	eventsService := eventsapp.New(kubeClient)
 	networkService := networkapp.New(kubeClient, authorizer, auditLogger)
 	configurationService := configurationapp.New(kubeClient, authorizer, auditLogger)
@@ -188,6 +192,7 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 		nodes:         nodeshttp.New(nodesService),
 		workloads:     workloadshttp.New(workloadsService, terminalLimits),
 		releases:      releaseshttp.New(releasesService),
+		helmCharts:    helmchartshttp.New(helmChartsService),
 		events:        eventshttp.New(eventsService),
 		network:       networkhttp.New(networkService),
 		configuration: configurationhttp.New(configurationService),

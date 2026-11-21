@@ -1728,6 +1728,294 @@ paths:
         "409": { $ref: "#/components/responses/Conflict" }
         "501": { $ref: "#/components/responses/NotSupported" }
         "503": { $ref: "#/components/responses/DependencyUnavailable" }
+  /api/v1/helm/repositories:
+    get:
+      tags: [helm-charts]
+      summary: List administrator-managed Helm Chart repositories
+      responses:
+        "200":
+          description: Helm repositories without credentials
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/HelmRepository" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
+    post:
+      tags: [helm-charts]
+      summary: Register a Helm Chart repository
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/HelmRepositoryUpsert" }
+      responses:
+        "201":
+          description: Repository registered and initial synchronization attempted
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/HelmRepository" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
+  /api/v1/helm/repositories/{id}:
+    put:
+      tags: [helm-charts]
+      summary: Update a Helm Chart repository
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, maxLength: 128 } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/HelmRepositoryUpsert" }
+      responses:
+        "200":
+          description: Updated repository
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/HelmRepository" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
+    delete:
+      tags: [helm-charts]
+      summary: Delete a Helm Chart repository
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, maxLength: 128 } }
+        - { name: revision, in: query, schema: { type: string, maxLength: 256 } }
+      responses:
+        "200":
+          description: Repository deleted
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OperationStatus" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
+  /api/v1/helm/repositories/{id}/sync:
+    post:
+      tags: [helm-charts]
+      summary: Synchronize a repository index and record health
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, maxLength: 128 } }
+      responses:
+        "200":
+          description: Repository with the latest synchronization result
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/HelmRepository" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
+  /api/v1/helm/charts:
+    get:
+      tags: [helm-charts]
+      summary: Browse charts from enabled Helm repositories
+      parameters:
+        - { name: repositoryId, in: query, schema: { type: string, maxLength: 128 } }
+        - { $ref: "#/components/parameters/Search" }
+      responses:
+        "200":
+          description: Chart catalog and repository warnings
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/HelmChartSummary" }
+                  warnings:
+                    type: array
+                    items: { type: string }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
+  /api/v1/helm/charts/{repositoryId}/{chartName}:
+    get:
+      tags: [helm-charts]
+      summary: Read Chart metadata, versions, README, default values and schema
+      parameters:
+        - { name: repositoryId, in: path, required: true, schema: { type: string, maxLength: 128 } }
+        - { name: chartName, in: path, required: true, schema: { type: string, maxLength: 253 } }
+      responses:
+        "200":
+          description: Chart detail
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/HelmChartDetail" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
+  /api/v1/helm/charts/plan:
+    post:
+      tags: [helm-charts]
+      summary: Render a chart and preflight resources, hooks and RBAC
+      description: >-
+        The response includes a planDigest bound to the exact chart package,
+        values, target namespace, release name, current revision and rendered
+        resources. Installation and upgrade require this digest.
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/HelmChartPlanRequest" }
+      responses:
+        "200":
+          description: Reviewed install or upgrade plan
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/HelmChartPlan" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "501": { $ref: "#/components/responses/NotSupported" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
+  /api/v1/helm/charts/install:
+    post:
+      tags: [helm-charts]
+      summary: Install a reviewed Helm Chart plan
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/HelmChartOperationRequest" }
+      responses:
+        "201":
+          description: Install completed
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/HelmChartOperation" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
+  /api/v1/helm/charts/upgrade:
+    post:
+      tags: [helm-charts]
+      summary: Upgrade a release to a reviewed Helm Chart plan
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/HelmChartOperationRequest" }
+      responses:
+        "200":
+          description: Upgrade completed
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/HelmChartOperation" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
+  /api/v1/helm/charts/uninstall:
+    post:
+      tags: [helm-charts]
+      summary: Uninstall a Helm release
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/HelmChartUninstallRequest" }
+      responses:
+        "200":
+          description: Uninstall completed
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/HelmChartOperation" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
+  /api/v1/helm/charts/rollback:
+    post:
+      tags: [helm-charts]
+      summary: Roll back a Helm release to a previous revision
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/HelmChartRollbackRequest" }
+      responses:
+        "200":
+          description: Rollback completed
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/HelmChartOperation" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
+  /api/v1/helm/operations/{id}:
+    get:
+      tags: [helm-charts]
+      summary: Read one persisted Helm chart operation record
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, maxLength: 128 } }
+      responses:
+        "200":
+          description: Operation record
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/HelmChartOperation" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
   /api/v1/services/{namespace}/{name}:
     get:
       tags: [network]
@@ -4570,6 +4858,212 @@ components:
         warnings:
           type: array
           items: { type: string }
+    HelmRepository:
+      type: object
+      required: [id, name, url, default, enabled, chartCount, createdAt, updatedAt]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        url: { type: string, format: uri }
+        description: { type: string }
+        default: { type: boolean }
+        enabled: { type: boolean }
+        insecureSkipTLSVerify: { type: boolean }
+        authType: { type: string, enum: [anonymous, basic, bearer] }
+        hasCredentials: { type: boolean }
+        hasCustomCA: { type: boolean }
+        lastSync: { $ref: "#/components/schemas/HelmRepositorySync" }
+        chartCount: { type: integer, minimum: 0 }
+        revision: { type: string }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    HelmRepositorySync:
+      type: object
+      required: [ok, message, chartCount, syncedAt]
+      properties:
+        ok: { type: boolean }
+        message: { type: string }
+        chartCount: { type: integer, minimum: 0 }
+        syncedAt: { type: string, format: date-time }
+    HelmRepositoryUpsert:
+      type: object
+      required: [name, url]
+      properties:
+        name: { type: string, maxLength: 128 }
+        url: { type: string, format: uri, maxLength: 2048 }
+        description: { type: string }
+        default: { type: boolean }
+        enabled: { type: boolean }
+        insecureSkipTLSVerify: { type: boolean }
+        authType: { type: string, enum: [anonymous, basic, bearer] }
+        username: { type: string }
+        password: { type: string, format: password }
+        token: { type: string, format: password }
+        caPEM: { type: string }
+        clearCredentials: { type: boolean }
+        revision: { type: string }
+    HelmChartSummary:
+      type: object
+      required: [repositoryId, repositoryName, name, version, deprecated]
+      properties:
+        repositoryId: { type: string }
+        repositoryName: { type: string }
+        name: { type: string }
+        version: { type: string }
+        appVersion: { type: string }
+        description: { type: string }
+        icon: { type: string }
+        deprecated: { type: boolean }
+        digest: { type: string }
+        createdAt: { type: string, format: date-time }
+        keywords:
+          type: array
+          items: { type: string }
+    HelmChartVersion:
+      type: object
+      required: [version, deprecated]
+      properties:
+        version: { type: string }
+        appVersion: { type: string }
+        digest: { type: string }
+        createdAt: { type: string, format: date-time }
+        deprecated: { type: boolean }
+        urls:
+          type: array
+          items: { type: string }
+    HelmChartDetail:
+      allOf:
+        - { $ref: "#/components/schemas/HelmChartSummary" }
+        - type: object
+          required: [values, versions]
+          properties:
+            home: { type: string }
+            sources:
+              type: array
+              items: { type: string }
+            maintainers:
+              type: array
+              items:
+                type: object
+                required: [name]
+                properties:
+                  name: { type: string }
+                  email: { type: string }
+                  url: { type: string }
+            readme: { type: string }
+            values: { type: string }
+            schema: { type: string }
+            dependencies:
+              type: array
+              items:
+                type: object
+                required: [name, version]
+                properties:
+                  name: { type: string }
+                  version: { type: string }
+                  repository: { type: string }
+                  condition: { type: string }
+                  alias: { type: string }
+            versions:
+              type: array
+              items: { $ref: "#/components/schemas/HelmChartVersion" }
+            warnings:
+              type: array
+              items: { type: string }
+    HelmChartPlanRequest:
+      type: object
+      required: [repositoryId, chartName, version, mode, namespace, releaseName]
+      properties:
+        repositoryId: { type: string, maxLength: 128 }
+        chartName: { type: string, maxLength: 253 }
+        version: { type: string, maxLength: 128 }
+        digest: { type: string }
+        mode: { type: string, enum: [install, upgrade] }
+        namespace: { type: string, maxLength: 63 }
+        releaseName: { type: string, maxLength: 53 }
+        values: { type: string, maxLength: 1048576 }
+    HelmChartPlanResource:
+      type: object
+      required: [apiVersion, kind, name, hook, crd, action, resource, exists]
+      properties:
+        apiVersion: { type: string }
+        kind: { type: string }
+        namespace: { type: string }
+        name: { type: string }
+        hook: { type: boolean }
+        crd: { type: boolean }
+        action: { type: string, enum: [create, update] }
+        apiGroup: { type: string }
+        resource: { type: string }
+        exists: { type: boolean }
+    HelmChartPlan:
+      type: object
+      required: [action, repositoryId, repositoryName, chartName, chartVersion, digest, namespace, releaseName, values, resources, hookCount, crdCount, planDigest]
+      properties:
+        action: { type: string, enum: [install, upgrade] }
+        repositoryId: { type: string }
+        repositoryName: { type: string }
+        chartName: { type: string }
+        chartVersion: { type: string }
+        appVersion: { type: string }
+        digest: { type: string }
+        namespace: { type: string }
+        releaseName: { type: string }
+        currentRevision: { type: integer, minimum: 0 }
+        manifest: { type: string }
+        values: { type: string }
+        resources:
+          type: array
+          items: { $ref: "#/components/schemas/HelmChartPlanResource" }
+        hookCount: { type: integer, minimum: 0 }
+        crdCount: { type: integer, minimum: 0 }
+        warnings:
+          type: array
+          items: { type: string }
+        planDigest: { type: string }
+    HelmChartOperationRequest:
+      allOf:
+        - { $ref: "#/components/schemas/HelmChartPlanRequest" }
+        - type: object
+          required: [planDigest, confirmation]
+          properties:
+            planDigest: { type: string }
+            confirmation: { type: string }
+    HelmChartUninstallRequest:
+      type: object
+      required: [namespace, releaseName, confirmation]
+      properties:
+        namespace: { type: string, maxLength: 63 }
+        releaseName: { type: string, maxLength: 53 }
+        confirmation: { type: string }
+    HelmChartRollbackRequest:
+      type: object
+      required: [namespace, releaseName, targetRevision, confirmation]
+      properties:
+        namespace: { type: string, maxLength: 63 }
+        releaseName: { type: string, maxLength: 53 }
+        targetRevision: { type: integer, minimum: 1 }
+        confirmation: { type: string }
+    HelmChartOperation:
+      type: object
+      required: [id, type, status, namespace, releaseName, startedAt]
+      properties:
+        id: { type: string }
+        type: { type: string, enum: [install, upgrade, uninstall, rollback] }
+        status: { type: string, enum: [pending, running, success, failed] }
+        message: { type: string }
+        repositoryId: { type: string }
+        chartName: { type: string }
+        chartVersion: { type: string }
+        digest: { type: string }
+        namespace: { type: string }
+        releaseName: { type: string }
+        revision: { type: integer }
+        warnings:
+          type: array
+          items: { type: string }
+        startedAt: { type: string, format: date-time }
+        finishedAt: { type: string, format: date-time }
     ServicePort:
       type: object
       required: [protocol, port, targetPort]

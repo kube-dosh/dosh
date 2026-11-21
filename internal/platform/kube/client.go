@@ -36,6 +36,8 @@ type Client struct {
 	preferencesNamespace string
 
 	registryStoreMu sync.Mutex
+	helmStoreMu     sync.Mutex
+	helmOperationMu sync.Mutex
 
 	metricsMu        sync.Mutex
 	metricsCheckedAt time.Time

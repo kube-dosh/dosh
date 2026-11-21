@@ -85,6 +85,24 @@ const accessReviewRoute = createRoute({ getParentRoute: () => appRoute, path: "/
 const registriesRoute = createRoute({ getParentRoute: () => appRoute, path: "/registries", component: RegistriesPage });
 const helmReleasesRoute = createRoute({ getParentRoute: () => appRoute, path: "/helm/releases", component: HelmReleasesPage, validateSearch: parseListSearch });
 const helmReleaseDetailRoute = createRoute({ getParentRoute: () => appRoute, path: "/helm/releases/$namespace/$name", component: HelmReleaseDetailPage, validateSearch: parseListSearch });
+const helmChartsRoute = createRoute({
+  getParentRoute: () => appRoute,
+  path: "/helm/charts",
+  component: lazyRouteComponent(() => import("@/features/helm/charts/helm-charts-page"), "HelmChartsPage"),
+  validateSearch: parseListSearch,
+});
+const helmChartDetailRoute = createRoute({
+  getParentRoute: () => appRoute,
+  path: "/helm/charts/$repositoryId/$chartName",
+  component: lazyRouteComponent(() => import("@/features/helm/charts/helm-chart-detail-page"), "HelmChartDetailPage"),
+  validateSearch: parseListSearch,
+});
+const helmRepositoriesRoute = createRoute({
+  getParentRoute: () => appRoute,
+  path: "/helm/repositories",
+  component: lazyRouteComponent(() => import("@/features/helm/charts/helm-repositories-page"), "HelmRepositoriesPage"),
+  validateSearch: parseListSearch,
+});
 const nodesRoute = createRoute({ getParentRoute: () => appRoute, path: "/nodes", component: NodesPage, validateSearch: parseListSearch });
 const nodeDetailRoute = createRoute({ getParentRoute: () => appRoute, path: "/nodes/$name", component: NodeDetailPage, validateSearch: parseListSearch });
 const workloadsRoute = createRoute({ getParentRoute: () => appRoute, path: "/workloads", component: WorkloadsPage, validateSearch: parseListSearch });
@@ -120,6 +138,9 @@ export const routeTree = rootRoute.addChildren([
     registriesRoute,
     helmReleasesRoute,
     helmReleaseDetailRoute,
+    helmChartsRoute,
+    helmChartDetailRoute,
+    helmRepositoriesRoute,
     nodesRoute,
     nodeDetailRoute,
     workloadsRoute,

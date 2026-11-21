@@ -35,28 +35,30 @@ type Actor struct {
 }
 
 type Capabilities struct {
-	Read              bool                            `json:"read"`
-	Scale             bool                            `json:"scale"`
-	Restart           bool                            `json:"restart"`
-	UpdateImage       bool                            `json:"updateImage"`
-	SuspendCronJob    bool                            `json:"suspendCronJob"`
-	Delete            bool                            `json:"delete"`
-	Create            bool                            `json:"create"`
-	CreateService     bool                            `json:"createService"`
-	UpdateService     bool                            `json:"updateService"`
-	DeleteService     bool                            `json:"deleteService"`
-	DeleteNamespace   bool                            `json:"deleteNamespace"`
-	RevealSecrets     bool                            `json:"revealSecrets"`
-	EditYAML          bool                            `json:"editYAML"`
-	NodeCordon        bool                            `json:"nodeCordon"`
-	NodeDrain         bool                            `json:"nodeDrain"`
-	PodExec           bool                            `json:"podExec"`
-	PodEphemeralDebug bool                            `json:"podEphemeralDebug"`
-	PodPortForward    bool                            `json:"podPortForward"`
-	HelmReleases      bool                            `json:"helmReleases"`
-	HelmUpgrade       bool                            `json:"helmUpgrade"`
-	ReloadCertificate bool                            `json:"reloadCertificate"`
-	ResourceActions   map[string]ResourceCapabilities `json:"resourceActions,omitempty"`
+	Read                  bool                            `json:"read"`
+	Scale                 bool                            `json:"scale"`
+	Restart               bool                            `json:"restart"`
+	UpdateImage           bool                            `json:"updateImage"`
+	SuspendCronJob        bool                            `json:"suspendCronJob"`
+	Delete                bool                            `json:"delete"`
+	Create                bool                            `json:"create"`
+	CreateService         bool                            `json:"createService"`
+	UpdateService         bool                            `json:"updateService"`
+	DeleteService         bool                            `json:"deleteService"`
+	DeleteNamespace       bool                            `json:"deleteNamespace"`
+	RevealSecrets         bool                            `json:"revealSecrets"`
+	EditYAML              bool                            `json:"editYAML"`
+	NodeCordon            bool                            `json:"nodeCordon"`
+	NodeDrain             bool                            `json:"nodeDrain"`
+	PodExec               bool                            `json:"podExec"`
+	PodEphemeralDebug     bool                            `json:"podEphemeralDebug"`
+	PodPortForward        bool                            `json:"podPortForward"`
+	HelmReleases          bool                            `json:"helmReleases"`
+	HelmUpgrade           bool                            `json:"helmUpgrade"`
+	HelmChartRepositories bool                            `json:"helmChartRepositories"`
+	HelmChartWrite        bool                            `json:"helmChartWrite"`
+	ReloadCertificate     bool                            `json:"reloadCertificate"`
+	ResourceActions       map[string]ResourceCapabilities `json:"resourceActions,omitempty"`
 }
 
 // ResourceCapabilities is the resource-level write capability model used by

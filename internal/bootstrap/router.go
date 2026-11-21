@@ -13,6 +13,7 @@ import (
 	configurationhttp "dosh/internal/modules/configuration/http"
 	diagnosticshttp "dosh/internal/modules/diagnostics/http"
 	eventshttp "dosh/internal/modules/events/http"
+	helmchartshttp "dosh/internal/modules/helmcharts/http"
 	networkhttp "dosh/internal/modules/network/http"
 	nodeshttp "dosh/internal/modules/nodes/http"
 	overviewhttp "dosh/internal/modules/overview/http"
@@ -46,6 +47,7 @@ type routerDependencies struct {
 	nodes         *nodeshttp.Handler
 	workloads     *workloadshttp.Handler
 	releases      *releaseshttp.Handler
+	helmCharts    *helmchartshttp.Handler
 	events        *eventshttp.Handler
 	network       *networkhttp.Handler
 	configuration *configurationhttp.Handler
@@ -97,6 +99,7 @@ func buildRouter(deps routerDependencies) (stdhttp.Handler, error) {
 			deps.nodes.Mount(r)
 			deps.workloads.Mount(r)
 			deps.releases.Mount(r)
+			deps.helmCharts.Mount(r)
 			deps.events.Mount(r)
 			deps.network.Mount(r)
 			deps.configuration.Mount(r)

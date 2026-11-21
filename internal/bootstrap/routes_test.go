@@ -21,6 +21,8 @@ import (
 	configurationhttp "dosh/internal/modules/configuration/http"
 	diagnosticshttp "dosh/internal/modules/diagnostics/http"
 	eventshttp "dosh/internal/modules/events/http"
+	helmchartsapp "dosh/internal/modules/helmcharts/app"
+	helmchartshttp "dosh/internal/modules/helmcharts/http"
 	networkhttp "dosh/internal/modules/network/http"
 	nodeshttp "dosh/internal/modules/nodes/http"
 	overviewhttp "dosh/internal/modules/overview/http"
@@ -116,6 +118,7 @@ func TestModuleRoutesAreScoped(t *testing.T) {
 		{name: "certificates", mount: deps.certificates.Mount, prefixes: []string{"/certificate"}},
 		{name: "storage", mount: deps.storage.Mount, prefixes: []string{"/storageclasses", "/persistentvolumes", "/persistentvolumeclaims", "/volume-snapshots"}},
 		{name: "yaml", mount: deps.yaml.Mount, prefixes: []string{"/yaml"}},
+		{name: "helm-charts", mount: deps.helmCharts.Mount, prefixes: []string{"/helm/repositories", "/helm/charts", "/helm/operations"}},
 		{name: "audit-history", mount: deps.auditHistory.Mount, prefixes: []string{"/audit-events"}},
 	}
 
@@ -170,6 +173,7 @@ func newRouteTestDependencies(t *testing.T) routerDependencies {
 		nodes:         nodeshttp.New(nil),
 		workloads:     workloadshttp.New(nil),
 		events:        eventshttp.New(nil),
+		helmCharts:    helmchartshttp.New(helmchartsapp.New(nil, nil, nil, authz.NewLocal(false), audit.New(logger))),
 		network:       networkhttp.New(nil),
 		configuration: configurationhttp.New(nil),
 		diagnostics:   diagnosticshttp.New(nil),

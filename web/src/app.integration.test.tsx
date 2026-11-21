@@ -17,7 +17,7 @@ const session: SessionResponse = {
   capabilities: {
     read: true, scale: true, restart: true, updateImage: true, suspendCronJob: true, delete: true, create: true,
     createService: true, updateService: true, deleteService: true, deleteNamespace: true, revealSecrets: true,
-    editYAML: true, nodeCordon: true, nodeDrain: true, podExec: false, podEphemeralDebug: false, podPortForward: false, helmReleases: true, helmUpgrade: false, reloadCertificate: true,
+    editYAML: true, nodeCordon: true, nodeDrain: true, podExec: false, podEphemeralDebug: false, podPortForward: false, helmReleases: true, helmUpgrade: false, helmChartRepositories: true, helmChartWrite: true, reloadCertificate: true,
     resourceActions: {
       pods: { create: false, update: true, delete: true, scale: false },
       deployments: { create: true, update: true, delete: true, scale: true },

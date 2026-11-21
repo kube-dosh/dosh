@@ -32,6 +32,16 @@ import type {
   IngressSummary,
   IngressUpdateInput,
   ImageReferenceResolution,
+  HelmChartDetail,
+  HelmChartOperation,
+  HelmChartOperationInput,
+  HelmChartPlan,
+  HelmChartPlanInput,
+  HelmChartRollbackInput,
+  HelmChartSummary,
+  HelmChartUninstallInput,
+  HelmRepository,
+  HelmRepositoryUpsertInput,
   HelmReleaseDetail,
   HelmReleaseDiff,
   HelmReleaseRollbackInput,
@@ -551,6 +561,40 @@ export const api = {
       method: "POST",
       body: JSON.stringify(input),
     }),
+  helmRepositories: async () => {
+    const value = await request<{ items?: HelmRepository[] }>("/api/v1/helm/repositories");
+    return list(value.items);
+  },
+  createHelmRepository: (input: HelmRepositoryUpsertInput) =>
+    request<HelmRepository>("/api/v1/helm/repositories", { method: "POST", body: JSON.stringify(input) }),
+  updateHelmRepository: (id: string, input: HelmRepositoryUpsertInput) =>
+    request<HelmRepository>(`/api/v1/helm/repositories/${encodeURIComponent(id)}`, { method: "PUT", body: JSON.stringify(input) }),
+  deleteHelmRepository: (id: string, revision?: string) =>
+    request<{ status: string }>(`/api/v1/helm/repositories/${encodeURIComponent(id)}${revision ? `?revision=${encodeURIComponent(revision)}` : ""}`, { method: "DELETE" }),
+  syncHelmRepository: (id: string) =>
+    request<HelmRepository>(`/api/v1/helm/repositories/${encodeURIComponent(id)}/sync`, { method: "POST" }),
+  helmCharts: async (params: { repositoryId?: string; q?: string } = {}) => {
+    const search = new URLSearchParams();
+    if (params.repositoryId) search.set("repositoryId", params.repositoryId);
+    if (params.q) search.set("q", params.q);
+    const suffix = search.toString();
+    const value = await request<{ items?: HelmChartSummary[]; warnings?: string[] }>(`/api/v1/helm/charts${suffix ? `?${suffix}` : ""}`);
+    return { items: list(value.items), warnings: list(value.warnings) };
+  },
+  helmChart: (repositoryId: string, chartName: string) =>
+    request<HelmChartDetail>(`/api/v1/helm/charts/${encodeURIComponent(repositoryId)}/${encodeURIComponent(chartName)}`),
+  planHelmChart: (input: HelmChartPlanInput) =>
+    request<HelmChartPlan>("/api/v1/helm/charts/plan", { method: "POST", body: JSON.stringify(input) }),
+  installHelmChart: (input: HelmChartOperationInput) =>
+    request<HelmChartOperation>("/api/v1/helm/charts/install", { method: "POST", body: JSON.stringify(input) }),
+  upgradeHelmChart: (input: HelmChartOperationInput) =>
+    request<HelmChartOperation>("/api/v1/helm/charts/upgrade", { method: "POST", body: JSON.stringify(input) }),
+  uninstallHelmChart: (input: HelmChartUninstallInput) =>
+    request<HelmChartOperation>("/api/v1/helm/charts/uninstall", { method: "POST", body: JSON.stringify(input) }),
+  rollbackHelmChart: (input: HelmChartRollbackInput) =>
+    request<HelmChartOperation>("/api/v1/helm/charts/rollback", { method: "POST", body: JSON.stringify(input) }),
+  helmChartOperation: (id: string) =>
+    request<HelmChartOperation>(`/api/v1/helm/operations/${encodeURIComponent(id)}`),
   helmReleases: async (namespace: string) => {
     const value = await request<{ items?: HelmReleaseSummary[]; warnings?: string[] }>(`/api/v1/helm/releases${query({ namespace })}`);
     return { items: list(value.items), warnings: list(value.warnings) };

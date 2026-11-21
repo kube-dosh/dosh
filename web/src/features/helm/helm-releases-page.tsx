@@ -13,6 +13,7 @@ import { PageHeader } from "@/components/layout/page-header";
 import { SearchInput } from "@/components/layout/search-input";
 import { Badge } from "@/components/ui/badge";
 import { useCapabilities } from "@/features/auth/use-session";
+import { HelmSectionNav } from "@/features/helm/helm-section-nav";
 import { formatAge, formatDate } from "@/lib/utils";
 
 const column = createColumnHelper<HelmReleaseSummary>();
@@ -47,10 +48,11 @@ export function HelmReleasesPage() {
   return (
     <>
       <PageHeader
-        title="Helm Releases"
-        breadcrumb="应用 / Helm Releases"
+        title="已安装 Release"
+        breadcrumb="应用 / Helm / 已安装 Release"
         description="只读浏览 Helm Secret 存储中的 Release、values、渲染清单和历史版本。敏感字段在服务端遮蔽。"
       />
+      <HelmSectionNav active="releases" />
       <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center">
         <NamespaceSelect value={namespace} onChange={(value) => updateSearch({ namespace: value || undefined })} allowAll={false} ariaLabel="Helm Release 命名空间" className="w-full sm:w-56" />
         <SearchInput value={q} onChange={(value) => updateSearch({ q: value || undefined })} placeholder="搜索 Release、Chart 或状态" className="sm:w-72" />

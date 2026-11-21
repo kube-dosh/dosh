@@ -25,6 +25,8 @@ export interface Capabilities {
   podPortForward: boolean;
   helmReleases: boolean;
   helmUpgrade: boolean;
+  helmChartRepositories: boolean;
+  helmChartWrite: boolean;
   reloadCertificate: boolean;
   resourceActions?: Record<string, ResourceCapabilities>;
 }
@@ -925,6 +927,153 @@ export interface HelmReleaseUpgradeResult {
   revision: number;
   appliedObjects: number;
   warnings?: string[];
+}
+
+export interface HelmRepositorySync {
+  ok: boolean;
+  message: string;
+  chartCount: number;
+  syncedAt: string;
+}
+
+export interface HelmRepository {
+  id: string;
+  name: string;
+  url: string;
+  description?: string;
+  default: boolean;
+  enabled: boolean;
+  insecureSkipTLSVerify: boolean;
+  authType: "anonymous" | "basic" | "bearer";
+  hasCredentials: boolean;
+  hasCustomCA: boolean;
+  lastSync?: HelmRepositorySync;
+  chartCount: number;
+  revision?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface HelmRepositoryUpsertInput {
+  name: string;
+  url: string;
+  description?: string;
+  default: boolean;
+  enabled?: boolean;
+  insecureSkipTLSVerify?: boolean;
+  authType?: "anonymous" | "basic" | "bearer";
+  username?: string;
+  password?: string;
+  token?: string;
+  caPEM?: string;
+  clearCredentials?: boolean;
+  revision?: string;
+}
+
+export interface HelmChartSummary {
+  repositoryId: string;
+  repositoryName: string;
+  name: string;
+  version: string;
+  appVersion?: string;
+  description?: string;
+  icon?: string;
+  deprecated: boolean;
+  digest?: string;
+  createdAt?: string;
+  keywords?: string[];
+}
+
+export interface HelmChartVersion {
+  version: string;
+  appVersion?: string;
+  digest?: string;
+  createdAt?: string;
+  deprecated: boolean;
+  urls?: string[];
+}
+
+export interface HelmChartDetail extends HelmChartSummary {
+  home?: string;
+  sources?: string[];
+  maintainers?: Array<{ name: string; email?: string; url?: string }>;
+  readme?: string;
+  values: string;
+  schema?: string;
+  dependencies?: Array<{ name: string; version: string; repository?: string; condition?: string; alias?: string }>;
+  versions: HelmChartVersion[];
+  warnings?: string[];
+}
+
+export interface HelmChartPlanInput {
+  repositoryId: string;
+  chartName: string;
+  version: string;
+  digest?: string;
+  mode: "install" | "upgrade";
+  namespace: string;
+  releaseName: string;
+  values?: string;
+}
+
+export interface HelmChartPlanResource {
+  apiVersion: string;
+  kind: string;
+  namespace?: string;
+  name: string;
+  hook: boolean;
+  crd: boolean;
+  action: "create" | "update";
+  apiGroup?: string;
+  resource: string;
+  exists: boolean;
+}
+
+export interface HelmChartPlan extends HelmChartPlanInput {
+  repositoryName: string;
+  chartVersion: string;
+  appVersion?: string;
+  digest: string;
+  currentRevision?: number;
+  manifest: string;
+  values: string;
+  resources: HelmChartPlanResource[];
+  hookCount: number;
+  crdCount: number;
+  warnings?: string[];
+  planDigest: string;
+}
+
+export interface HelmChartOperationInput extends HelmChartPlanInput {
+  planDigest: string;
+  confirmation: string;
+}
+
+export interface HelmChartOperation {
+  id: string;
+  type: "install" | "upgrade" | "uninstall" | "rollback";
+  status: "pending" | "running" | "success" | "failed";
+  message?: string;
+  repositoryId?: string;
+  chartName?: string;
+  chartVersion?: string;
+  digest?: string;
+  namespace: string;
+  releaseName: string;
+  revision?: number;
+  warnings?: string[];
+  startedAt: string;
+  finishedAt?: string;
+}
+
+export interface HelmChartUninstallInput {
+  namespace: string;
+  releaseName: string;
+  confirmation: string;
+}
+
+export interface HelmChartRollbackInput extends HelmChartUninstallInput {
+  targetRevision: number;
 }
 
 export interface HelmReleaseDetail extends HelmReleaseSummary {

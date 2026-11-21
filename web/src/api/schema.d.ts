@@ -3321,6 +3321,558 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/helm/repositories": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List administrator-managed Helm Chart repositories */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Helm repositories without credentials */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            items: components["schemas"]["HelmRepository"][];
+                        };
+                    };
+                };
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+                503: components["responses"]["DependencyUnavailable"];
+            };
+        };
+        put?: never;
+        /** Register a Helm Chart repository */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["HelmRepositoryUpsert"];
+                };
+            };
+            responses: {
+                /** @description Repository registered and initial synchronization attempted */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["HelmRepository"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+                409: components["responses"]["Conflict"];
+                503: components["responses"]["DependencyUnavailable"];
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/helm/repositories/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Update a Helm Chart repository */
+        put: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["HelmRepositoryUpsert"];
+                };
+            };
+            responses: {
+                /** @description Updated repository */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["HelmRepository"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+                404: components["responses"]["NotFound"];
+                409: components["responses"]["Conflict"];
+                503: components["responses"]["DependencyUnavailable"];
+            };
+        };
+        post?: never;
+        /** Delete a Helm Chart repository */
+        delete: {
+            parameters: {
+                query?: {
+                    revision?: string;
+                };
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Repository deleted */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["OperationStatus"];
+                    };
+                };
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+                404: components["responses"]["NotFound"];
+                409: components["responses"]["Conflict"];
+                503: components["responses"]["DependencyUnavailable"];
+            };
+        };
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/helm/repositories/{id}/sync": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Synchronize a repository index and record health */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Repository with the latest synchronization result */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["HelmRepository"];
+                    };
+                };
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+                404: components["responses"]["NotFound"];
+                503: components["responses"]["DependencyUnavailable"];
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/helm/charts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Browse charts from enabled Helm repositories */
+        get: {
+            parameters: {
+                query?: {
+                    repositoryId?: string;
+                    q?: components["parameters"]["Search"];
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Chart catalog and repository warnings */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            items: components["schemas"]["HelmChartSummary"][];
+                            warnings?: string[];
+                        };
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+                503: components["responses"]["DependencyUnavailable"];
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/helm/charts/{repositoryId}/{chartName}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read Chart metadata, versions, README, default values and schema */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    repositoryId: string;
+                    chartName: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Chart detail */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["HelmChartDetail"];
+                    };
+                };
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+                404: components["responses"]["NotFound"];
+                503: components["responses"]["DependencyUnavailable"];
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/helm/charts/plan": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Render a chart and preflight resources, hooks and RBAC
+         * @description The response includes a planDigest bound to the exact chart package, values, target namespace, release name, current revision and rendered resources. Installation and upgrade require this digest.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["HelmChartPlanRequest"];
+                };
+            };
+            responses: {
+                /** @description Reviewed install or upgrade plan */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["HelmChartPlan"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+                404: components["responses"]["NotFound"];
+                409: components["responses"]["Conflict"];
+                501: components["responses"]["NotSupported"];
+                503: components["responses"]["DependencyUnavailable"];
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/helm/charts/install": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Install a reviewed Helm Chart plan */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["HelmChartOperationRequest"];
+                };
+            };
+            responses: {
+                /** @description Install completed */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["HelmChartOperation"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+                404: components["responses"]["NotFound"];
+                409: components["responses"]["Conflict"];
+                503: components["responses"]["DependencyUnavailable"];
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/helm/charts/upgrade": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Upgrade a release to a reviewed Helm Chart plan */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["HelmChartOperationRequest"];
+                };
+            };
+            responses: {
+                /** @description Upgrade completed */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["HelmChartOperation"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+                404: components["responses"]["NotFound"];
+                409: components["responses"]["Conflict"];
+                503: components["responses"]["DependencyUnavailable"];
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/helm/charts/uninstall": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Uninstall a Helm release */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["HelmChartUninstallRequest"];
+                };
+            };
+            responses: {
+                /** @description Uninstall completed */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["HelmChartOperation"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+                404: components["responses"]["NotFound"];
+                503: components["responses"]["DependencyUnavailable"];
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/helm/charts/rollback": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Roll back a Helm release to a previous revision */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["HelmChartRollbackRequest"];
+                };
+            };
+            responses: {
+                /** @description Rollback completed */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["HelmChartOperation"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+                404: components["responses"]["NotFound"];
+                503: components["responses"]["DependencyUnavailable"];
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/helm/operations/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read one persisted Helm chart operation record */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Operation record */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["HelmChartOperation"];
+                    };
+                };
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+                404: components["responses"]["NotFound"];
+                503: components["responses"]["DependencyUnavailable"];
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/services/{namespace}/{name}": {
         parameters: {
             query?: never;
@@ -6839,6 +7391,176 @@ export interface components {
             revision: number;
             appliedObjects: number;
             warnings?: string[];
+        };
+        HelmRepository: {
+            id: string;
+            name: string;
+            /** Format: uri */
+            url: string;
+            description?: string;
+            default: boolean;
+            enabled: boolean;
+            insecureSkipTLSVerify?: boolean;
+            /** @enum {string} */
+            authType?: "anonymous" | "basic" | "bearer";
+            hasCredentials?: boolean;
+            hasCustomCA?: boolean;
+            lastSync?: components["schemas"]["HelmRepositorySync"];
+            chartCount: number;
+            revision?: string;
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: date-time */
+            updatedAt: string;
+        };
+        HelmRepositorySync: {
+            ok: boolean;
+            message: string;
+            chartCount: number;
+            /** Format: date-time */
+            syncedAt: string;
+        };
+        HelmRepositoryUpsert: {
+            name: string;
+            /** Format: uri */
+            url: string;
+            description?: string;
+            default?: boolean;
+            enabled?: boolean;
+            insecureSkipTLSVerify?: boolean;
+            /** @enum {string} */
+            authType?: "anonymous" | "basic" | "bearer";
+            username?: string;
+            /** Format: password */
+            password?: string;
+            /** Format: password */
+            token?: string;
+            caPEM?: string;
+            clearCredentials?: boolean;
+            revision?: string;
+        };
+        HelmChartSummary: {
+            repositoryId: string;
+            repositoryName: string;
+            name: string;
+            version: string;
+            appVersion?: string;
+            description?: string;
+            icon?: string;
+            deprecated: boolean;
+            digest?: string;
+            /** Format: date-time */
+            createdAt?: string;
+            keywords?: string[];
+        };
+        HelmChartVersion: {
+            version: string;
+            appVersion?: string;
+            digest?: string;
+            /** Format: date-time */
+            createdAt?: string;
+            deprecated: boolean;
+            urls?: string[];
+        };
+        HelmChartDetail: components["schemas"]["HelmChartSummary"] & {
+            home?: string;
+            sources?: string[];
+            maintainers?: {
+                name: string;
+                email?: string;
+                url?: string;
+            }[];
+            readme?: string;
+            values: string;
+            schema?: string;
+            dependencies?: {
+                name: string;
+                version: string;
+                repository?: string;
+                condition?: string;
+                alias?: string;
+            }[];
+            versions: components["schemas"]["HelmChartVersion"][];
+            warnings?: string[];
+        };
+        HelmChartPlanRequest: {
+            repositoryId: string;
+            chartName: string;
+            version: string;
+            digest?: string;
+            /** @enum {string} */
+            mode: "install" | "upgrade";
+            namespace: string;
+            releaseName: string;
+            values?: string;
+        };
+        HelmChartPlanResource: {
+            apiVersion: string;
+            kind: string;
+            namespace?: string;
+            name: string;
+            hook: boolean;
+            crd: boolean;
+            /** @enum {string} */
+            action: "create" | "update";
+            apiGroup?: string;
+            resource: string;
+            exists: boolean;
+        };
+        HelmChartPlan: {
+            /** @enum {string} */
+            action: "install" | "upgrade";
+            repositoryId: string;
+            repositoryName: string;
+            chartName: string;
+            chartVersion: string;
+            appVersion?: string;
+            digest: string;
+            namespace: string;
+            releaseName: string;
+            currentRevision?: number;
+            manifest?: string;
+            values: string;
+            resources: components["schemas"]["HelmChartPlanResource"][];
+            hookCount: number;
+            crdCount: number;
+            warnings?: string[];
+            planDigest: string;
+        };
+        HelmChartOperationRequest: components["schemas"]["HelmChartPlanRequest"] & {
+            planDigest: string;
+            confirmation: string;
+        };
+        HelmChartUninstallRequest: {
+            namespace: string;
+            releaseName: string;
+            confirmation: string;
+        };
+        HelmChartRollbackRequest: {
+            namespace: string;
+            releaseName: string;
+            targetRevision: number;
+            confirmation: string;
+        };
+        HelmChartOperation: {
+            id: string;
+            /** @enum {string} */
+            type: "install" | "upgrade" | "uninstall" | "rollback";
+            /** @enum {string} */
+            status: "pending" | "running" | "success" | "failed";
+            message?: string;
+            repositoryId?: string;
+            chartName?: string;
+            chartVersion?: string;
+            digest?: string;
+            namespace: string;
+            releaseName: string;
+            revision?: number;
+            warnings?: string[];
+            /** Format: date-time */
+            startedAt: string;
+            /** Format: date-time */
+            finishedAt?: string;
         };
         ServicePort: {
             name?: string;
