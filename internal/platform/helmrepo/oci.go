@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"dosh/internal/domain"
+	"dosh/internal/platform/egress"
 
 	"helm.sh/helm/v3/pkg/chart"
 	"helm.sh/helm/v3/pkg/chart/loader"
@@ -61,26 +62,65 @@ func parseOCITarget(raw string) (ociTarget, error) {
 	}, nil
 }
 
+func parseOCIChartReference(raw string) (ociTarget, string, error) {
+	raw = strings.TrimSpace(raw)
+	if !isOCI(raw) {
+		return ociTarget{}, "", fmt.Errorf("%w: OCI Chart reference must use oci://", domain.ErrInvalid)
+	}
+	parsed, err := url.Parse(raw)
+	if err != nil || parsed.Host == "" {
+		return ociTarget{}, "", fmt.Errorf("%w: OCI Chart reference is invalid", domain.ErrInvalid)
+	}
+	if parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return ociTarget{}, "", fmt.Errorf("%w: OCI Chart reference must not contain credentials, a query or a fragment", domain.ErrInvalid)
+	}
+	cleanPath := strings.Trim(parsed.Path, "/")
+	if cleanPath == "" || strings.ContainsAny(cleanPath, " \t\r\n@") {
+		return ociTarget{}, "", fmt.Errorf("%w: OCI Chart reference must point to a Chart path", domain.ErrInvalid)
+	}
+	chartName := path.Base(cleanPath)
+	tag := ""
+	if index := strings.LastIndex(chartName, ":"); index >= 0 {
+		if index == len(chartName)-1 {
+			return ociTarget{}, "", fmt.Errorf("%w: OCI Chart reference has an empty tag", domain.ErrInvalid)
+		}
+		tag = chartName[index+1:]
+		chartName = chartName[:index]
+		cleanPath = strings.TrimSuffix(cleanPath, ":"+tag)
+	}
+	if chartName == "" || chartName == "." || chartName == "/" || strings.Contains(chartName, ":") {
+		return ociTarget{}, "", fmt.Errorf("%w: OCI Chart reference has an invalid Chart name or tag", domain.ErrInvalid)
+	}
+	return ociTarget{
+		Host:       parsed.Host,
+		Repository: parsed.Host + "/" + cleanPath,
+		ChartName:  chartName,
+	}, tag, nil
+}
+
 func (c *Client) ociClient(repository domain.HelmRepository) (*helmregistry.Client, ociTarget, error) {
 	target, err := parseOCITarget(repository.URL)
 	if err != nil {
 		return nil, ociTarget{}, err
 	}
+	client, err := c.ociClientForTarget(repository, target)
+	return client, target, err
+}
+
+func (c *Client) ociClientForTarget(repository domain.HelmRepository, target ociTarget) (*helmregistry.Client, error) {
 	tlsConfig, err := tlsConfigForRepository(repository)
 	if err != nil {
-		return nil, ociTarget{}, err
+		return nil, err
 	}
+	transport := c.egress.Transport(egress.ScopeHelm, tlsConfig)
+	transport.ForceAttemptHTTP2 = true
+	transport.MaxIdleConns = 20
+	transport.IdleConnTimeout = 60 * time.Second
+	transport.TLSHandshakeTimeout = 10 * time.Second
+	transport.ResponseHeaderTimeout = c.timeout
 	httpClient := &http.Client{
-		Timeout: c.timeout,
-		Transport: &http.Transport{
-			Proxy:                 http.ProxyFromEnvironment,
-			TLSClientConfig:       tlsConfig,
-			ForceAttemptHTTP2:     true,
-			MaxIdleConns:          20,
-			IdleConnTimeout:       60 * time.Second,
-			TLSHandshakeTimeout:   10 * time.Second,
-			ResponseHeaderTimeout: c.timeout,
-		},
+		Timeout:   c.timeout,
+		Transport: transport,
 		CheckRedirect: func(request *http.Request, via []*http.Request) error {
 			if len(via) >= 10 {
 				return fmt.Errorf("too many redirects")
@@ -93,7 +133,7 @@ func (c *Client) ociClient(repository domain.HelmRepository) (*helmregistry.Clie
 	}
 	authorizer := orasauth.Client{Client: httpClient, Cache: orasauth.NewCache()}
 	authorizer.SetUserAgent("dosh/0.1")
-	authorizer.Credential = orasauth.StaticCredential(target.Host, ociCredential(repository))
+	authorizer.Credential = orasauth.StaticCredential(target.Host, ociCredentialForHost(repository, target.Host))
 	client, err := helmregistry.NewClient(
 		helmregistry.ClientOptAuthorizer(authorizer),
 		helmregistry.ClientOptHTTPClient(httpClient),
@@ -102,9 +142,9 @@ func (c *Client) ociClient(repository domain.HelmRepository) (*helmregistry.Clie
 		helmregistry.ClientOptCredentialsFile(ociCredentialsFile()),
 	)
 	if err != nil {
-		return nil, ociTarget{}, fmt.Errorf("%w: initialize OCI registry client: %v", domain.ErrUnavailable, sanitizeError(err))
+		return nil, fmt.Errorf("%w: initialize OCI registry client: %v", domain.ErrUnavailable, sanitizeError(err))
 	}
-	return client, target, nil
+	return client, nil
 }
 
 // ociCredentialsFile returns a request-local path for Helm's credential store.
@@ -124,6 +164,17 @@ func ociCredential(repository domain.HelmRepository) orasauth.Credential {
 	default:
 		return orasauth.Credential{}
 	}
+}
+
+// ociCredentialForHost only sends repository credentials back to the host the
+// administrator configured. An index.yaml may point at a public OCI registry
+// on a different host; forwarding credentials there would leak secrets.
+func ociCredentialForHost(repository domain.HelmRepository, host string) orasauth.Credential {
+	parsed, err := url.Parse(strings.TrimSpace(repository.URL))
+	if err != nil || !strings.EqualFold(parsed.Host, host) {
+		return orasauth.Credential{}
+	}
+	return ociCredential(repository)
 }
 
 func (c *Client) ociTags(ctx context.Context, repository domain.HelmRepository) ([]string, ociTarget, *helmregistry.Client, error) {
@@ -165,12 +216,28 @@ func (c *Client) pullOCIChart(repository domain.HelmRepository, client *helmregi
 	return data, digest, loaded, nil
 }
 
+func (c *Client) obtainOCIChartPackage(repository domain.HelmRepository, client *helmregistry.Client, target ociTarget, version, expectedDigest string) ([]byte, string, *chart.Chart, error) {
+	if data, digest, ok := c.loadChartPackage(repository, target.ChartName, version, expectedDigest); ok {
+		loaded, err := loader.LoadArchive(bytes.NewReader(data))
+		if err == nil && loaded.Metadata != nil && loaded.Metadata.Name == target.ChartName && loaded.Metadata.Version == version {
+			return data, digest, loaded, nil
+		}
+		c.removeChartPackage(repository, target.ChartName, version)
+	}
+	data, digest, loaded, err := c.pullOCIChart(repository, client, target, version)
+	if err != nil {
+		return nil, "", nil, err
+	}
+	_ = c.storeChartPackage(repository, target.ChartName, version, data)
+	return data, digest, loaded, nil
+}
+
 func (c *Client) listOCICharts(ctx context.Context, repository domain.HelmRepository) ([]domain.HelmChartSummary, error) {
 	tags, target, client, err := c.ociTags(ctx, repository)
 	if err != nil {
 		return nil, err
 	}
-	_, digest, ch, err := c.pullOCIChart(repository, client, target, tags[0])
+	_, digest, ch, err := c.obtainOCIChartPackage(repository, client, target, tags[0], "")
 	if err != nil {
 		return nil, err
 	}
@@ -198,7 +265,7 @@ func (c *Client) ociChartDetail(ctx context.Context, repository domain.HelmRepos
 			Version: tag, URLs: []string{"oci://" + target.Repository + ":" + tag},
 		})
 	}
-	_, digest, ch, pullErr := c.pullOCIChart(repository, client, target, tags[0])
+	_, digest, ch, pullErr := c.obtainOCIChartPackage(repository, client, target, tags[0], "")
 	if pullErr != nil {
 		detail.Warnings = append(detail.Warnings, "最新 OCI Chart 暂时无法读取，README、默认 values 与 schema 不可用："+pullErr.Error())
 		return detail, nil
@@ -263,7 +330,32 @@ func (c *Client) downloadOCI(ctx context.Context, repository domain.HelmReposito
 	if !found {
 		return nil, "", fmt.Errorf("%w: OCI Chart %s version %s", domain.ErrNotFound, chartName, version)
 	}
-	data, digest, _, err := c.pullOCIChart(repository, client, target, version)
+	data, digest, _, err := c.obtainOCIChartPackage(repository, client, target, version, expectedDigest)
+	if err != nil {
+		return nil, "", err
+	}
+	if expectedDigest != "" && !digestsEqual(expectedDigest, digest) {
+		return nil, "", fmt.Errorf("%w: selected OCI Chart digest no longer matches the registry", domain.ErrConflict)
+	}
+	return data, digest, nil
+}
+
+func (c *Client) downloadOCIReference(repository domain.HelmRepository, chartName, version, expectedDigest, rawReference string) ([]byte, string, error) {
+	target, tag, err := parseOCIChartReference(rawReference)
+	if err != nil {
+		return nil, "", err
+	}
+	if target.ChartName != chartName {
+		return nil, "", fmt.Errorf("%w: OCI Chart reference %s does not match Chart %s", domain.ErrConflict, target.ChartName, chartName)
+	}
+	if tag != "" && tag != version {
+		return nil, "", fmt.Errorf("%w: OCI Chart reference tag %s does not match version %s", domain.ErrInvalid, tag, version)
+	}
+	client, err := c.ociClientForTarget(repository, target)
+	if err != nil {
+		return nil, "", err
+	}
+	data, digest, _, err := c.obtainOCIChartPackage(repository, client, target, version, expectedDigest)
 	if err != nil {
 		return nil, "", err
 	}

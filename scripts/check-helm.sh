@@ -27,6 +27,10 @@ helm template dosh "$CHART" -n dosh \
   --set image.digest=sha256:1111111111111111111111111111111111111111111111111111111111111111 \
   >"$OUT/dosh-digest.yaml"
 helm template dosh "$CHART" -n dosh \
+  --set-json 'egress=null' \
+  --set-json 'updateCheck=null' \
+  >"$OUT/dosh-legacy-values.yaml"
+helm template dosh "$CHART" -n dosh \
   --api-versions cilium.io/v2 \
   --set auth.mode=local \
   >"$OUT/dosh-local-cilium.yaml"
@@ -72,6 +76,9 @@ helm template dosh "$CHART" -n dosh \
   --set networkPolicy.containerRegistries.ipBlocks[0]=203.0.113.40/32 \
   --set networkPolicy.containerRegistries.ports[0]=5000 \
   >"$OUT/dosh-registries-cilium.yaml"
+helm template dosh "$CHART" -n dosh \
+  --set networkPolicy.runtimeManagement.enabled=true \
+  >"$OUT/dosh-egress-runtime.yaml"
 
 require() {
   local file="$1"
@@ -143,6 +150,8 @@ require "$OUT/dosh-local.yaml" 'value: "2097152"' 'integer max request body'
 reject "$OUT/dosh-local.yaml" 'name: DOSH_OIDC_ISSUER' 'local OIDC env'
 reject "$OUT/dosh-local-restricted.yaml" 'resources: \["\*"\]' 'restricted local generic resource read-all RBAC'
 require "$OUT/dosh-digest.yaml" 'image: "ghcr.io/kube-dosh/dosh@sha256:1111111111111111111111111111111111111111111111111111111111111111"' 'digest-pinned image'
+require "$OUT/dosh-legacy-values.yaml" 'value: "environment"' 'legacy values egress default'
+require "$OUT/dosh-legacy-values.yaml" 'name: DOSH_UPDATE_CHECK_ENABLED' 'legacy values update check default'
 
 require "$OUT/dosh-token.yaml" 'value: "token"' 'token auth mode value'
 require "$OUT/dosh-token.yaml" 'name: DOSH_TLS_RELOAD_INTERVAL' 'TLS hot reload interval env'
@@ -219,6 +228,12 @@ require "$OUT/dosh-registries-cilium.yaml" '203.0.113.40/32' 'container registry
 require "$OUT/dosh-registries-cilium.yaml" 'port: "5000"' 'container registry Cilium egress port'
 reject "$OUT/dosh-registries-cilium.yaml" '0.0.0.0/0' 'container registry Cilium broad egress'
 
+require "$OUT/dosh-egress-runtime.yaml" 'name: DOSH_NETWORK_POLICY_RUNTIME_MANAGEMENT_ENABLED' 'runtime egress policy env'
+require "$OUT/dosh-egress-runtime.yaml" 'value: "true"' 'runtime egress policy enabled value'
+require "$OUT/dosh-egress-runtime.yaml" 'value: "dosh-egress-runtime"' 'runtime egress policy name'
+require "$OUT/dosh-egress-runtime.yaml" 'resources: \["networkpolicies"\]' 'runtime egress policy RBAC'
+require "$OUT/dosh-egress-runtime.yaml" 'name: dosh-egress-policy' 'runtime egress policy Role'
+
 expect_failure() {
   local description="$1"
   shift
@@ -259,5 +274,8 @@ expect_failure 'audit webhook without egress CIDR under Cilium' \
   --set audit.webhook.url=https://siem.example.test/audit \
   --set audit.webhook.tokenKey=token \
   --set audit.webhook.hmacKeyKey=
+expect_failure 'runtime NetworkPolicy management without NetworkPolicy' \
+  --set networkPolicy.enabled=false \
+  --set networkPolicy.runtimeManagement.enabled=true
 
 echo "helm render checks: pass"

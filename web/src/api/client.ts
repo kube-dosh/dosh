@@ -21,6 +21,9 @@ import type {
   Diagnosis,
   DisruptionBudgetInput,
   DisruptionBudgetSummary,
+  EgressPreflight,
+  EgressSettings,
+  EgressSettingsUpdate,
   EventItem,
   GenericResourceDetail,
   GenericResourceMutationInput,
@@ -94,6 +97,8 @@ import type {
   StorageClass,
   StorageClassDetail,
   StorageClassWriteInput,
+  SystemInfo,
+  UpdateStatus,
   VolumeSnapshot,
   VolumeSnapshotCreateInput,
   VolumeSnapshotFeature,
@@ -428,6 +433,14 @@ export const api = {
   accessReview: (input: { verb: string; resource: string; apiGroup?: string; subresource?: string; namespace?: string; name?: string }) =>
     request<AccessReview>(`/api/v1/capabilities/review?${new URLSearchParams(Object.entries(input).filter((entry): entry is [string, string] => typeof entry[1] === "string" && Boolean(entry[1])).map(([key, value]) => [key, value])).toString()}`),
   overview: async () => normalizeOverview(await request<Overview>("/api/v1/overview")),
+  systemInfo: () => request<SystemInfo>("/api/v1/system/info"),
+  systemUpdate: () => request<UpdateStatus>("/api/v1/system/update"),
+  checkSystemUpdate: () => request<UpdateStatus>("/api/v1/system/update/check", { method: "POST" }),
+  systemEgress: () => request<EgressSettings>("/api/v1/system/egress"),
+  preflightSystemEgress: (input: EgressSettingsUpdate) =>
+    request<EgressPreflight>("/api/v1/system/egress/preflight", { method: "POST", body: JSON.stringify(input) }),
+  updateSystemEgress: (input: EgressSettingsUpdate) =>
+    request<EgressSettings>("/api/v1/system/egress", { method: "PUT", body: JSON.stringify(input) }),
   clusterConfiguration: async () => {
     const configuration = await request<ClusterConfiguration>("/api/v1/cluster/config");
     return {
@@ -583,6 +596,8 @@ export const api = {
   },
   helmChart: (repositoryId: string, chartName: string) =>
     request<HelmChartDetail>(`/api/v1/helm/charts/${encodeURIComponent(repositoryId)}/${encodeURIComponent(chartName)}`),
+  syncHelmChart: (repositoryId: string, chartName: string) =>
+    request<HelmChartDetail>(`/api/v1/helm/charts/${encodeURIComponent(repositoryId)}/${encodeURIComponent(chartName)}/sync`, { method: "POST" }),
   planHelmChart: (input: HelmChartPlanInput) =>
     request<HelmChartPlan>("/api/v1/helm/charts/plan", { method: "POST", body: JSON.stringify(input) }),
   installHelmChart: (input: HelmChartOperationInput) =>

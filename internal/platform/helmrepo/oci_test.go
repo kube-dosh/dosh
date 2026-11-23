@@ -41,6 +41,115 @@ func TestParseOCITarget(t *testing.T) {
 	}
 }
 
+func TestParseOCIChartReference(t *testing.T) {
+	t.Parallel()
+	target, tag, err := parseOCIChartReference("oci://registry.example.com/team/charts/demo:1.2.3")
+	if err != nil {
+		t.Fatalf("parseOCIChartReference() error = %v", err)
+	}
+	if target.Host != "registry.example.com" || target.Repository != "registry.example.com/team/charts/demo" || target.ChartName != "demo" || tag != "1.2.3" {
+		t.Fatalf("parseOCIChartReference() = (%#v, %q)", target, tag)
+	}
+	for _, raw := range []string{
+		"https://registry.example.com/team/charts/demo:1.2.3",
+		"oci://registry.example.com/team/charts/demo:",
+		"oci://registry.example.com/team/charts/demo@sha256:deadbeef",
+	} {
+		if _, _, err := parseOCIChartReference(raw); err == nil {
+			t.Fatalf("parseOCIChartReference(%q) accepted an invalid reference", raw)
+		}
+	}
+}
+
+func TestOCICredentialForHostDoesNotLeakAcrossHosts(t *testing.T) {
+	t.Parallel()
+	repository := domain.HelmRepository{
+		URL: "https://charts.example.com/bitnami", AuthType: domain.HelmRepositoryAuthBasic,
+		Credentials: domain.HelmRepositoryCredentials{Username: "dosh", Password: "secret"},
+	}
+	sameHost := ociCredentialForHost(repository, "charts.example.com")
+	if sameHost.Username != "dosh" || sameHost.Password != "secret" {
+		t.Fatalf("same-host credential = %#v", sameHost)
+	}
+	otherHost := ociCredentialForHost(repository, "registry.example.com")
+	if otherHost.Username != "" || otherHost.Password != "" || otherHost.AccessToken != "" {
+		t.Fatalf("cross-host credential = %#v, want anonymous", otherHost)
+	}
+}
+
+func TestClientHTTPIndexWithOCIChartReference(t *testing.T) {
+	t.Parallel()
+	archive := testOCIChartArchive(t)
+	meta := testOCIChartMetadata()
+	configData, err := json.Marshal(meta)
+	if err != nil {
+		t.Fatalf("marshal chart metadata: %v", err)
+	}
+	configDigest, configSize := digestBytes(configData)
+	chartDigest, chartSize := digestBytes(archive)
+	manifest := fmt.Sprintf(`{
+  "schemaVersion": 2,
+  "mediaType": "application/vnd.oci.image.manifest.v1+json",
+  "config": {"mediaType": "application/vnd.cncf.helm.config.v1+json", "digest": %q, "size": %d},
+  "layers": [{"mediaType": "application/vnd.cncf.helm.chart.content.v1.tar+gzip", "digest": %q, "size": %d}]
+}`, configDigest, configSize, chartDigest, chartSize)
+	manifestDigest, _ := digestBytes([]byte(manifest))
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/index.yaml":
+			ociURL := "oci://" + strings.TrimPrefix(serverURL(r), "https://") + "/charts/demo:1.2.3"
+			_, _ = fmt.Fprintf(w, `apiVersion: v1
+entries:
+  demo:
+    - apiVersion: v2
+      name: demo
+      version: 1.2.3
+      digest: %s
+      urls:
+        - %s
+`, chartDigest, ociURL)
+		case r.URL.Path == "/v2/" || r.URL.Path == "/v2":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte("{}"))
+		case r.URL.Path == "/v2/charts/demo/manifests/1.2.3":
+			w.Header().Set("Content-Type", "application/vnd.oci.image.manifest.v1+json")
+			w.Header().Set("Docker-Content-Digest", manifestDigest)
+			w.Header().Set("Content-Length", fmt.Sprint(len(manifest)))
+			if r.Method != http.MethodHead {
+				_, _ = w.Write([]byte(manifest))
+			}
+		case r.URL.Path == "/v2/charts/demo/blobs/"+configDigest:
+			w.Header().Set("Content-Type", "application/octet-stream")
+			w.Header().Set("Docker-Content-Digest", configDigest)
+			_, _ = w.Write(configData)
+		case r.URL.Path == "/v2/charts/demo/blobs/"+chartDigest:
+			w.Header().Set("Content-Type", "application/octet-stream")
+			w.Header().Set("Docker-Content-Digest", chartDigest)
+			_, _ = w.Write(archive)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	repository := domain.HelmRepository{
+		ID: "repo-http", Name: "HTTP index with OCI entries", URL: server.URL,
+		Enabled: true, AuthType: domain.HelmRepositoryAuthAnonymous, InsecureSkipTLS: true,
+	}
+	client := New(5 * time.Second)
+	data, digest, err := client.Download(context.Background(), repository, "demo", "1.2.3", chartDigest)
+	if err != nil {
+		t.Fatalf("Download() error = %v", err)
+	}
+	if digest != chartDigest || string(data) != string(archive) {
+		t.Fatalf("Download() = (%d bytes, %q)", len(data), digest)
+	}
+}
+
+func serverURL(r *http.Request) string {
+	return "https://" + r.Host
+}
+
 func TestClientOCIChartsDetailAndDownload(t *testing.T) {
 	t.Parallel()
 	archive := testOCIChartArchive(t)

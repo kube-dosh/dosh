@@ -10,7 +10,7 @@
 | 副本数 | 2 |
 | NodePort | `32626` |
 | 容器端口 | `32626` |
-| 当前生产版本 | App `0.1.2` / Chart `dosh-0.1.4`（revision 12，2/2 Ready） |
+| 当前生产版本 | App `0.1.12` / Chart `dosh-0.1.11`（revision 62，2/2 Ready） |
 | 当前源码版本 | App `0.1.7` / Chart `dosh-0.1.9`（GitHub 发布流水线，生产未升级） |
 | 当前源码状态 | 资源管理操作闭环，并支持多文档 YAML 创建、快捷入口、Secret YAML 原始数据展示与分权编辑、create/update/patch 分权、集群网络配置和移动端表格优化；写操作保留 Dry Run、RBAC、CSRF 与审计 |
 | 当前 Preview 候选 | `192.168.122.10:5000/dosh/dosh:0.1.5-rc-secret-yaml-20261107T111925Z@sha256:86736b4d4cacb1e8654184d5eaec99e77baf939dcdb36b25afb0f178e70370a9`；源码提交 `9ebf259` |
@@ -24,6 +24,7 @@
 | 历史隔离 Release | `dosh-ui-e2e/dosh-ui-e2e` revision 15、2/2 Ready、NodePort `32629`；绑定 v2.43 digest，不继承给 v2.44 |
 | 历史完整候选 | `192.168.122.10:5000/dosh/dosh:0.1.3-rc-sec-20261104035000@sha256:69f30f0016516ac9b56ff867f23c8c0039810dcff29179420c12da323cc00523`（证据不继承给 `0.1.4`） |
 | 镜像 | `192.168.122.10:5000/dosh/dosh:<tag>`；生产发布必须使用 registry digest |
+| 可选挂载卷 | NFSv4 Ganesha `dosh-storage/dosh-nfs`；PV/PVC `dosh-data`（RWX，20 GiB）；挂载 `/var/lib/dosh`，Dosh 不依赖其保存控制面状态 |
 | 认证 Secret | `dosh-auth` |
 | TLS Secret | `dosh-tls`；仅在 `tls.enabled=true` 时需要 |
 | 认证方式 | 默认 Kubernetes Token；`local` 和 `oidc` 为可选模式 |
@@ -42,6 +43,19 @@ curl -k "$DOSH_BASE_URL/readyz"
 ```
 
 预期：2 个 Pod Ready，分布在两个 Worker；`/readyz` 中 `kubernetes` 为 `ok`。若 Kubernetes API 不可达，`/readyz` 返回 503，`/healthz` 仍返回 200。
+
+挂载卷检查：
+
+```bash
+kubectl -n dosh get pvc dosh-data
+kubectl -n dosh-storage get pod,sts
+kubectl -n dosh get pod -l app.kubernetes.io/name=dosh \
+  -o jsonpath='{range .items[*]}{.metadata.name}{" "}{.spec.volumes[?(@.name=="dosh-data")].persistentVolumeClaim.claimName}{"\n"}{end}'
+```
+
+预期：PVC 为 `Bound`，NFS Pod 为 `1/1 Running`，每个 Dosh Pod 都引用 `dosh-data`。
+该卷只提供本地文件挂载，不承载 Dosh 的 ConfigMap/Secret 控制面数据。部署与恢复说明见
+[`nfs-persistence.md`](nfs-persistence.md)。
 
 Token 登录对账（HTTP 模式去掉 `-k`）：
 
@@ -415,6 +429,102 @@ Init Container 只在其运行过或存在上一实例时可读取日志；没�
 Deployment/StatefulSet 回滚前的 Diff 来自 revision 中保留的 Pod 模板快照。Diff 只预览将被
 恢复的 Pod 模板和 change-cause；副本数、状态和 Pod 模板以外的并发字段不会被回滚覆盖。确认回滚
 仍需资源级 update/patch 授权、CSRF 和审计；无模板快照的旧 revision 应提示预览能力受限。
+
+### 2.1.14 统一出站网络、系统信息与更新检查
+
+Dosh 将业务侧外部请求统一收敛到 `internal/platform/egress`。当前覆盖 Helm `index.yaml` 与
+Chart 下载、OCI Chart、镜像仓目录/Tag 探测、OIDC discovery/JWKS/Token 交换、审计 Webhook
+和 Dosh 更新检查。Kubernetes API、Pod Exec、日志流和 Port-forward 属于集群控制通道，不经过业务
+出站代理，也不提供任意 Kubernetes API 透传代理。
+
+三种模式：
+
+| 模式 | 行为 |
+|---|---|
+| `environment` | 使用 `HTTP_PROXY`、`HTTPS_PROXY`、`NO_PROXY`；适合由集群或 Pod 注入 |
+| `explicit` | 使用 `DOSH_EGRESS_HTTP_PROXY`、`DOSH_EGRESS_HTTPS_PROXY`、`DOSH_EGRESS_NO_PROXY` |
+| `direct` | 强制直连，忽略环境代理 |
+
+`explicit` 代理 URL 不允许内嵌用户名、密码、查询参数或 fragment。凭据必须通过 Secret 注入：
+
+```bash
+kubectl -n dosh create secret generic dosh-egress-proxy \
+  --from-literal=username='dosh' \
+  --from-literal=password='<password>'
+```
+
+Helm 示例：
+
+```yaml
+egress:
+  proxy:
+    mode: explicit
+    httpsProxy: https://proxy.operations.example.test:8443
+    noProxy: .svc,.cluster.local,kubernetes.default.svc
+    existingSecret: dosh-egress-proxy
+    usernameKey: username
+    passwordKey: password
+    ca:
+      existingConfigMap: dosh-egress-ca
+      key: ca.crt
+
+networkPolicy:
+  outboundProxy:
+    ipBlocks:
+      - 10.20.0.0/24
+    ports:
+      - 8443
+```
+
+若代理使用企业 CA 或 TLS 检查，应把 CA 放入 ConfigMap 并配置 `ca.existingConfigMap`；该 CA 会与
+调用方已有的 RootCA（例如 OIDC、镜像仓或审计 Webhook 的自定义 CA）合并。系统信息页只展示脱敏后的
+代理 URL、`NO_PROXY` 和“已配置凭据/CA”标记，不会返回密码或 Secret 内容。
+
+开启 `networkPolicy.enabled=true` 时，必须显式设置 `networkPolicy.outboundProxy.ipBlocks`；
+`egress.proxy.mode=explicit` 且未设置 CIDR 时 Helm 渲染会直接失败，禁止用 `0.0.0.0/0` 兜底。
+`environment` 模式下如果代理由集群注入，也应把代理 CIDR 写入该字段，否则 NetworkPolicy 仍会阻断出口。
+
+如果希望从系统页更换运行时代理后不再手工修改 Helm，可启用专用策略运行时管理：
+
+```yaml
+networkPolicy:
+  enabled: true
+  runtimeManagement:
+    enabled: true
+    # 留空时使用 <fullname>-egress-runtime
+    policyName: ""
+```
+
+启用后 Chart 会创建同命名空间的 Role/RoleBinding，只授予 Dosh ServiceAccount 读取
+NetworkPolicy 以及维护自身专用策略的权限；不会写入 ClusterRole，也不会修改 Helm 主策略。
+保存显式代理前，Dosh 会解析 HTTP/HTTPS 代理域名到具体 IP，并在专用 NetworkPolicy 中按
+IPv4 `/32` 或 IPv6 `/128` 精确放行对应端口；拒绝 `0.0.0.0/0`、`::/0` 和任何宽泛 CIDR。
+切回 `direct` 或 `bootstrap` 后会删除该专用策略。域名 DNS 结果变化时需重新保存配置刷新放行地址。
+
+未启用运行时管理时，预检会读取当前命名空间的 NetworkPolicy。若 Helm 策略尚未允许代理目标，
+接口会返回需要写入 `networkPolicy.outboundProxy.ipBlocks` 和 `ports` 的精确 CIDR/端口，并阻止
+保存，避免出现“配置已保存但 Helm 仍在拦截”的假成功。
+
+系统信息与更新检查接口：
+
+```http
+GET  /api/v1/system/info
+GET  /api/v1/system/update
+POST /api/v1/system/update/check
+POST /api/v1/system/egress/preflight
+```
+
+`/system` 页面展示应用版本、Commit、构建时间、Chart 版本、Go 版本、集群名称、认证模式、只读状态和
+出站代理状态，并支持复制不含凭据的诊断信息。更新检查默认关闭；开启后只通过统一出站客户端读取
+HTTPS 更新源并缓存结果，成功结果按 `updateCheck.cacheTTL` 缓存，失败结果缓存 1 分钟。手动刷新要求
+管理员身份和 CSRF，不会下载镜像、修改 Deployment 或执行升级。
+
+安全边界：
+
+- 不要在接受请求时记录代理 URL 的 userinfo、更新 Token 或 Secret 值。
+- 更新检查 Token 只通过 `updateCheck.existingSecret` 注入；日志与 API 响应不得包含 Token。
+- NetworkPolicy 只应放行受控代理 CIDR，不应为了“能联网”开放任意出口。
+- 代理 CA 只解决 TLS 信任，不替代身份认证、RBAC 或更新源签名校验。
 
 ## 3. 发布
 

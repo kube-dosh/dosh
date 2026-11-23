@@ -7,6 +7,7 @@ import (
 	"dosh/internal/domain"
 
 	authv1 "k8s.io/api/authentication/v1"
+	authorizationv1 "k8s.io/api/authorization/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -33,11 +34,39 @@ func (c *Client) AuthenticateToken(ctx context.Context, token string) (domain.Ac
 	if !response.Status.Authenticated || strings.TrimSpace(response.Status.User.Username) == "" {
 		return domain.Actor{}, domain.ErrUnauthorized
 	}
-	return domain.Actor{
+	actor := domain.Actor{
 		Username: response.Status.User.Username,
 		Groups:   nonEmptyStrings(response.Status.User.Groups),
 		Admin:    containsString(response.Status.User.Groups, "system:masters"),
-	}, nil
+	}
+	if !actor.Admin {
+		actor.Admin = c.canManageControlPlane(ctx, actor.Username, actor.Groups)
+	}
+	return actor, nil
+}
+
+// canManageControlPlane treats Kubernetes RBAC permission to update Dosh's
+// control-plane settings Secret as the token-mode administrator boundary. This
+// keeps least-privilege ServiceAccounts and cluster-admin bindings working even
+// though ServiceAccount groups never include system:masters.
+func (c *Client) canManageControlPlane(ctx context.Context, username string, groups []string) bool {
+	if c.preferencesNamespace == "" {
+		return false
+	}
+	review := &authorizationv1.SubjectAccessReview{
+		Spec: authorizationv1.SubjectAccessReviewSpec{
+			User:   username,
+			Groups: groups,
+			ResourceAttributes: &authorizationv1.ResourceAttributes{
+				Namespace: c.preferencesNamespace,
+				Verb:      "update",
+				Resource:  "secrets",
+				Name:      "dosh-egress-settings",
+			},
+		},
+	}
+	response, err := c.clientset.AuthorizationV1().SubjectAccessReviews().Create(ctx, review, metav1.CreateOptions{})
+	return err == nil && response.Status.Allowed
 }
 
 func containsString(values []string, expected string) bool {

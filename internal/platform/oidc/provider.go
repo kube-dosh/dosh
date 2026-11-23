@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"dosh/internal/modules/auth/app"
+	"dosh/internal/platform/egress"
 
 	"github.com/coreos/go-oidc/v3/oidc"
 	"golang.org/x/oauth2"
@@ -29,6 +30,7 @@ type Config struct {
 	GroupsClaim   string
 	CAFile        string
 	Timeout       time.Duration
+	ClientFactory *egress.Factory
 }
 
 type Provider struct {
@@ -244,8 +246,11 @@ func httpClient(cfg Config) (*http.Client, error) {
 		}
 		tlsConfig.RootCAs = roots
 	}
-	transport := http.DefaultTransport.(*http.Transport).Clone()
-	transport.TLSClientConfig = tlsConfig
+	factory := cfg.ClientFactory
+	if factory == nil {
+		factory = egress.NewDirect()
+	}
+	transport := factory.Transport(egress.ScopeOIDC, tlsConfig)
 	return &http.Client{Timeout: cfg.Timeout, Transport: transport}, nil
 }
 

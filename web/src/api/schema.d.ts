@@ -3599,6 +3599,53 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/helm/charts/{repositoryId}/{chartName}/sync": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Refresh the cached Chart package and its extracted metadata
+         * @description Deletes the cached package for the latest Chart version and downloads it again. The repository index is not re-synchronized; use the repository sync endpoint when the Chart catalog itself needs refreshing.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    repositoryId: string;
+                    chartName: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Refreshed Chart detail */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["HelmChartDetail"];
+                    };
+                };
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+                404: components["responses"]["NotFound"];
+                409: components["responses"]["Conflict"];
+                503: components["responses"]["DependencyUnavailable"];
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/helm/charts/plan": {
         parameters: {
             query?: never;
@@ -6408,6 +6455,240 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/system/info": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read Dosh build metadata and safe runtime configuration
+         * @description Returns no credentials, Secret values, or raw proxy authorization material.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Dosh system information */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["SystemInfo"];
+                    };
+                };
+                401: components["responses"]["Unauthorized"];
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/system/update": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read the cached Dosh release update status */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Update check result, including disabled and error states */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["UpdateStatus"];
+                    };
+                };
+                401: components["responses"]["Unauthorized"];
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/system/update/check": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Force a Dosh release update check through the configured egress policy */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Refreshed update check result */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["UpdateStatus"];
+                    };
+                };
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/system/egress": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read the effective unified egress policy
+         * @description Returns proxy addresses and secret-presence flags without passwords or CA PEM.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Effective egress settings and runtime override metadata */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["EgressSettings"];
+                    };
+                };
+                401: components["responses"]["Unauthorized"];
+            };
+        };
+        /**
+         * Apply and persist a runtime egress policy override
+         * @description Administrator-only. The change is persisted in a Kubernetes Secret and propagated to other replicas.
+         */
+        put: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["EgressSettingsUpdate"];
+                };
+            };
+            responses: {
+                /** @description Saved egress settings */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["EgressSettings"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+                409: components["responses"]["Conflict"];
+                503: components["responses"]["DependencyUnavailable"];
+            };
+        };
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/system/egress/preflight": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Validate proxy targets and the current NetworkPolicy before saving
+         * @description Administrator-only. Resolves HTTP/HTTPS proxy hosts to exact IPs, checks current Helm-managed policy coverage, probes TCP reachability, and reports the CIDRs and ports that must be allowed.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["EgressSettingsUpdate"];
+                };
+            };
+            responses: {
+                /** @description Proxy target and NetworkPolicy preflight result */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["EgressPreflight"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+                503: components["responses"]["DependencyUnavailable"];
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -7568,11 +7849,28 @@ export interface components {
             namespace: string;
             releaseName: string;
             revision?: number;
+            /** @description Live status for each resource represented by the reviewed Helm plan. */
+            resources?: components["schemas"]["HelmOperationResource"][];
             warnings?: string[];
             /** Format: date-time */
             startedAt: string;
             /** Format: date-time */
             finishedAt?: string;
+        };
+        HelmOperationResource: {
+            apiVersion: string;
+            kind: string;
+            namespace?: string;
+            name: string;
+            hook: boolean;
+            crd: boolean;
+            /** @enum {string} */
+            action: "create" | "update";
+            apiGroup?: string;
+            resource: string;
+            /** @enum {string} */
+            status: "pending" | "waiting" | "ready" | "failed" | "created" | "unknown";
+            message?: string;
         };
         ServicePort: {
             name?: string;
@@ -8346,6 +8644,109 @@ export interface components {
             status?: string;
             relationship: string;
             path?: string;
+        };
+        EgressStatus: {
+            /** @enum {string} */
+            mode: "environment" | "explicit" | "direct";
+            enabled: boolean;
+            httpProxy?: string;
+            httpsProxy?: string;
+            noProxy?: string;
+            credentialsConfigured: boolean;
+            caConfigured: boolean;
+            /** @enum {string} */
+            source: "bootstrap" | "runtime";
+        };
+        EgressSettings: {
+            /** @enum {string} */
+            mode: "bootstrap" | "explicit" | "direct";
+            /** @enum {string} */
+            effectiveMode: "environment" | "explicit" | "direct";
+            enabled: boolean;
+            httpProxy?: string;
+            httpsProxy?: string;
+            noProxy?: string;
+            username?: string;
+            credentialsConfigured: boolean;
+            caConfigured: boolean;
+            /** @enum {string} */
+            source: "bootstrap" | "runtime";
+            revision?: string;
+            updatedAt?: string;
+            networkPolicy: components["schemas"]["EgressNetworkPolicyStatus"];
+        };
+        EgressNetworkPolicyStatus: {
+            enabled: boolean;
+            /** @enum {string} */
+            mode: "disabled" | "helm" | "runtime";
+            autoManage: boolean;
+            canAutoManage: boolean;
+            policyName?: string;
+            helmPolicyName?: string;
+            message?: string;
+        };
+        EgressProxyTarget: {
+            /** @enum {string} */
+            kind: "http" | "https";
+            url: string;
+            host: string;
+            port: number;
+            hostname: boolean;
+            addresses: string[];
+            cidrs: string[];
+            reachable: boolean;
+            latencyMs?: number;
+            error?: string;
+            allowed: boolean;
+            policySource?: string;
+        };
+        EgressPreflight: {
+            /** @enum {string} */
+            status: "ok" | "warning" | "error";
+            message: string;
+            networkPolicy: components["schemas"]["EgressNetworkPolicyStatus"];
+            targets: components["schemas"]["EgressProxyTarget"][];
+            requiredIpBlocks: string[];
+            requiredPorts: number[];
+        };
+        EgressSettingsUpdate: {
+            /** @enum {string} */
+            mode: "bootstrap" | "explicit" | "direct";
+            httpProxy: string;
+            httpsProxy: string;
+            noProxy: string;
+            username: string;
+            password?: string;
+            clearCredentials: boolean;
+            caPEM?: string;
+            clearCA: boolean;
+            revision?: string;
+        };
+        SystemInfo: {
+            version: string;
+            commit: string;
+            buildDate: string;
+            chartVersion: string;
+            goVersion: string;
+            clusterName: string;
+            /** @enum {string} */
+            authMode: "local" | "oidc" | "token";
+            readOnly: boolean;
+            requestTimeout: string;
+            egress: components["schemas"]["EgressStatus"];
+        };
+        UpdateStatus: {
+            enabled: boolean;
+            /** @enum {string} */
+            status: "disabled" | "current" | "update_available" | "unknown" | "error";
+            currentVersion: string;
+            latestVersion?: string;
+            latestUrl?: string;
+            publishedAt?: string;
+            checkedAt?: string;
+            notes?: string;
+            message?: string;
+            source?: string;
         };
     };
     responses: {

@@ -304,6 +304,7 @@ func (c *Client) renderHelmChart(ctx context.Context, ch *chart.Chart, namespace
 	if err != nil {
 		return nil, "", nil, nil, nil, fmt.Errorf("%w: render Helm chart: %v", domain.ErrInvalid, err)
 	}
+	removeHelmNotes(files)
 	for _, crd := range ch.CRDObjects() {
 		files[crd.Filename] = string(crd.File.Data)
 	}
@@ -313,6 +314,17 @@ func (c *Client) renderHelmChart(ctx context.Context, ch *chart.Chart, namespace
 	}
 	manifest := helmPlanManifest(generic, hooks)
 	return merged, manifest, hooks, generic, warnings, nil
+}
+
+// Helm renders NOTES.txt as plain installation notes, not Kubernetes YAML.
+// Sorting all rendered files without excluding it makes ordinary Charts fail
+// planning when their notes contain prose or template comments.
+func removeHelmNotes(files map[string]string) {
+	for name := range files {
+		if name == "NOTES.txt" || strings.HasSuffix(name, "/NOTES.txt") {
+			delete(files, name)
+		}
+	}
 }
 
 func helmPlanManifest(generic []releaseutil.Manifest, hooks []*release.Hook) string {

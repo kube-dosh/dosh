@@ -407,5 +407,6 @@ Dosh 当前已经具备一套不错的安全边界和单集群日常运维闭环
 - Helm 已支持 HTTP/HTTPS `index.yaml` 与 OCI Chart 仓库、Chart 目录/详情、values.schema.json 预检、固定摘要安装、Chart 目录更换版本升级、Release 增量 Values 升级、卸载、revision 历史、Diff 和受控回滚；Release Secret 中的敏感键、Secret payload 与敏感环境变量在服务端遮蔽。
 - 新增权限检查页面，以当前身份执行 SubjectAccessReview，展示允许/拒绝原因、只读模式提示和可复现的 `kubectl auth can-i` 命令。
 - 资源浏览器新增收藏、仅看收藏、保存视图、隐藏列、最近资源、本地模板、草稿恢复、全屏编辑和 Schema 字段搜索；偏好仅保存在浏览器本地。
+- 新增 Dosh 系统信息页和统一出站网络基础设施：Helm、OCI、镜像仓、OIDC、审计 Webhook 与更新检查共用代理、凭据和 CA 配置；系统信息页展示构建元数据、脱敏代理状态和更新检查结果，更新检查默认关闭且只提示、不自动升级。
 
 仍属于后续阶段：跨 Pod 长期日志后端、服务端全资源搜索索引、CRD 模板库和字段级文档、超大关系图、OCI 签名/证明验证与 Release 并发操作锁。

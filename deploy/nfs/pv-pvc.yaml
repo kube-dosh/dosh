@@ -1,0 +1,40 @@
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: dosh-data
+  labels:
+    app.kubernetes.io/managed-by: dosh
+    dosh.io/component: data
+spec:
+  capacity:
+    storage: 20Gi
+  accessModes:
+    - ReadWriteMany
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: dosh-nfs
+  mountOptions:
+    - nfsvers=4.1
+    - hard
+    - timeo=600
+    - retrans=2
+    - addr=192.168.122.200
+  nfs:
+    server: 192.168.122.200
+    path: /
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: dosh-data
+  namespace: dosh
+  labels:
+    app.kubernetes.io/managed-by: dosh
+    dosh.io/component: data
+spec:
+  accessModes:
+    - ReadWriteMany
+  storageClassName: dosh-nfs
+  resources:
+    requests:
+      storage: 20Gi
+  volumeName: dosh-data

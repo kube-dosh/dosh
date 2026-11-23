@@ -7,6 +7,9 @@ import type {
   ContainerRegistryUpsertInput,
   Diagnosis,
   DisruptionBudgetSummary,
+  EgressPreflight,
+  EgressSettings,
+  EgressSettingsUpdate,
   HelmChartDetail,
   HelmChartOperation,
   HelmChartPlan,
@@ -39,6 +42,8 @@ import type {
   ServiceDetail,
   SessionResponse,
   StorageClassDetail,
+  SystemInfo,
+  UpdateStatus,
   VolumeSnapshot,
   WorkloadDetail,
   WorkloadRevision,
@@ -765,6 +770,93 @@ const serverCertificate: ServerCertificate = {
   lastReloadedAt: "2026-11-06T06:30:00Z",
 };
 
+const systemInfo: SystemInfo = {
+  version: "0.1.9",
+  commit: "a2a568e9c4f52f8f0b97e7d06dfef4f2f7d4c2ab",
+  buildDate: "2026-11-22T08:30:00Z",
+  chartVersion: "0.1.9",
+  goVersion: "go1.25.4",
+  clusterName: "commercial-e2e",
+  authMode: "local",
+  readOnly: false,
+  requestTimeout: "15s",
+  egress: {
+    mode: "explicit",
+    enabled: true,
+    httpProxy: "http://egress-proxy.operations.internal.example.test:3128",
+    httpsProxy: "https://egress-proxy.operations.internal.example.test:8443",
+    noProxy: "127.0.0.1,localhost,.svc,.cluster.local,kubernetes.default.svc,internal.example.test",
+    credentialsConfigured: true,
+    caConfigured: true,
+    source: "bootstrap",
+  },
+};
+
+const systemEgressSettings: EgressSettings = {
+  mode: "bootstrap",
+  effectiveMode: "explicit",
+  enabled: true,
+  httpProxy: systemInfo.egress.httpProxy,
+  httpsProxy: systemInfo.egress.httpsProxy,
+  noProxy: systemInfo.egress.noProxy,
+  username: "dosh",
+  credentialsConfigured: true,
+  caConfigured: true,
+  source: "bootstrap",
+  revision: "egress-1",
+  updatedAt: "2026-11-22T08:30:00Z",
+  networkPolicy: {
+    enabled: true,
+    mode: "runtime",
+    autoManage: true,
+    canAutoManage: true,
+    policyName: "dosh-egress-runtime",
+    message: "Dosh 自动维护专用代理 NetworkPolicy",
+  },
+};
+
+const systemEgressPreflight: EgressPreflight = {
+  status: "ok",
+  message: "Dosh 将按解析出的精确 IP 和端口自动维护专用 NetworkPolicy；不会放行 0.0.0.0/0 或 ::/0。",
+  networkPolicy: systemEgressSettings.networkPolicy,
+  targets: [{
+    kind: "http",
+    url: "http://proxy.example.internal:3128",
+    host: "proxy.example.internal",
+    port: 3128,
+    hostname: true,
+    addresses: ["192.0.2.10"],
+    cidrs: ["192.0.2.10/32"],
+    reachable: true,
+    latencyMs: 12,
+    allowed: true,
+    policySource: "runtime:dosh-egress-runtime",
+  }],
+  requiredIpBlocks: ["192.0.2.10/32"],
+  requiredPorts: [3128],
+};
+
+const systemUpdate: UpdateStatus = {
+  enabled: true,
+  status: "update_available",
+  currentVersion: "0.1.9",
+  latestVersion: "0.2.0",
+  latestUrl: "https://github.com/kube-dosh/dosh/releases/tag/v0.2.0",
+  publishedAt: "2026-11-20T10:00:00Z",
+  checkedAt: "2026-11-22T08:31:00Z",
+  source: "https://releases.operations.internal.example.test/projects/platform/dosh/releases/latest",
+  message: "发现新版本 v0.2.0。",
+  notes: "Improves unified egress diagnostics and adds safer update checking for production clusters.",
+};
+
+const checkedSystemUpdate: UpdateStatus = {
+  ...systemUpdate,
+  status: "current",
+  latestVersion: "0.1.9",
+  checkedAt: "2026-11-22T08:35:00Z",
+  message: "当前已是最新版本。",
+};
+
 function json(route: Route, value: unknown, status = 200) {
   return route.fulfill({ status, contentType: "application/json", body: JSON.stringify(value) });
 }
@@ -781,9 +873,10 @@ type NodeSchedulingRequest = { method: string; path: string; csrf: string | null
 type NodeMetadataRequest = { method: string; path: string; csrf: string | null; body: Record<string, unknown> };
 type PreferenceRequest = { method: string; body: UserPreferences };
 type RegistryRequest = { method: string; path: string; body?: ContainerRegistryUpsertInput };
+type EgressRequest = { method: string; body: EgressSettingsUpdate; csrf: string | null };
 type WorkloadRequestBody = Record<string, unknown>;
 
-async function installApiMocks(page: Page, options: { authenticated?: boolean; authMode?: "local" | "token"; overview?: Overview; overviewStatus?: number; nodeSchedulingRequests?: NodeSchedulingRequest[]; nodeMetadataRequests?: NodeMetadataRequest[]; preferenceRequests?: PreferenceRequest[]; registryRequests?: RegistryRequest[]; containerRegistries?: ContainerRegistry[]; registryFailures?: { repositories?: boolean; tags?: boolean }; expireSessionOnNodes?: boolean; noIngressController?: boolean; podName?: string; podExec?: boolean; podEphemeralDebug?: boolean; emptyDiscovery?: boolean; ephemeralRequests?: Array<{ image: string; targetContainerName?: string; shell?: string }>; diagnosis?: Diagnosis; workloadCreate?: boolean; workloadCreateRequests?: WorkloadRequestBody[]; workloadRolloutRequests?: WorkloadRequestBody[]; cronJobRunRequests?: WorkloadRequestBody[] } = {}) {
+async function installApiMocks(page: Page, options: { authenticated?: boolean; authMode?: "local" | "token"; overview?: Overview; overviewStatus?: number; nodeSchedulingRequests?: NodeSchedulingRequest[]; nodeMetadataRequests?: NodeMetadataRequest[]; preferenceRequests?: PreferenceRequest[]; registryRequests?: RegistryRequest[]; containerRegistries?: ContainerRegistry[]; registryFailures?: { repositories?: boolean; tags?: boolean }; expireSessionOnNodes?: boolean; noIngressController?: boolean; podName?: string; podExec?: boolean; podEphemeralDebug?: boolean; emptyDiscovery?: boolean; ephemeralRequests?: Array<{ image: string; targetContainerName?: string; shell?: string }>; diagnosis?: Diagnosis; workloadCreate?: boolean; workloadCreateRequests?: WorkloadRequestBody[]; workloadRolloutRequests?: WorkloadRequestBody[]; cronJobRunRequests?: WorkloadRequestBody[]; systemInfo?: SystemInfo; systemUpdate?: UpdateStatus; checkedSystemUpdate?: UpdateStatus; systemUpdateRequests?: Array<{ method: string; csrf: string | null }>; egressSettings?: EgressSettings; egressRequests?: EgressRequest[]; egressPreflight?: EgressPreflight; egressPreflightRequests?: EgressRequest[] } = {}) {
   const authenticated = options.authenticated ?? true;
   const authMode = options.authMode ?? "local";
   const resourceActions = session.capabilities.resourceActions!;
@@ -806,6 +899,7 @@ async function installApiMocks(page: Page, options: { authenticated?: boolean; a
   let tunnelSession: PortForwardSession | null = null;
   let widgetRevision = 1;
   let preferences = { ...emptyPreferences };
+  let egressSettings = structuredClone(options.egressSettings ?? systemEgressSettings);
   let containerRegistries = structuredClone(options.containerRegistries ?? mockContainerRegistries);
   let helmRepositories: HelmRepository[] = [{ ...helmRepository }];
   let autoscalers: AutoscalerSummary[] = [{
@@ -833,6 +927,39 @@ async function installApiMocks(page: Page, options: { authenticated?: boolean; a
 
     if (path === "/api/v1/auth/config" && method === "GET") {
       return json(route, { mode: authMode, providerName: authMode === "token" ? "Kubernetes" : "" });
+    }
+    if (path === "/api/v1/system/info" && method === "GET") return json(route, options.systemInfo ?? systemInfo);
+    if (path === "/api/v1/system/update" && method === "GET") return json(route, options.systemUpdate ?? systemUpdate);
+    if (path === "/api/v1/system/egress" && method === "GET") return json(route, egressSettings);
+    if (path === "/api/v1/system/egress/preflight" && method === "POST") {
+      const body = request.postDataJSON() as EgressSettingsUpdate;
+      options.egressPreflightRequests?.push({ method, body, csrf: request.headers()["x-csrf-token"] ?? null });
+      return json(route, options.egressPreflight ?? systemEgressPreflight);
+    }
+    if (path === "/api/v1/system/egress" && method === "PUT") {
+      const body = request.postDataJSON() as EgressSettingsUpdate;
+      options.egressRequests?.push({ method, body, csrf: request.headers()["x-csrf-token"] ?? null });
+      const explicit = body.mode === "explicit";
+      egressSettings = {
+        ...egressSettings,
+        mode: body.mode,
+        effectiveMode: body.mode === "bootstrap" ? "environment" : body.mode,
+        enabled: explicit,
+        httpProxy: explicit ? body.httpProxy : "",
+        httpsProxy: explicit ? body.httpsProxy : "",
+        noProxy: explicit ? body.noProxy : "",
+        username: explicit && !body.clearCredentials ? body.username : "",
+        credentialsConfigured: explicit && !body.clearCredentials && Boolean(body.username && (body.password || egressSettings.credentialsConfigured)),
+        caConfigured: explicit && !body.clearCA && Boolean(body.caPEM || egressSettings.caConfigured),
+        source: body.mode === "bootstrap" ? "bootstrap" : "runtime",
+        revision: "egress-2",
+        updatedAt: "2026-11-22T09:00:00Z",
+      };
+      return json(route, egressSettings);
+    }
+    if (path === "/api/v1/system/update/check" && method === "POST") {
+      options.systemUpdateRequests?.push({ method, csrf: request.headers()["x-csrf-token"] ?? null });
+      return json(route, options.checkedSystemUpdate ?? checkedSystemUpdate);
     }
     if (path === "/api/v1/session" && method === "GET") {
       return signedIn ? json(route, sessionResponse) : json(route, { code: "unauthorized", message: "authentication required" }, 401);
@@ -1587,6 +1714,15 @@ async function installApiMocks(page: Page, options: { authenticated?: boolean; a
     if (path === "/api/v1/helm/operations/helm-operation-e2e" && method === "GET") return json(route, helmChartOperation);
     const helmChartMatch = path.match(/^\/api\/v1\/helm\/charts\/([^/]+)\/([^/]+)$/);
     if (helmChartMatch && method === "GET") return json(route, { ...helmChartDetail, repositoryId: decodeURIComponent(helmChartMatch[1]), name: decodeURIComponent(helmChartMatch[2]) });
+    const helmChartSyncMatch = path.match(/^\/api\/v1\/helm\/charts\/([^/]+)\/([^/]+)\/sync$/);
+    if (helmChartSyncMatch && method === "POST") {
+      return json(route, {
+        ...helmChartDetail,
+        repositoryId: decodeURIComponent(helmChartSyncMatch[1]),
+        name: decodeURIComponent(helmChartSyncMatch[2]),
+        readme: "# NGINX\n\nSynced Chart package.",
+      });
+    }
     if (/^\/api\/v1\/(?:pods|services)\/[^/]+\/[^/]+\/tunnels$/.test(path) && method === "POST") {
       const body = request.postDataJSON() as { port?: number };
       const pod = path.startsWith("/api/v1/pods/") ? decodeURIComponent(path.split("/")[5]) : "web-abcdef-12345";
@@ -1994,6 +2130,12 @@ test("Helm Chart 目录、详情和受控安装计划可完成", async ({ page }
   await expect(page.getByRole("heading", { name: "nginx", exact: true })).toBeVisible();
   await expect(page.getByText("Chart 摘要")).toBeVisible();
   await expect(page.getByRole("tab", { name: "README" })).toBeVisible();
+  const syncChartRequest = page.waitForRequest((request) => new URL(request.url()).pathname === "/api/v1/helm/charts/repo-bitnami/nginx/sync" && request.method() === "POST");
+  await page.getByRole("button", { name: "同步 Chart 包" }).click();
+  expect((await syncChartRequest).method()).toBe("POST");
+  await expect(page.getByText("Chart 包已重新同步，README、Values 与 Schema 已刷新")).toBeVisible();
+  await page.getByRole("tab", { name: "README" }).click();
+  await expect(page.getByText("Synced Chart package.")).toBeVisible();
   await page.getByRole("button", { name: "安装 / 升级" }).click();
 
   const dialog = page.getByRole("dialog", { name: "安装 nginx" });
@@ -2013,6 +2155,84 @@ test("Helm Chart 目录、详情和受控安装计划可完成", async ({ page }
   expect(payload).toMatchObject({ planDigest: "sha256:reviewed-plan-e2e", confirmation: "nginx", namespace: "default", releaseName: "nginx" });
   await expect(page).toHaveURL(/\/helm\/releases\/default\/nginx/);
   await expectNoPageOverflow(page, "helm chart install result");
+});
+
+test("Helm 安装计划在移动端保持可用且不横向溢出", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await installApiMocks(page);
+  await page.goto("/helm/charts/repo-bitnami/nginx");
+  await expect(page.getByRole("button", { name: "同步 Chart 包" })).toBeVisible();
+  await expectNoPageOverflow(page, "helm chart detail mobile sync action");
+  await page.getByRole("button", { name: "安装 / 升级" }).click();
+
+  const dialog = page.getByRole("dialog", { name: "安装 nginx" });
+  await expect(dialog).toBeVisible();
+  await dialog.getByRole("combobox", { name: "Chart 安装命名空间" }).click();
+  await page.getByRole("option", { name: "default", exact: true }).click();
+  await dialog.getByLabel("Release 名称").fill("nginx");
+  await dialog.getByRole("button", { name: "生成安装计划" }).click();
+
+  await expect(dialog.getByText("渲染资源预检")).toBeVisible();
+  await expect(dialog.getByText("sha256:reviewed-plan-e2e")).toBeVisible();
+  await expectElementInsideViewport(page, dialog, "helm chart install dialog mobile");
+  await expectNoPageOverflow(page, "helm chart install dialog mobile");
+
+  await dialog.getByLabel("输入 Release 名称确认").fill("nginx");
+  await dialog.getByRole("button", { name: "确认安装" }).click();
+  await expect(page).toHaveURL(/\/helm\/releases\/default\/nginx/);
+  await expectNoPageOverflow(page, "helm chart install result mobile");
+});
+
+test("Helm 安装逐资源展示真实进度、等待原因并适配移动端", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await installApiMocks(page);
+
+  const runningOperation: HelmChartOperation = {
+    ...helmChartOperation,
+    status: "running",
+    message: undefined,
+    revision: undefined,
+    finishedAt: undefined,
+    resources: [
+      {
+        apiVersion: "v1", kind: "PersistentVolumeClaim", namespace: "default", name: "data-consul-0",
+        hook: false, crd: false, action: "create", resource: "persistentvolumeclaims",
+        status: "waiting", message: "ProvisioningFailed: no persistent volumes available for this claim and no storage class is set（重复 3 次）",
+      },
+      {
+        apiVersion: "apps/v1", kind: "StatefulSet", namespace: "default", name: "consul",
+        hook: false, crd: false, action: "create", apiGroup: "apps", resource: "statefulsets",
+        status: "waiting", message: "就绪 0/3",
+      },
+    ],
+  };
+  await page.route("**/api/v1/helm/charts/install", (route) => json(route, runningOperation, 201));
+  await page.route("**/api/v1/helm/operations/helm-operation-e2e", (route) => json(route, {
+    ...helmChartOperation,
+    resources: runningOperation.resources?.map((resource) => ({ ...resource, status: "ready", message: "资源已就绪" })),
+  }));
+
+  await page.goto("/helm/charts/repo-bitnami/nginx");
+  await page.getByRole("button", { name: "安装 / 升级" }).click();
+  const dialog = page.getByRole("dialog", { name: "安装 nginx" });
+  await dialog.getByRole("combobox", { name: "Chart 安装命名空间" }).click();
+  await page.getByRole("option", { name: "default", exact: true }).click();
+  await dialog.getByLabel("Release 名称").fill("nginx");
+  await dialog.getByRole("button", { name: "生成安装计划" }).click();
+  await dialog.getByLabel("输入 Release 名称确认").fill("nginx");
+  await dialog.getByRole("button", { name: "确认安装" }).click();
+
+  const progress = dialog.getByRole("status");
+  await expect(progress).toContainText("Helm 操作执行中 · 已就绪 0/2");
+  await expect(progress).toContainText("PersistentVolumeClaim");
+  await expect(progress).toContainText("data-consul-0");
+  await expect(progress).toContainText("no persistent volumes available for this claim and no storage class is set");
+  await expect(progress).toContainText("StatefulSet");
+  await expect(progress).toContainText("就绪 0/3");
+  await expectElementInsideViewport(page, dialog, "helm resource progress mobile");
+  await expectNoPageOverflow(page, "helm resource progress mobile");
+
+  await expect(page).toHaveURL(/\/helm\/releases\/default\/nginx/);
 });
 
 test("Helm 使用统一导航入口并通过标签切换目录、Release 和仓库", async ({ page }) => {
@@ -2551,10 +2771,12 @@ test("其他功能默认折叠并可展开访问低频导航", async ({ page }) 
   await expect(page.getByRole("link", { name: "治理与策略", exact: true })).toHaveCount(0);
   await expect(page.getByRole("link", { name: "权限检查", exact: true })).toHaveCount(0);
   await expect(page.getByRole("link", { name: "镜像仓库", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("link", { name: "系统信息", exact: true })).toHaveCount(0);
 
   await other.click();
   await expect(other).toHaveAttribute("aria-expanded", "true");
   await expect(page.getByRole("link", { name: "镜像仓库", exact: true })).toBeVisible();
+  await expect(page.getByRole("link", { name: "系统信息", exact: true })).toBeVisible();
   await page.getByRole("link", { name: "治理与策略", exact: true }).click();
   await expect(page).toHaveURL(/\/governance$/);
   await expect(page.getByRole("heading", { name: "治理与策略", exact: true })).toBeVisible();
@@ -2567,6 +2789,134 @@ test("其他功能默认折叠并可展开访问低频导航", async ({ page }) 
   await expect(other).toHaveAttribute("aria-expanded", "false");
   await expect(page.getByRole("link", { name: "权限检查", exact: true })).toHaveCount(0);
   await expectNoPageOverflow(page, "other navigation");
+});
+
+test("系统信息页展示统一出站网络并允许管理员手动检查更新", async ({ page }) => {
+  const updateRequests: Array<{ method: string; csrf: string | null }> = [];
+  await installApiMocks(page, { systemUpdateRequests: updateRequests });
+  await page.setViewportSize({ width: 1280, height: 1000 });
+  await page.goto("/system");
+
+  await expect(page.getByRole("heading", { name: "系统信息", exact: true })).toBeVisible();
+  await expect(page.getByText("统一出站网络", { exact: true })).toBeVisible();
+  await expect(page.getByText("0.1.9", { exact: true }).first()).toBeVisible();
+  await expect(page.getByText("https://egress-proxy.operations.internal.example.test:8443", { exact: true })).toBeVisible();
+  await expect(page.getByText("发现新版本", { exact: true })).toBeVisible();
+  await expect(page.getByText("Improves unified egress diagnostics", { exact: false })).toBeVisible();
+  await expectNoPageOverflow(page, "desktop system page");
+  await expectNoSeriousAccessibilityViolations(page, "desktop system page");
+
+  await page.getByRole("button", { name: "立即检查", exact: true }).click();
+  await expect(page.getByText("已是最新", { exact: true })).toBeVisible();
+  expect(updateRequests).toHaveLength(1);
+  expect(updateRequests[0].method).toBe("POST");
+  expect(updateRequests[0].csrf).toBe(csrfToken);
+  await expect(page.locator("[data-sonner-toast]")).toHaveCount(0, { timeout: 10_000 });
+
+  await page.getByRole("button", { name: "帮助", exact: true }).click();
+  const about = page.getByRole("dialog", { name: "关于 Dosh Console" });
+  await expect(about).toBeVisible();
+  await expect(about.getByText("v0.1.9", { exact: true })).toBeVisible();
+  await expect(about.getByRole("link", { name: "查看系统信息" })).toBeVisible();
+  await expectElementInsideViewport(page, about, "desktop about dialog");
+  await expectNoPageOverflow(page, "desktop about dialog");
+});
+
+test("管理员可在系统页动态启用统一出站网络", async ({ page }) => {
+  const egressRequests: EgressRequest[] = [];
+  const egressPreflightRequests: EgressRequest[] = [];
+  const disabledSystemInfo: SystemInfo = {
+    ...systemInfo,
+    egress: { mode: "direct", enabled: false, credentialsConfigured: false, caConfigured: false, source: "runtime" },
+  };
+  const disabledEgressSettings: EgressSettings = {
+    mode: "direct", effectiveMode: "direct", enabled: false, credentialsConfigured: false, caConfigured: false,
+    source: "runtime", revision: "egress-direct",
+    networkPolicy: { enabled: true, mode: "runtime", autoManage: true, canAutoManage: true, policyName: "dosh-egress-runtime" },
+  };
+  await installApiMocks(page, { systemInfo: disabledSystemInfo, egressSettings: disabledEgressSettings, egressRequests, egressPreflightRequests });
+  await page.setViewportSize({ width: 1280, height: 1000 });
+  await page.goto("/system");
+
+  await expect(page.getByText("未启用", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "配置代理", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "统一出站网络配置" });
+  await expect(dialog).toBeVisible();
+  await dialog.getByRole("combobox", { name: "代理模式" }).click();
+  await page.getByRole("option", { name: "启用显式代理", exact: true }).click();
+  await dialog.getByLabel("HTTP 代理").fill("http://proxy.example.internal:3128");
+  await dialog.getByLabel("HTTPS 代理").fill("http://proxy.example.internal:3128");
+  await dialog.getByLabel("NO_PROXY").fill(".svc,.cluster.local");
+  await dialog.getByLabel("代理用户名").fill("dosh");
+  await dialog.getByLabel("代理密码").fill("proxy-secret");
+  await dialog.getByRole("button", { name: "预检目标与策略", exact: true }).click();
+  await expect(dialog.getByText("预检通过", { exact: true })).toBeVisible();
+  await expect(dialog.getByText(/192\.0\.2\.10\/32/).first()).toBeVisible();
+  expect(egressPreflightRequests).toHaveLength(1);
+  expect(egressPreflightRequests[0].csrf).toBe(csrfToken);
+  expect(egressPreflightRequests[0].body.httpProxy).toBe("http://proxy.example.internal:3128");
+  await expectNoPageOverflow(page, "desktop egress configuration dialog");
+  await expectNoHorizontalOverflowInside(dialog, "desktop egress configuration dialog content");
+
+  await dialog.getByRole("button", { name: "保存并应用", exact: true }).click();
+  await expect(dialog).toHaveCount(0);
+  await expect(page.getByText("已启用", { exact: true })).toBeVisible();
+  await expect(page.getByText("统一代理", { exact: true })).toBeVisible();
+  expect(egressRequests).toHaveLength(1);
+  expect(egressRequests[0]).toEqual({
+    method: "PUT",
+    csrf: csrfToken,
+    body: {
+      mode: "explicit",
+      httpProxy: "http://proxy.example.internal:3128",
+      httpsProxy: "http://proxy.example.internal:3128",
+      noProxy: ".svc,.cluster.local",
+      username: "dosh",
+      password: "proxy-secret",
+      clearCredentials: false,
+      clearCA: false,
+      revision: "egress-direct",
+    },
+  });
+  await expectNoPageOverflow(page, "desktop system page after egress update");
+});
+
+test("系统信息页和关于弹窗在移动端不溢出", async ({ page }) => {
+  test.setTimeout(120_000);
+  await installApiMocks(page);
+  for (const viewport of [{ width: 320, height: 720 }, { width: 360, height: 800 }, { width: 390, height: 844 }]) {
+    await page.setViewportSize(viewport);
+    await page.goto("/system");
+    await expect(page.getByRole("heading", { name: "系统信息", exact: true })).toBeVisible();
+    await expect(page.getByText("统一出站网络", { exact: true })).toBeVisible();
+    await expect(page.getByText(systemInfo.egress.noProxy!, { exact: true })).toBeVisible();
+    await expectNoPageOverflow(page, `${viewport.width}px system page`);
+    await expectNoHorizontalOverflowInside(page.locator("main"), `${viewport.width}px system page content`);
+    await page.screenshot({ path: `test-results/mobile-system/system-${viewport.width}.png`, fullPage: true });
+
+    await page.getByRole("button", { name: "配置代理", exact: true }).click();
+    const egressDialog = page.getByRole("dialog", { name: "统一出站网络配置" });
+    await expect(egressDialog).toBeVisible();
+    await expectElementInsideViewport(page, egressDialog, `${viewport.width}px egress configuration dialog`);
+    await expectNoPageOverflow(page, `${viewport.width}px egress configuration dialog`);
+    await expectNoHorizontalOverflowInside(egressDialog, `${viewport.width}px egress configuration dialog content`);
+    await page.screenshot({ path: `test-results/mobile-system/egress-${viewport.width}.png`, fullPage: false });
+    await page.keyboard.press("Escape");
+    await expect(egressDialog).toHaveCount(0);
+
+    await page.evaluate(() => window.scrollTo(0, 0));
+    await page.getByRole("button", { name: /用户菜单/ }).click();
+    await page.getByRole("menuitem", { name: "帮助", exact: true }).click();
+    const about = page.getByRole("dialog", { name: "关于 Dosh Console" });
+    await expect(about).toBeVisible();
+    await expect(about.getByText("v0.1.9", { exact: true })).toBeVisible();
+    await expectElementInsideViewport(page, about, `${viewport.width}px about dialog`);
+    await expectNoPageOverflow(page, `${viewport.width}px about dialog`);
+    await expectNoHorizontalOverflowInside(about, `${viewport.width}px about dialog content`);
+    await page.screenshot({ path: `test-results/mobile-system/about-${viewport.width}.png`, fullPage: false });
+    await page.keyboard.press("Escape");
+    await expect(about).toHaveCount(0);
+  }
 });
 
 test("总览页面包屑读取真实集群上下文", async ({ page }) => {

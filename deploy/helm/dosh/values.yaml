@@ -43,6 +43,20 @@ networkPolicy:
     ports:
       - 443
       - 5000
+  outboundProxy:
+    # 显式代理启用且 NetworkPolicy 开启时必须填写代理 CIDR，禁止使用 0.0.0.0/0 兜底。
+    ipBlocks: []
+    ports:
+      - 3128
+      - 8080
+      - 8443
+  runtimeManagement:
+    # 开启后 Dosh 可在运行时按代理域名解析出的精确 IP/端口维护独立
+    # NetworkPolicy，更换运行时代理后不再需要人工升级 Helm values。
+    # 启动时由 egress.proxy.mode=explicit 指定的代理仍受 outboundProxy 约束。
+    enabled: false
+    # 留空时使用 <fullname>-egress-runtime。
+    policyName: ""
   webhook:
     ipBlocks: []
     ports:
@@ -126,6 +140,41 @@ runtime:
   requestTimeout: 15s
   maxRequestBody: 2097152
 
+persistence:
+  # Optional shared volume mounted into the Dosh container. When enabled, the
+  # mount path is also exported as DOSH_DATA_DIR and stores durable caches such
+  # as Helm repository index.yaml and Chart packages. Use a ReadWriteMany claim
+  # when replicas > 1.
+  enabled: true
+  existingClaim: dosh-data
+  mountPath: /var/lib/dosh
+
+egress:
+  proxy:
+    # environment: 使用 HTTP_PROXY/HTTPS_PROXY/NO_PROXY；explicit: 使用以下字段；direct: 强制直连。
+    mode: environment
+    httpProxy: ""
+    httpsProxy: ""
+    noProxy: ""
+    # 可选。代理认证必须通过 Secret 注入，URL 中禁止携带用户名或密码。
+    existingSecret: ""
+    usernameKey: username
+    passwordKey: password
+    ca:
+      existingConfigMap: ""
+      key: ca.crt
+
+updateCheck:
+  # 默认关闭，避免隔离环境产生非预期外部请求。启用时应配置出站代理或放行更新源。
+  enabled: false
+  url: https://api.github.com/repos/kube-dosh/dosh/releases/latest
+  channel: stable
+  timeout: 10s
+  cacheTTL: 6h
+  # 私有发布源或需要提高 GitHub API 限额时配置。Token 只通过 Secret 注入。
+  existingSecret: ""
+  tokenKey: token
+
 terminal:
   idleTimeout: 15m
   maxDuration: 2h
@@ -141,10 +190,11 @@ portForward:
 resources:
   requests:
     cpu: 100m
-    memory: 128Mi
+    memory: 256Mi
   limits:
     cpu: 500m
-    memory: 512Mi
+    # 大型 Helm 仓库索引（例如 Bitnami 约 27 MiB）解析峰值约 550 MiB。
+    memory: 1Gi
 
 podDisruptionBudget:
   enabled: true

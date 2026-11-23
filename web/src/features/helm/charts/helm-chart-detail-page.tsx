@@ -1,7 +1,8 @@
 import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useParams } from "@tanstack/react-router";
-import { ArrowLeft, ExternalLink, GitBranch, PackageCheck, PackageSearch, ShieldAlert } from "lucide-react";
+import { ArrowLeft, ExternalLink, GitBranch, PackageCheck, PackageSearch, RefreshCw, ShieldAlert } from "lucide-react";
+import { toast } from "sonner";
 import { api } from "@/api/client";
 import { EmptyState, ErrorState, LoadingState } from "@/components/feedback/states";
 import { PageHeader } from "@/components/layout/page-header";
@@ -16,11 +17,21 @@ import { HelmInstallDialog } from "./helm-install-dialog";
 export function HelmChartDetailPage() {
   const params = useParams({ strict: false }) as { repositoryId: string; chartName: string };
   const capabilities = useCapabilities().data;
+  const queryClient = useQueryClient();
   const [installOpen, setInstallOpen] = useState(false);
+  const chartQueryKey = ["helm-chart", params.repositoryId, params.chartName] as const;
   const detail = useQuery({
-    queryKey: ["helm-chart", params.repositoryId, params.chartName],
+    queryKey: chartQueryKey,
     queryFn: () => api.helmChart(params.repositoryId, params.chartName),
     enabled: Boolean(capabilities?.helmChartRepositories && params.repositoryId && params.chartName),
+  });
+  const sync = useMutation({
+    mutationFn: () => api.syncHelmChart(params.repositoryId, params.chartName),
+    onSuccess: (updated) => {
+      queryClient.setQueryData(chartQueryKey, updated);
+      toast.success("Chart 包已重新同步，README、Values 与 Schema 已刷新");
+    },
+    onError: (error) => toast.error(`Chart 包同步失败：${error.message}`),
   });
 
   if (!capabilities) return <LoadingState label="正在检查 Helm Chart 能力" />;
@@ -38,7 +49,10 @@ export function HelmChartDetailPage() {
         title={chart.name}
         breadcrumb={<Link to="/helm/charts" className="inline-flex items-center gap-1 text-primary hover:underline"><ArrowLeft className="h-3.5 w-3.5" />返回 Chart 目录</Link>}
         description={<span className="break-words">来自 {chart.repositoryName} · 最新版本 v{chart.version}{chart.appVersion ? ` · app ${chart.appVersion}` : ""}</span>}
-        actions={<Button onClick={() => setInstallOpen(true)}><PackageCheck className="h-4 w-4" />安装 / 升级</Button>}
+        actions={<>
+          <Button variant="outline" onClick={() => sync.mutate()} disabled={sync.isPending}><RefreshCw className={`h-4 w-4 ${sync.isPending ? "animate-spin" : ""}`} />{sync.isPending ? "同步中" : "同步 Chart 包"}</Button>
+          <Button onClick={() => setInstallOpen(true)}><PackageCheck className="h-4 w-4" />安装 / 升级</Button>
+        </>}
       />
 
       {chart.deprecated ? (
@@ -76,6 +90,7 @@ export function HelmChartDetailPage() {
           <CardHeader className="p-4 sm:p-5"><CardTitle className="text-base">安装前检查</CardTitle><CardDescription>计划阶段不会写入集群。</CardDescription></CardHeader>
           <CardContent className="min-w-0 space-y-2 px-4 pb-4 text-sm sm:px-5">
             <p className="break-words text-muted-foreground">Dosh 会校验 Chart 包 SHA-256，渲染资源并逐项检查目标命名空间的 create/update/patch 权限。</p>
+            <p className="break-words text-xs text-muted-foreground">Chart 包按版本缓存在服务端；需要重新获取当前版本或刷新 README、Values 时，请使用“同步 Chart 包”。</p>
             <div className="flex flex-wrap gap-1.5"><Badge variant="outline">固定版本</Badge><Badge variant="outline">摘要校验</Badge><Badge variant="outline">RBAC 预检</Badge>{chart.schema ? <Badge variant="outline">Schema 校验</Badge> : null}<Badge variant="outline">操作审计</Badge></div>
             <Button className="mt-2 w-full" onClick={() => setInstallOpen(true)}><PackageSearch className="h-4 w-4" />打开安装计划</Button>
           </CardContent>

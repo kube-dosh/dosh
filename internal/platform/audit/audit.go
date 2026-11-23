@@ -19,17 +19,19 @@ import (
 	"time"
 
 	"dosh/internal/domain"
+	"dosh/internal/platform/egress"
 	"dosh/internal/platform/requestid"
 )
 
 type Config struct {
-	WebhookURL   string
-	BearerToken  string
-	HMACKey      []byte
-	CAFile       string
-	Timeout      time.Duration
-	QueueSize    int
-	HistoryLimit int
+	WebhookURL    string
+	BearerToken   string
+	HMACKey       []byte
+	CAFile        string
+	Timeout       time.Duration
+	QueueSize     int
+	HistoryLimit  int
+	ClientFactory *egress.Factory
 }
 
 type Logger struct {
@@ -69,7 +71,11 @@ func NewWithConfig(logger *slog.Logger, cfg Config) (*Logger, error) {
 	if cfg.QueueSize <= 0 {
 		cfg.QueueSize = 1024
 	}
-	transport := http.DefaultTransport.(*http.Transport).Clone()
+	factory := cfg.ClientFactory
+	if factory == nil {
+		factory = egress.NewDirect()
+	}
+	tlsConfig := &tls.Config{MinVersion: tls.VersionTLS12}
 	if cfg.CAFile != "" {
 		pem, err := os.ReadFile(cfg.CAFile)
 		if err != nil {
@@ -79,8 +85,9 @@ func NewWithConfig(logger *slog.Logger, cfg Config) (*Logger, error) {
 		if !roots.AppendCertsFromPEM(pem) {
 			return nil, fmt.Errorf("audit webhook CA file %q contains no valid certificates", cfg.CAFile)
 		}
-		transport.TLSClientConfig = &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: roots}
+		tlsConfig.RootCAs = roots
 	}
+	transport := factory.Transport(egress.ScopeAudit, tlsConfig)
 	runCtx, cancel := context.WithCancel(context.Background())
 	sink := &webhookSink{
 		config: cfg,

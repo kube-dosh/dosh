@@ -225,9 +225,56 @@ The main Helm settings live in [`deploy/helm/dosh/values.yaml`](deploy/helm/dosh
 | `auth.sessionTTL` | `8h` | Login session lifetime, capped at 8 hours |
 | `runtime.clusterName` | `kubedo-lab` | Cluster name displayed by the console |
 | `runtime.readOnly` | `false` | Disable all write operations |
+| `egress.proxy.mode` | `environment` | Unified egress policy: `environment`, `explicit`, or `direct` |
+| `egress.proxy.httpProxy` / `httpsProxy` | `""` | Explicit proxy endpoints; proxy credentials must come from a Secret |
+| `egress.proxy.existingSecret` | `""` | Secret providing `DOSH_EGRESS_PROXY_USERNAME` / `DOSH_EGRESS_PROXY_PASSWORD` |
+| `egress.proxy.ca.existingConfigMap` | `""` | Custom CA used for proxy TLS inspection |
+| `networkPolicy.outboundProxy.ipBlocks` | `[]` | CIDRs allowed to reach the proxy under NetworkPolicy; required for `explicit` mode when NetworkPolicy is enabled |
+| `networkPolicy.runtimeManagement.enabled` | `false` | Let Dosh maintain a dedicated, exact-host proxy NetworkPolicy when runtime proxy settings are saved |
+| `updateCheck.enabled` | `false` | Enable Dosh update checks; advisory only, never auto-upgrades |
+| `updateCheck.url` / `channel` | GitHub Releases / `stable` | Update source and stable/prerelease channel |
 | `audit.webhook.enabled` | `false` | Deliver audit events to an HTTPS receiver |
 | `networkPolicy.enabled` | `true` | Create the default network policies |
 | `networkPolicy.containerRegistries.ipBlocks` | `[]` | Explicit registry CIDRs that Dosh may reach for repository and tag discovery; no registry egress is allowed when empty |
+
+### Unified outbound network
+
+Helm Chart downloads, OCI Charts, registry catalog/tag discovery, OIDC discovery and token exchange, the audit webhook, and Dosh update checks all use the same `internal/platform/egress` client factory. Changing the proxy policy does not require configuring each feature independently, and new external resource fetchers must not bypass the factory.
+
+- `environment` uses `HTTP_PROXY`, `HTTPS_PROXY`, and `NO_PROXY` from the container environment.
+- `explicit` uses `egress.proxy.httpProxy` / `httpsProxy` / `noProxy`. Embedded usernames, passwords, and query strings are rejected; credentials come from a Kubernetes Secret.
+- `direct` forces direct connections and ignores environment proxies.
+
+Kubernetes API access, Pod exec, log streams, port-forwarding, and browser traffic always connect directly to the cluster. When NetworkPolicy is enabled, proxy CIDRs must be explicit; the chart never falls back to `0.0.0.0/0`:
+
+```yaml
+egress:
+  proxy:
+    mode: explicit
+    httpsProxy: https://proxy.operations.example.test:8443
+    noProxy: .svc,.cluster.local,kubernetes.default.svc
+    existingSecret: dosh-egress-proxy
+    ca:
+      existingConfigMap: dosh-egress-ca
+
+networkPolicy:
+  outboundProxy:
+    ipBlocks:
+      - 10.20.0.0/24
+    ports:
+      - 8443
+  runtimeManagement:
+    enabled: true
+    policyName: ""
+
+updateCheck:
+  enabled: true
+  channel: stable
+```
+
+The `/system` page shows build metadata, Go and chart versions, auth mode, read-only state, redacted proxy status, and update-check results. Only administrators can force an update check, and the result never triggers an automatic upgrade.
+
+With `networkPolicy.runtimeManagement.enabled`, saving a proxy resolves hostnames to exact IPs and allows only those `/32` or `/128` addresses and ports. Changing the runtime proxy no longer requires a Helm upgrade. Returning to `direct` or `bootstrap` removes the dedicated policy. When runtime management is disabled, preflight reports the exact CIDRs and ports that must be added to `outboundProxy`.
 
 After a TLS certificate rotation, Dosh checks the mounted files every 30 seconds by default and reloads them without restarting Pods. See the [`operations runbook`](docs/operations-runbook.md) for certificate, audit, network-policy, and rollback details.
 
@@ -301,6 +348,7 @@ scripts/                 build, verification, and release helpers
 ## Documentation
 
 - [Operations runbook](docs/operations-runbook.md) — deployment, certificates, tokens, auditing, rollback, and troubleshooting
+- [NFS volume](docs/nfs-persistence.md) — optional RWX volume deployment and mount verification
 - [Helm chart management](docs/helm-chart-management.md) — trusted repositories, credentials, reviewed plans, RBAC, and lifecycle operations
 - [EARS implementation plan](docs/ears-implementation-plan.md) — requirements, acceptance criteria, and implementation steps
 - [Cluster management roadmap](docs/cluster-management-roadmap.md) — planned capabilities

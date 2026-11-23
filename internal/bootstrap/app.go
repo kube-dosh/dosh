@@ -8,6 +8,7 @@ import (
 	stdhttp "net/http"
 	"net/url"
 	"os"
+	"runtime"
 	"strings"
 	"time"
 
@@ -46,6 +47,8 @@ import (
 	resourceshttp "dosh/internal/modules/resources/http"
 	storageapp "dosh/internal/modules/storage/app"
 	storagehttp "dosh/internal/modules/storage/http"
+	systemapp "dosh/internal/modules/system/app"
+	systemhttp "dosh/internal/modules/system/http"
 	workloadsapp "dosh/internal/modules/workloads/app"
 	workloadshttp "dosh/internal/modules/workloads/http"
 	yamlapp "dosh/internal/modules/yaml/app"
@@ -53,12 +56,14 @@ import (
 	"dosh/internal/platform/audit"
 	"dosh/internal/platform/authz"
 	"dosh/internal/platform/config"
+	"dosh/internal/platform/egress"
 	"dosh/internal/platform/helmrepo"
 	"dosh/internal/platform/httpserver"
 	"dosh/internal/platform/httpx"
 	"dosh/internal/platform/kube"
 	oidcprovider "dosh/internal/platform/oidc"
 	"dosh/internal/platform/registryclient"
+	"dosh/internal/platform/releasecheck"
 	"dosh/internal/platform/tlscert"
 	"dosh/internal/version"
 )
@@ -69,6 +74,7 @@ type App struct {
 	Router stdhttp.Handler
 	audit  *audit.Logger
 	certs  *tlscert.Store
+	egress *egress.Controller
 }
 
 func New(ctx context.Context, cfg config.Config) (*App, error) {
@@ -86,10 +92,23 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 	if err != nil {
 		return nil, err
 	}
+	egressFactory, err := egress.New(cfg)
+	if err != nil {
+		return nil, err
+	}
+	egressPolicyManager, err := kube.NewEgressNetworkPolicyManager(kubeClient, cfg)
+	if err != nil {
+		return nil, err
+	}
+	egressController := egress.NewController(egressFactory, kubeClient, logger)
+	egressController.SetNetworkPolicyManager(egressPolicyManager)
+	if err := egressController.Load(ctx); err != nil {
+		logger.Warn("egress_runtime_load_failed", "error", err)
+	}
 	auditLogger, err := audit.NewWithConfig(logger, audit.Config{
 		WebhookURL: cfg.AuditWebhookURL, BearerToken: cfg.AuditWebhookToken,
 		HMACKey: []byte(cfg.AuditWebhookHMAC), CAFile: cfg.AuditWebhookCAFile,
-		Timeout: cfg.AuditWebhookTimeout, QueueSize: cfg.AuditWebhookQueue,
+		Timeout: cfg.AuditWebhookTimeout, QueueSize: cfg.AuditWebhookQueue, ClientFactory: egressFactory,
 	})
 	if err != nil {
 		return nil, err
@@ -118,6 +137,7 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 			IssuerURL: cfg.OIDCIssuer, ClientID: cfg.OIDCClientID, ClientSecret: cfg.OIDCClientSecret,
 			RedirectURL: cfg.OIDCRedirectURL, Scopes: cfg.OIDCScopes, UsernameClaim: cfg.OIDCUsernameClaim,
 			GroupsClaim: cfg.OIDCGroupsClaim, CAFile: cfg.OIDCCAFile, Timeout: cfg.OIDCTimeout,
+			ClientFactory: egressFactory,
 		})
 		if err != nil {
 			return nil, err
@@ -165,10 +185,12 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 	workloadsService.SetPortForwardLimits(domain.PortForwardLimits{
 		MaxDuration: cfg.PortForwardTTL, MaxSessionsPerUser: cfg.PortForwardMaxSessions,
 	})
-	registriesService := registriesapp.New(kubeClient, registryclient.New(cfg.RequestTimeout), authorizer, auditLogger)
+	registriesService := registriesapp.New(kubeClient, registryclient.New(cfg.RequestTimeout, egressFactory), authorizer, auditLogger)
 	workloadsService.SetImageRegistryResolver(registriesService)
 	releasesService := releasesapp.New(kubeClient, authorizer, auditLogger)
-	helmChartsService := helmchartsapp.New(kubeClient, helmrepo.New(cfg.RequestTimeout), kubeClient, authorizer, auditLogger)
+	helmRepositoryClient := helmrepo.New(cfg.RequestTimeout, egressFactory)
+	helmRepositoryClient.SetCacheDir(cfg.DataDir)
+	helmChartsService := helmchartsapp.New(kubeClient, helmRepositoryClient, kubeClient, authorizer, auditLogger)
 	eventsService := eventsapp.New(kubeClient)
 	networkService := networkapp.New(kubeClient, authorizer, auditLogger)
 	configurationService := configurationapp.New(kubeClient, authorizer, auditLogger)
@@ -177,6 +199,22 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 	storageService := storageapp.New(kubeClient, authorizer, auditLogger)
 	yamlService := yamlapp.New(kubeClient, authorizer, auditLogger)
 	auditHistoryService := audithistoryapp.New(auditLogger, authorizer)
+	egressState := egressController.Status()
+	updateChecker := releasecheck.New(releasecheck.Config{
+		Enabled: cfg.UpdateCheckEnabled, URL: cfg.UpdateCheckURL, Token: cfg.UpdateCheckToken,
+		Channel: cfg.UpdateCheckChannel, CurrentVersion: version.Version,
+		Timeout: cfg.UpdateCheckTimeout, CacheTTL: cfg.UpdateCheckCacheTTL,
+	}, egressFactory)
+	systemService := systemapp.New(domain.SystemInfo{
+		Version: version.Version, Commit: version.Commit, BuildDate: version.Date,
+		ChartVersion: cfg.ChartVersion, GoVersion: runtime.Version(), ClusterName: cfg.ClusterName,
+		AuthMode: cfg.AuthMode, ReadOnly: cfg.ReadOnly, RequestTimeout: cfg.RequestTimeout.String(),
+		Egress: domain.EgressStatus{
+			Mode: egressState.Mode, Enabled: egressState.Enabled, HTTPProxy: egressState.HTTPProxy,
+			HTTPSProxy: egressState.HTTPSProxy, NoProxy: egressState.NoProxy,
+			CredentialsConfigured: egressState.CredentialsConfigured, CAConfigured: egressState.CAConfigured,
+		},
+	}, updateChecker, egressController, auditLogger)
 
 	router, err := buildRouter(routerDependencies{
 		logger:        logger,
@@ -201,12 +239,13 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 		storage:       storagehttp.New(storageService),
 		yaml:          yamlhttp.New(yamlService),
 		auditHistory:  audithistoryhttp.New(auditHistoryService),
+		system:        systemhttp.New(systemService),
 	})
 	if err != nil {
 		return nil, err
 	}
 	logger.Info("dosh_initialized", "version", version.Version, "commit", version.Commit, "auth_mode", cfg.AuthMode, "read_only", cfg.ReadOnly, "login_rate_limit_mode", cfg.LoginRateLimitMode, "audit_webhook", cfg.AuditWebhookURL != "", "oidc_issuer", cfg.OIDCIssuer)
-	return &App{Config: cfg, Logger: logger, Router: router, audit: auditLogger, certs: certificateStore}, nil
+	return &App{Config: cfg, Logger: logger, Router: router, audit: auditLogger, certs: certificateStore, egress: egressController}, nil
 }
 
 func oidcPostLogoutRedirect(callbackURL string) string {
@@ -226,6 +265,9 @@ func oidcPostLogoutRedirect(callbackURL string) string {
 func (a *App) Run(ctx context.Context) error {
 	if a.certs != nil {
 		go a.certs.Run(ctx, a.Logger)
+	}
+	if a.egress != nil {
+		go a.egress.Run(ctx)
 	}
 	server := httpserver.New(a.Router, a.Config, a.Logger)
 	httpserver.UseCertificate(server, a.certs)

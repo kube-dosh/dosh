@@ -27,6 +27,7 @@ tags:
   - name: registries
   - name: diagnostics
   - name: resilience
+  - name: system
 security:
   - cookieAuth: []
 paths:
@@ -1877,6 +1878,31 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "503": { $ref: "#/components/responses/DependencyUnavailable" }
+  /api/v1/helm/charts/{repositoryId}/{chartName}/sync:
+    post:
+      tags: [helm-charts]
+      summary: Refresh the cached Chart package and its extracted metadata
+      description: >-
+        Deletes the cached package for the latest Chart version and downloads it
+        again. The repository index is not re-synchronized; use the repository
+        sync endpoint when the Chart catalog itself needs refreshing.
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      parameters:
+        - { name: repositoryId, in: path, required: true, schema: { type: string, maxLength: 128 } }
+        - { name: chartName, in: path, required: true, schema: { type: string, maxLength: 253 } }
+      responses:
+        "200":
+          description: Refreshed Chart detail
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/HelmChartDetail" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
   /api/v1/helm/charts/plan:
     post:
       tags: [helm-charts]
@@ -3487,6 +3513,102 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
         "409": { $ref: "#/components/responses/Conflict" }
         "503": { $ref: "#/components/responses/DependencyUnavailable" }
+  /api/v1/system/info:
+    get:
+      tags: [system]
+      summary: Read Dosh build metadata and safe runtime configuration
+      description: Returns no credentials, Secret values, or raw proxy authorization material.
+      responses:
+        "200":
+          description: Dosh system information
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SystemInfo" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /api/v1/system/update:
+    get:
+      tags: [system]
+      summary: Read the cached Dosh release update status
+      responses:
+        "200":
+          description: Update check result, including disabled and error states
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/UpdateStatus" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /api/v1/system/update/check:
+    post:
+      tags: [system]
+      summary: Force a Dosh release update check through the configured egress policy
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      responses:
+        "200":
+          description: Refreshed update check result
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/UpdateStatus" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/system/egress:
+    get:
+      tags: [system]
+      summary: Read the effective unified egress policy
+      description: Returns proxy addresses and secret-presence flags without passwords or CA PEM.
+      responses:
+        "200":
+          description: Effective egress settings and runtime override metadata
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EgressSettings" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    put:
+      tags: [system]
+      summary: Apply and persist a runtime egress policy override
+      description: Administrator-only. The change is persisted in a Kubernetes Secret and propagated to other replicas.
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/EgressSettingsUpdate" }
+      responses:
+        "200":
+          description: Saved egress settings
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EgressSettings" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
+  /api/v1/system/egress/preflight:
+    post:
+      tags: [system]
+      summary: Validate proxy targets and the current NetworkPolicy before saving
+      description: Administrator-only. Resolves HTTP/HTTPS proxy hosts to exact IPs, checks current Helm-managed policy coverage, probes TCP reachability, and reports the CIDRs and ports that must be allowed.
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/EgressSettingsUpdate" }
+      responses:
+        "200":
+          description: Proxy target and NetworkPolicy preflight result
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EgressPreflight" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
 components:
   securitySchemes:
     cookieAuth:
@@ -5076,11 +5198,30 @@ components:
         namespace: { type: string }
         releaseName: { type: string }
         revision: { type: integer }
+        resources:
+          type: array
+          description: Live status for each resource represented by the reviewed Helm plan.
+          items: { $ref: "#/components/schemas/HelmOperationResource" }
         warnings:
           type: array
           items: { type: string }
         startedAt: { type: string, format: date-time }
         finishedAt: { type: string, format: date-time }
+    HelmOperationResource:
+      type: object
+      required: [apiVersion, kind, name, hook, crd, action, resource, status]
+      properties:
+        apiVersion: { type: string }
+        kind: { type: string }
+        namespace: { type: string }
+        name: { type: string }
+        hook: { type: boolean }
+        crd: { type: boolean }
+        action: { type: string, enum: [create, update] }
+        apiGroup: { type: string }
+        resource: { type: string }
+        status: { type: string, enum: [pending, waiting, ready, failed, created, unknown] }
+        message: { type: string }
     ServicePort:
       type: object
       required: [protocol, port, targetPort]
@@ -6117,3 +6258,121 @@ components:
         status: { type: string }
         relationship: { type: string }
         path: { type: string }
+    EgressStatus:
+      type: object
+      required: [mode, enabled, credentialsConfigured, caConfigured, source]
+      properties:
+        mode: { type: string, enum: [environment, explicit, direct] }
+        enabled: { type: boolean }
+        httpProxy: { type: string }
+        httpsProxy: { type: string }
+        noProxy: { type: string }
+        credentialsConfigured: { type: boolean }
+        caConfigured: { type: boolean }
+        source: { type: string, enum: [bootstrap, runtime] }
+    EgressSettings:
+      type: object
+      required: [mode, effectiveMode, enabled, credentialsConfigured, caConfigured, source, networkPolicy]
+      properties:
+        mode: { type: string, enum: [bootstrap, explicit, direct] }
+        effectiveMode: { type: string, enum: [environment, explicit, direct] }
+        enabled: { type: boolean }
+        httpProxy: { type: string }
+        httpsProxy: { type: string }
+        noProxy: { type: string }
+        username: { type: string }
+        credentialsConfigured: { type: boolean }
+        caConfigured: { type: boolean }
+        source: { type: string, enum: [bootstrap, runtime] }
+        revision: { type: string }
+        updatedAt: { type: string }
+        networkPolicy: { $ref: "#/components/schemas/EgressNetworkPolicyStatus" }
+    EgressNetworkPolicyStatus:
+      type: object
+      required: [enabled, mode, autoManage, canAutoManage]
+      properties:
+        enabled: { type: boolean }
+        mode: { type: string, enum: [disabled, helm, runtime] }
+        autoManage: { type: boolean }
+        canAutoManage: { type: boolean }
+        policyName: { type: string }
+        helmPolicyName: { type: string }
+        message: { type: string }
+    EgressProxyTarget:
+      type: object
+      required: [kind, url, host, port, hostname, addresses, cidrs, reachable, allowed]
+      properties:
+        kind: { type: string, enum: [http, https] }
+        url: { type: string }
+        host: { type: string }
+        port: { type: integer, minimum: 1, maximum: 65535 }
+        hostname: { type: boolean }
+        addresses:
+          type: array
+          items: { type: string }
+        cidrs:
+          type: array
+          items: { type: string }
+        reachable: { type: boolean }
+        latencyMs: { type: integer }
+        error: { type: string }
+        allowed: { type: boolean }
+        policySource: { type: string }
+    EgressPreflight:
+      type: object
+      required: [status, message, networkPolicy, targets, requiredIpBlocks, requiredPorts]
+      properties:
+        status: { type: string, enum: [ok, warning, error] }
+        message: { type: string }
+        networkPolicy: { $ref: "#/components/schemas/EgressNetworkPolicyStatus" }
+        targets:
+          type: array
+          items: { $ref: "#/components/schemas/EgressProxyTarget" }
+        requiredIpBlocks:
+          type: array
+          items: { type: string }
+        requiredPorts:
+          type: array
+          items: { type: integer }
+    EgressSettingsUpdate:
+      type: object
+      required: [mode, httpProxy, httpsProxy, noProxy, username, clearCredentials, clearCA]
+      properties:
+        mode: { type: string, enum: [bootstrap, explicit, direct] }
+        httpProxy: { type: string, maxLength: 2048 }
+        httpsProxy: { type: string, maxLength: 2048 }
+        noProxy: { type: string, maxLength: 4096 }
+        username: { type: string, maxLength: 1024 }
+        password: { type: string, maxLength: 4096, writeOnly: true }
+        clearCredentials: { type: boolean }
+        caPEM: { type: string, maxLength: 65536, writeOnly: true }
+        clearCA: { type: boolean }
+        revision: { type: string, maxLength: 256 }
+    SystemInfo:
+      type: object
+      required: [version, commit, buildDate, chartVersion, goVersion, clusterName, authMode, readOnly, requestTimeout, egress]
+      properties:
+        version: { type: string }
+        commit: { type: string }
+        buildDate: { type: string }
+        chartVersion: { type: string }
+        goVersion: { type: string }
+        clusterName: { type: string }
+        authMode: { type: string, enum: [local, oidc, token] }
+        readOnly: { type: boolean }
+        requestTimeout: { type: string }
+        egress: { $ref: "#/components/schemas/EgressStatus" }
+    UpdateStatus:
+      type: object
+      required: [enabled, status, currentVersion]
+      properties:
+        enabled: { type: boolean }
+        status: { type: string, enum: [disabled, current, update_available, unknown, error] }
+        currentVersion: { type: string }
+        latestVersion: { type: string }
+        latestUrl: { type: string }
+        publishedAt: { type: string }
+        checkedAt: { type: string }
+        notes: { type: string }
+        message: { type: string }
+        source: { type: string }

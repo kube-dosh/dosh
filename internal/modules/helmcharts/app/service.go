@@ -14,6 +14,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"dosh/internal/domain"
@@ -27,6 +28,9 @@ const (
 	maxCredentialSize       = 16 << 10
 	maxCASize               = 64 << 10
 	maxChartValuesSize      = 1024 * 1024
+	helmOperationTimeout    = 12 * time.Minute
+	helmProgressInterval    = 3 * time.Second
+	maxOperationResources   = 300
 )
 
 var (
@@ -50,12 +54,23 @@ type Source interface {
 	Download(ctx context.Context, repository domain.HelmRepository, chartName, version, expectedDigest string) ([]byte, string, error)
 }
 
+type ChartRefresher interface {
+	RefreshChart(ctx context.Context, repository domain.HelmRepository, chartName string) (domain.HelmChartDetail, error)
+}
+
 type Executor interface {
 	PlanHelmChart(ctx context.Context, actor domain.Actor, archive []byte, request domain.HelmChartPlanRequest) (domain.HelmChartPlanTemplate, error)
 	InstallHelmChart(ctx context.Context, actor domain.Actor, archive []byte, request domain.HelmChartPlanRequest) (int, error)
 	UpgradeHelmChart(ctx context.Context, actor domain.Actor, archive []byte, request domain.HelmChartPlanRequest) (int, error)
 	UninstallHelmChart(ctx context.Context, actor domain.Actor, namespace, releaseName string) error
 	RollbackHelmChart(ctx context.Context, actor domain.Actor, namespace, releaseName string, targetRevision int) (int, error)
+}
+
+// HelmResourceObserver exposes live object status for an operation. Executors
+// that cannot observe resources still work; runOperation then keeps the plan
+// snapshot without attempting progress reads.
+type HelmResourceObserver interface {
+	ObserveHelmOperationResources(ctx context.Context, resources []domain.HelmChartPlanResource) []domain.HelmOperationResource
 }
 
 type Service struct {
@@ -223,6 +238,33 @@ func (s *Service) Chart(ctx context.Context, actor domain.Actor, repositoryID, c
 	return detail, nil
 }
 
+// SyncChart forces a fresh Chart package download and refreshes the metadata
+// extracted from that package. It does not re-synchronize the repository index.
+func (s *Service) SyncChart(ctx context.Context, actor domain.Actor, repositoryID, chartName string) (domain.HelmChartDetail, error) {
+	if err := s.requireRead(ctx, actor); err != nil {
+		return domain.HelmChartDetail{}, err
+	}
+	repository, chartName, err := s.repositoryAndChart(ctx, repositoryID, chartName)
+	if err != nil {
+		return domain.HelmChartDetail{}, err
+	}
+	var detail domain.HelmChartDetail
+	if refresher, ok := s.source.(ChartRefresher); ok {
+		detail, err = refresher.RefreshChart(ctx, repository, chartName)
+	} else {
+		detail, err = s.source.Detail(ctx, repository, chartName)
+	}
+	if err != nil {
+		s.audit(ctx, actor, "sync-helm-chart", chartName, err)
+		return domain.HelmChartDetail{}, err
+	}
+	if strings.HasPrefix(strings.ToLower(repository.URL), "http://") {
+		detail.Warnings = append(detail.Warnings, "该仓库使用明文 HTTP，传输内容可能被篡改；生产环境请使用 HTTPS")
+	}
+	s.audit(ctx, actor, "sync-helm-chart", chartName, nil)
+	return detail, nil
+}
+
 func (s *Service) Plan(ctx context.Context, actor domain.Actor, input domain.HelmChartPlanRequest) (domain.HelmChartPlan, error) {
 	plan, _, err := s.plan(ctx, actor, input)
 	return plan, err
@@ -245,11 +287,10 @@ func (s *Service) Install(ctx context.Context, actor domain.Actor, input domain.
 	if err := s.saveOperation(ctx, &operation); err != nil {
 		return domain.HelmChartOperation{}, err
 	}
-	revision, err := s.executor.InstallHelmChart(ctx, actor, archive, input.HelmChartPlanRequest)
-	operation.Revision = revision
-	s.finishOperation(ctx, &operation, err)
-	s.audit(ctx, actor, "install-helm-chart", input.ReleaseName, err)
-	return operation, err
+	s.runOperation(ctx, operation, actor, "install-helm-chart", func(runCtx context.Context) (int, error) {
+		return s.executor.InstallHelmChart(runCtx, actor, archive, input.HelmChartPlanRequest)
+	})
+	return operation, nil
 }
 
 func (s *Service) Upgrade(ctx context.Context, actor domain.Actor, input domain.HelmChartOperationRequest) (domain.HelmChartOperation, error) {
@@ -269,11 +310,10 @@ func (s *Service) Upgrade(ctx context.Context, actor domain.Actor, input domain.
 	if err := s.saveOperation(ctx, &operation); err != nil {
 		return domain.HelmChartOperation{}, err
 	}
-	revision, err := s.executor.UpgradeHelmChart(ctx, actor, archive, input.HelmChartPlanRequest)
-	operation.Revision = revision
-	s.finishOperation(ctx, &operation, err)
-	s.audit(ctx, actor, "upgrade-helm-chart", input.ReleaseName, err)
-	return operation, err
+	s.runOperation(ctx, operation, actor, "upgrade-helm-chart", func(runCtx context.Context) (int, error) {
+		return s.executor.UpgradeHelmChart(runCtx, actor, archive, input.HelmChartPlanRequest)
+	})
+	return operation, nil
 }
 
 func (s *Service) Uninstall(ctx context.Context, actor domain.Actor, input domain.HelmChartUninstallRequest) (domain.HelmChartOperation, error) {
@@ -292,10 +332,10 @@ func (s *Service) Uninstall(ctx context.Context, actor domain.Actor, input domai
 	if err := s.saveOperation(ctx, &operation); err != nil {
 		return domain.HelmChartOperation{}, err
 	}
-	err := s.executor.UninstallHelmChart(ctx, actor, input.Namespace, input.ReleaseName)
-	s.finishOperation(ctx, &operation, err)
-	s.audit(ctx, actor, "uninstall-helm-chart", input.ReleaseName, err)
-	return operation, err
+	s.runOperation(ctx, operation, actor, "uninstall-helm-chart", func(runCtx context.Context) (int, error) {
+		return 0, s.executor.UninstallHelmChart(runCtx, actor, input.Namespace, input.ReleaseName)
+	})
+	return operation, nil
 }
 
 func (s *Service) Rollback(ctx context.Context, actor domain.Actor, input domain.HelmChartRollbackRequest) (domain.HelmChartOperation, error) {
@@ -316,11 +356,10 @@ func (s *Service) Rollback(ctx context.Context, actor domain.Actor, input domain
 	if err := s.saveOperation(ctx, &operation); err != nil {
 		return domain.HelmChartOperation{}, err
 	}
-	revision, err := s.executor.RollbackHelmChart(ctx, actor, input.Namespace, input.ReleaseName, input.TargetRevision)
-	operation.Revision = revision
-	s.finishOperation(ctx, &operation, err)
-	s.audit(ctx, actor, "rollback-helm-chart", input.ReleaseName, err)
-	return operation, err
+	s.runOperation(ctx, operation, actor, "rollback-helm-chart", func(runCtx context.Context) (int, error) {
+		return s.executor.RollbackHelmChart(runCtx, actor, input.Namespace, input.ReleaseName, input.TargetRevision)
+	})
+	return operation, nil
 }
 
 func (s *Service) Operation(ctx context.Context, actor domain.Actor, id string) (domain.HelmChartOperation, error) {
@@ -417,6 +456,9 @@ func (s *Service) repositoryAndChart(ctx context.Context, repositoryID, chartNam
 }
 
 func (s *Service) refreshBestEffort(ctx context.Context, repository domain.HelmRepository) domain.HelmRepository {
+	if invalidator, ok := s.source.(interface{ Invalidate(domain.HelmRepository) }); ok {
+		invalidator.Invalidate(repository)
+	}
 	started := time.Now().UTC()
 	charts, err := s.source.Charts(ctx, repository)
 	sync := &domain.HelmRepositorySync{OK: err == nil, SyncedAt: started}
@@ -668,11 +710,33 @@ func (s *Service) requireRead(ctx context.Context, actor domain.Actor) error {
 }
 
 func (s *Service) newOperation(action string, request domain.HelmChartPlanRequest, plan domain.HelmChartPlan) domain.HelmChartOperation {
+	resources := make([]domain.HelmOperationResource, 0, len(plan.Resources))
+	for _, resource := range plan.Resources {
+		if len(resources) >= maxOperationResources {
+			break
+		}
+		message := "等待 Helm 创建资源"
+		if resource.Action == "update" {
+			message = "等待 Helm 更新资源"
+		}
+		if resource.Hook {
+			message = "等待 Helm 执行 Hook"
+		}
+		resources = append(resources, domain.HelmOperationResource{
+			APIVersion: resource.APIVersion, Kind: resource.Kind, Namespace: resource.Namespace,
+			Name: resource.Name, Hook: resource.Hook, CRD: resource.CRD, Action: resource.Action,
+			APIGroup: resource.APIGroup, Resource: resource.Resource, Status: "pending", Message: message,
+		})
+	}
+	warnings := append([]string(nil), plan.Warnings...)
+	if len(plan.Resources) > maxOperationResources {
+		warnings = append(warnings, fmt.Sprintf("该操作包含 %d 个资源，进度列表仅展示前 %d 个", len(plan.Resources), maxOperationResources))
+	}
 	return domain.HelmChartOperation{
 		ID: newOperationID(), Type: action, Status: domain.HelmOperationRunning,
 		RepositoryID: request.RepositoryID, ChartName: request.ChartName, ChartVersion: request.Version,
 		Digest: plan.Digest, Namespace: request.Namespace, ReleaseName: request.ReleaseName,
-		StartedAt: time.Now().UTC(), Warnings: append([]string(nil), plan.Warnings...),
+		StartedAt: time.Now().UTC(), Resources: resources, Warnings: warnings,
 	}
 }
 
@@ -692,6 +756,74 @@ func (s *Service) finishOperation(ctx context.Context, operation *domain.HelmCha
 	if err := s.repository.SaveHelmChartOperation(ctx, *operation); err != nil {
 		operation.Warnings = append(operation.Warnings, "操作已执行，但操作记录保存失败："+truncate(err.Error(), 200))
 	}
+}
+
+func (s *Service) runOperation(parent context.Context, operation domain.HelmChartOperation, actor domain.Actor, action string, execute func(context.Context) (int, error)) {
+	go func() {
+		runCtx, cancel := context.WithTimeout(context.WithoutCancel(parent), helmOperationTimeout)
+		defer cancel()
+
+		var operationMu sync.Mutex
+		stopProgress := make(chan struct{})
+		progressDone := make(chan struct{})
+		observer, canObserve := s.executor.(HelmResourceObserver)
+		if canObserve && len(operation.Resources) > 0 {
+			planned := operationPlanResources(operation.Resources)
+			go func() {
+				defer close(progressDone)
+				ticker := time.NewTicker(helmProgressInterval)
+				defer ticker.Stop()
+				observe := func() {
+					resources := observer.ObserveHelmOperationResources(runCtx, planned)
+					if len(resources) == 0 {
+						return
+					}
+					operationMu.Lock()
+					operation.Resources = resources
+					snapshot := operation
+					operationMu.Unlock()
+					_ = s.saveOperation(runCtx, &snapshot)
+				}
+				observe()
+				for {
+					select {
+					case <-ticker.C:
+						observe()
+					case <-stopProgress:
+						return
+					}
+				}
+			}()
+		} else {
+			close(progressDone)
+		}
+
+		revision, err := execute(runCtx)
+		close(stopProgress)
+		<-progressDone
+
+		operationMu.Lock()
+		operation.Revision = revision
+		finished := operation
+		operationMu.Unlock()
+
+		finishCtx, finishCancel := context.WithTimeout(context.WithoutCancel(parent), 15*time.Second)
+		defer finishCancel()
+		s.finishOperation(finishCtx, &finished, err)
+		s.audit(finishCtx, actor, action, operation.ReleaseName, err)
+	}()
+}
+
+func operationPlanResources(resources []domain.HelmOperationResource) []domain.HelmChartPlanResource {
+	planned := make([]domain.HelmChartPlanResource, 0, len(resources))
+	for _, resource := range resources {
+		planned = append(planned, domain.HelmChartPlanResource{
+			APIVersion: resource.APIVersion, Kind: resource.Kind, Namespace: resource.Namespace,
+			Name: resource.Name, Hook: resource.Hook, CRD: resource.CRD, Action: resource.Action,
+			APIGroup: resource.APIGroup, Resource: resource.Resource,
+		})
+	}
+	return planned
 }
 
 func (s *Service) audit(ctx context.Context, actor domain.Actor, action string, name string, err error) {
@@ -719,14 +851,13 @@ func computePlanDigest(request domain.HelmChartPlanRequest, repository domain.He
 		Namespace       string                         `json:"namespace"`
 		ReleaseName     string                         `json:"releaseName"`
 		CurrentRevision int                            `json:"currentRevision"`
-		Manifest        string                         `json:"manifest"`
 		Values          string                         `json:"values"`
 		Resources       []domain.HelmChartPlanResource `json:"resources"`
 	}{
 		Action: request.Mode, RepositoryID: repository.ID, RepositoryURL: repository.URL,
 		ChartName: request.ChartName, ChartVersion: request.Version, Digest: actualDigest,
 		Namespace: request.Namespace, ReleaseName: request.ReleaseName,
-		CurrentRevision: template.CurrentRevision, Manifest: template.Manifest, Values: template.Values, Resources: template.Resources,
+		CurrentRevision: template.CurrentRevision, Values: template.Values, Resources: template.Resources,
 	}
 	encoded, _ := json.Marshal(payload)
 	sum := sha256.Sum256(encoded)

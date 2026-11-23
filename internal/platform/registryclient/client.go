@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"dosh/internal/domain"
+	"dosh/internal/platform/egress"
 )
 
 const (
@@ -29,6 +30,7 @@ var challengeParamPattern = regexp.MustCompile(`([A-Za-z][A-Za-z0-9_-]*)="([^"]*
 
 type Client struct {
 	timeout time.Duration
+	egress  *egress.Factory
 	mu      sync.Mutex
 	tokens  map[string]cachedToken
 }
@@ -43,11 +45,15 @@ type challenge struct {
 	params map[string]string
 }
 
-func New(timeout time.Duration) *Client {
+func New(timeout time.Duration, factories ...*egress.Factory) *Client {
 	if timeout <= 0 {
 		timeout = 10 * time.Second
 	}
-	return &Client{timeout: timeout, tokens: map[string]cachedToken{}}
+	factory := egress.NewDirect()
+	if len(factories) > 0 && factories[0] != nil {
+		factory = factories[0]
+	}
+	return &Client{timeout: timeout, egress: factory, tokens: map[string]cachedToken{}}
 }
 
 func (c *Client) Test(ctx context.Context, registry domain.ContainerRegistry) (domain.ContainerRegistryCapabilities, error) {
@@ -313,7 +319,6 @@ func (c *Client) bearerToken(ctx context.Context, client *http.Client, registry 
 }
 
 func (c *Client) httpClient(registry domain.ContainerRegistry) (*http.Client, error) {
-	transport := http.DefaultTransport.(*http.Transport).Clone()
 	tlsConfig := &tls.Config{MinVersion: tls.VersionTLS12, InsecureSkipVerify: registry.InsecureSkipTLSVerify} //nolint:gosec
 	if strings.TrimSpace(registry.Credentials.CAPEM) != "" {
 		roots := x509.NewCertPool()
@@ -322,7 +327,7 @@ func (c *Client) httpClient(registry domain.ContainerRegistry) (*http.Client, er
 		}
 		tlsConfig.RootCAs = roots
 	}
-	transport.TLSClientConfig = tlsConfig
+	transport := c.egress.Transport(egress.ScopeRegistry, tlsConfig)
 	return &http.Client{
 		Timeout:   c.timeout,
 		Transport: transport,

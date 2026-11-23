@@ -41,6 +41,18 @@ func TestValidateAcceptsSecureLocalConfig(t *testing.T) {
 	}
 }
 
+func TestValidateDataDirectory(t *testing.T) {
+	cfg := validConfig()
+	cfg.DataDir = "/var/lib/dosh"
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate() data directory error = %v", err)
+	}
+	cfg.DataDir = "relative/cache"
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "DOSH_DATA_DIR") {
+		t.Fatalf("Validate() relative data directory error = %v", err)
+	}
+}
+
 func TestValidateAcceptsKubernetesTokenAuthConfig(t *testing.T) {
 	cfg := validConfig()
 	cfg.AuthMode = "token"
@@ -393,5 +405,77 @@ func clearDOSHEnvironment(t *testing.T) {
 		if err := os.Unsetenv(key); err != nil {
 			t.Fatalf("Unsetenv(%s): %v", key, err)
 		}
+	}
+}
+
+func TestValidateEgressProxyConfiguration(t *testing.T) {
+	cfg := validConfig()
+	cfg.EgressProxyMode = "explicit"
+	cfg.EgressHTTPSProxy = "http://proxy.example.test:3128"
+	cfg.EgressNoProxy = ".svc,.cluster.local"
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate(explicit proxy) error = %v", err)
+	}
+
+	cfg.EgressHTTPSProxy = "https://proxy-user:proxy-password@proxy.example.test:8443"
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "must not contain user information") {
+		t.Fatalf("Validate(embedded credentials) error = %v, want rejection", err)
+	}
+
+	cfg.EgressHTTPSProxy = "http://proxy.example.test:3128"
+	cfg.EgressProxyUsername = "dosh"
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "must be configured together") {
+		t.Fatalf("Validate(incomplete credentials) error = %v, want rejection", err)
+	}
+
+	cfg.EgressProxyPassword = "secret"
+	cfg.EgressProxyMode = "transparent"
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "DOSH_EGRESS_PROXY_MODE") {
+		t.Fatalf("Validate(unsupported mode) error = %v, want rejection", err)
+	}
+}
+
+func TestValidateNetworkPolicyRuntimeManagement(t *testing.T) {
+	cfg := validConfig()
+	cfg.NetworkPolicyRuntime = true
+	cfg.NetworkPolicyName = ""
+	cfg.NetworkPolicyPodLabels = ""
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "DOSH_NETWORK_POLICY_ENABLED") {
+		t.Fatalf("Validate(runtime without NetworkPolicy) error = %v", err)
+	}
+	cfg.NetworkPolicyEnabled = true
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "DOSH_NETWORK_POLICY_RUNTIME_NAME") {
+		t.Fatalf("Validate(runtime without policy name) error = %v", err)
+	}
+	cfg.NetworkPolicyName = "dosh-egress-runtime"
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "DOSH_NETWORK_POLICY_POD_SELECTOR") {
+		t.Fatalf("Validate(runtime without selector) error = %v", err)
+	}
+	cfg.NetworkPolicyPodLabels = "app.kubernetes.io/name=dosh"
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate(valid runtime management) error = %v", err)
+	}
+}
+
+func TestValidateUpdateCheckConfiguration(t *testing.T) {
+	cfg := validConfig()
+	cfg.UpdateCheckEnabled = true
+	cfg.UpdateCheckURL = "https://releases.example.test/dosh/latest"
+	cfg.UpdateCheckChannel = "stable"
+	cfg.UpdateCheckTimeout = 10 * time.Second
+	cfg.UpdateCheckCacheTTL = 6 * time.Hour
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate(update check) error = %v", err)
+	}
+
+	cfg.UpdateCheckURL = "http://releases.example.test/dosh/latest"
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "must use https") {
+		t.Fatalf("Validate(insecure update URL) error = %v, want rejection", err)
+	}
+
+	cfg.UpdateCheckURL = "https://releases.example.test/dosh/latest"
+	cfg.UpdateCheckCacheTTL = 10 * time.Second
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "DOSH_UPDATE_CHECK_CACHE_TTL") {
+		t.Fatalf("Validate(short cache TTL) error = %v, want rejection", err)
 	}
 }

@@ -3,7 +3,9 @@ package app
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -14,13 +16,18 @@ import (
 type memoryHelmRepository struct {
 	items      []domain.HelmRepository
 	operations map[string]domain.HelmChartOperation
+	mu         sync.Mutex
 }
 
 func (r *memoryHelmRepository) ListHelmRepositories(context.Context) ([]domain.HelmRepository, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	return append([]domain.HelmRepository(nil), r.items...), nil
 }
 
 func (r *memoryHelmRepository) GetHelmRepository(_ context.Context, id string) (domain.HelmRepository, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	for _, item := range r.items {
 		if item.ID == id {
 			return item, nil
@@ -30,6 +37,8 @@ func (r *memoryHelmRepository) GetHelmRepository(_ context.Context, id string) (
 }
 
 func (r *memoryHelmRepository) SaveHelmRepository(_ context.Context, repository domain.HelmRepository) (domain.HelmRepository, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	repository.Revision = "revision-1"
 	repository.UpdatedAt = time.Now().UTC()
 	repository.HasCredentials = repository.Credentials.Username != "" || repository.Credentials.Password != "" || repository.Credentials.Token != ""
@@ -45,6 +54,8 @@ func (r *memoryHelmRepository) SaveHelmRepository(_ context.Context, repository 
 }
 
 func (r *memoryHelmRepository) DeleteHelmRepository(_ context.Context, id, _ string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	for index := range r.items {
 		if r.items[index].ID == id {
 			r.items = append(r.items[:index], r.items[index+1:]...)
@@ -55,6 +66,8 @@ func (r *memoryHelmRepository) DeleteHelmRepository(_ context.Context, id, _ str
 }
 
 func (r *memoryHelmRepository) SaveHelmChartOperation(_ context.Context, operation domain.HelmChartOperation) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	if r.operations == nil {
 		r.operations = map[string]domain.HelmChartOperation{}
 	}
@@ -63,6 +76,8 @@ func (r *memoryHelmRepository) SaveHelmChartOperation(_ context.Context, operati
 }
 
 func (r *memoryHelmRepository) GetHelmChartOperation(_ context.Context, id string) (domain.HelmChartOperation, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	operation, ok := r.operations[id]
 	if !ok {
 		return domain.HelmChartOperation{}, domain.ErrNotFound
@@ -73,6 +88,25 @@ func (r *memoryHelmRepository) GetHelmChartOperation(_ context.Context, id strin
 type fakeHelmSource struct {
 	archive []byte
 	digest  string
+}
+
+type invalidatingHelmSource struct {
+	fakeHelmSource
+	invalidations int
+}
+
+type refreshingHelmSource struct {
+	fakeHelmSource
+	refreshes int
+}
+
+func (s *invalidatingHelmSource) Invalidate(domain.HelmRepository) {
+	s.invalidations++
+}
+
+func (s *refreshingHelmSource) RefreshChart(_ context.Context, repository domain.HelmRepository, chartName string) (domain.HelmChartDetail, error) {
+	s.refreshes++
+	return domain.HelmChartDetail{HelmChartSummary: domain.HelmChartSummary{RepositoryID: repository.ID, RepositoryName: repository.Name, Name: chartName, Version: "1.0.0"}, Readme: "refreshed", Values: "{}"}, nil
 }
 
 func (s fakeHelmSource) Charts(_ context.Context, repository domain.HelmRepository) ([]domain.HelmChartSummary, error) {
@@ -90,6 +124,17 @@ func (s fakeHelmSource) Download(context.Context, domain.HelmRepository, string,
 type fakeHelmExecutor struct {
 	template domain.HelmChartPlanTemplate
 	installs int
+}
+
+type rotatingHelmExecutor struct {
+	fakeHelmExecutor
+	planCalls int
+}
+
+func (e *rotatingHelmExecutor) PlanHelmChart(context.Context, domain.Actor, []byte, domain.HelmChartPlanRequest) (domain.HelmChartPlanTemplate, error) {
+	e.planCalls++
+	e.template.Manifest = fmt.Sprintf("generated-secret-data-%d", e.planCalls)
+	return e.template, nil
 }
 
 func (e *fakeHelmExecutor) PlanHelmChart(context.Context, domain.Actor, []byte, domain.HelmChartPlanRequest) (domain.HelmChartPlanTemplate, error) {
@@ -115,6 +160,24 @@ func (e *fakeHelmExecutor) RollbackHelmChart(context.Context, domain.Actor, stri
 
 func testHelmActor() domain.Actor { return domain.Actor{Username: "admin", Admin: true} }
 
+func waitForHelmOperation(t *testing.T, repository *memoryHelmRepository, id string) domain.HelmChartOperation {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		operation, err := repository.GetHelmChartOperation(context.Background(), id)
+		if err != nil {
+			t.Fatalf("GetHelmChartOperation() error = %v", err)
+		}
+		if operation.Status != domain.HelmOperationRunning && operation.Status != domain.HelmOperationPending {
+			return operation
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("operation %s did not finish: %#v", id, operation)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
 func TestCreateRepositoryStripsSecretsAndRecordsAuthType(t *testing.T) {
 	t.Parallel()
 	repository := &memoryHelmRepository{}
@@ -136,6 +199,37 @@ func TestCreateRepositoryStripsSecretsAndRecordsAuthType(t *testing.T) {
 	stored := repository.items[0]
 	if stored.Credentials.Username != "robot" || stored.Credentials.Password != "secret" || stored.Credentials.CAPEM != "ca-data" {
 		t.Fatalf("stored credentials = %#v", stored.Credentials)
+	}
+}
+
+func TestSyncRepositoryInvalidatesSourceCache(t *testing.T) {
+	t.Parallel()
+	repository := &memoryHelmRepository{items: []domain.HelmRepository{{
+		ID: "repo-1", Name: "Public", URL: "https://charts.example.com", Enabled: true,
+		AuthType: domain.HelmRepositoryAuthAnonymous, Revision: "revision-1",
+	}}}
+	source := &invalidatingHelmSource{}
+	service := New(repository, source, &fakeHelmExecutor{}, authz.NewLocal(false), nil)
+
+	if _, err := service.SyncRepository(context.Background(), testHelmActor(), "repo-1"); err != nil {
+		t.Fatalf("SyncRepository() error = %v", err)
+	}
+	if source.invalidations != 1 {
+		t.Fatalf("SyncRepository() invalidations = %d", source.invalidations)
+	}
+}
+
+func TestSyncChartRefreshesCachedPackageDetail(t *testing.T) {
+	t.Parallel()
+	repository := &memoryHelmRepository{items: []domain.HelmRepository{{ID: "repo-1", Name: "Demo", URL: "https://charts.example.com", Enabled: true}}}
+	source := &refreshingHelmSource{}
+	service := New(repository, source, &fakeHelmExecutor{}, authz.NewLocal(false), nil)
+	detail, err := service.SyncChart(context.Background(), testHelmActor(), "repo-1", "demo")
+	if err != nil {
+		t.Fatalf("SyncChart() error = %v", err)
+	}
+	if source.refreshes != 1 || detail.Readme != "refreshed" || detail.Name != "demo" {
+		t.Fatalf("SyncChart() refreshes = %d detail = %#v", source.refreshes, detail)
 	}
 }
 
@@ -257,5 +351,63 @@ func TestPlanDigestChangesWithReviewedValues(t *testing.T) {
 	changed.Values = "replicas: 2"
 	if computePlanDigest(base, repository, "sha256:abc", template) == computePlanDigest(changed, repository, "sha256:abc", changedTemplate) {
 		t.Fatal("computePlanDigest() did not change with reviewed values")
+	}
+}
+
+func TestPlanDigestIgnoresGeneratedManifestButTracksResourceSet(t *testing.T) {
+	t.Parallel()
+	repository := domain.HelmRepository{ID: "repo-1", URL: "https://charts.example.com"}
+	base := domain.HelmChartPlanRequest{HelmChartRef: domain.HelmChartRef{ChartName: "demo", Version: "1.0.0"}, Mode: "install", Namespace: "default", ReleaseName: "demo", Values: "{}"}
+	first := domain.HelmChartPlanTemplate{
+		Manifest: "data: random-one", Values: "{}",
+		Resources: []domain.HelmChartPlanResource{{APIVersion: "v1", Kind: "Secret", Namespace: "default", Name: "demo", Action: "create"}},
+	}
+	second := first
+	second.Manifest = "data: random-two"
+	if computePlanDigest(base, repository, "sha256:abc", first) != computePlanDigest(base, repository, "sha256:abc", second) {
+		t.Fatal("computePlanDigest() changed with generated manifest data")
+	}
+	second.Resources = append([]domain.HelmChartPlanResource(nil), first.Resources...)
+	second.Resources[0].Action = "update"
+	if computePlanDigest(base, repository, "sha256:abc", first) == computePlanDigest(base, repository, "sha256:abc", second) {
+		t.Fatal("computePlanDigest() did not change with the reviewed resource set")
+	}
+}
+
+func TestInstallAcceptsPlanWhenGeneratedManifestChanges(t *testing.T) {
+	t.Parallel()
+	repository := &memoryHelmRepository{items: []domain.HelmRepository{{
+		ID: "repo-1", Name: "Public", URL: "https://charts.example.com", Enabled: true, AuthType: domain.HelmRepositoryAuthAnonymous,
+	}}}
+	executor := &rotatingHelmExecutor{fakeHelmExecutor: fakeHelmExecutor{template: domain.HelmChartPlanTemplate{
+		Values: "replicas: 1\n",
+		Resources: []domain.HelmChartPlanResource{{
+			APIVersion: "v1", Kind: "Secret", Namespace: "default", Name: "demo", Resource: "secrets", Action: "create",
+		}},
+	}}}
+	service := New(repository, fakeHelmSource{archive: []byte("chart"), digest: "sha256:abc"}, executor, authz.NewLocal(false), nil)
+	request := domain.HelmChartPlanRequest{HelmChartRef: domain.HelmChartRef{
+		RepositoryID: "repo-1", ChartName: "demo", Version: "1.0.0",
+	}, Mode: "install", Namespace: "default", ReleaseName: "demo", Values: "replicas: 1\n"}
+
+	plan, err := service.Plan(context.Background(), testHelmActor(), request)
+	if err != nil {
+		t.Fatalf("Plan() error = %v", err)
+	}
+	operation, err := service.Install(context.Background(), testHelmActor(), domain.HelmChartOperationRequest{
+		HelmChartPlanRequest: request, PlanDigest: plan.PlanDigest, Confirmation: "demo",
+	})
+	if err != nil {
+		t.Fatalf("Install() error = %v", err)
+	}
+	operation = waitForHelmOperation(t, repository, operation.ID)
+	if operation.Status != domain.HelmOperationSuccess || operation.Revision != 1 {
+		t.Fatalf("Install() operation = %#v", operation)
+	}
+	if len(operation.Resources) != 1 || operation.Resources[0].Kind != "Secret" || operation.Resources[0].Status != "pending" {
+		t.Fatalf("Install() resource progress = %#v", operation.Resources)
+	}
+	if executor.planCalls != 2 || executor.installs != 1 {
+		t.Fatalf("executor calls = plan %d, install %d", executor.planCalls, executor.installs)
 	}
 }

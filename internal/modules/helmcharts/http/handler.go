@@ -103,6 +103,16 @@ func (h *Handler) GetChart(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	httpx.JSON(w, stdhttp.StatusOK, item)
 }
 
+func (h *Handler) SyncChart(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	actor, _ := domain.ActorFromContext(r.Context())
+	item, err := h.service.SyncChart(r.Context(), actor, chi.URLParam(r, "repositoryId"), chi.URLParam(r, "chartName"))
+	if err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	httpx.JSON(w, stdhttp.StatusOK, item)
+}
+
 func (h *Handler) Plan(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	var input domain.HelmChartPlanRequest
 	if !httpx.DecodeJSON(w, r, &input) {
@@ -196,5 +206,6 @@ func (h *Handler) Mount(r chi.Router) {
 	r.Post("/helm/charts/uninstall", h.Uninstall)
 	r.Post("/helm/charts/rollback", h.Rollback)
 	r.Get("/helm/charts/{repositoryId}/{chartName}", h.GetChart)
+	r.Post("/helm/charts/{repositoryId}/{chartName}/sync", h.SyncChart)
 	r.Get("/helm/operations/{id}", h.Operation)
 }

@@ -1,14 +1,14 @@
 import { useEffect, useState } from "react";
 import { Link, Outlet, useNavigate, useRouterState } from "@tanstack/react-router";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import {
-  Activity, AppWindow, Bell, Boxes, ChevronDown, CircleDot, CloudCog, Database, FileCode2, FolderTree, HelpCircle, Layers3,
+  Activity, AppWindow, Bell, Boxes, ChevronDown, CircleDot, CloudCog, Database, FileCode2, FolderTree, HelpCircle, Info, Layers3,
   KeyRound, LayoutDashboard, LogOut, Menu, Moon, Network, PackageSearch, ScrollText, Search, Server, Settings2, ShieldCheck, Sun, X,
   type LucideIcon,
 } from "lucide-react";
 import { ApiError, api } from "@/api/client";
-import type { Overview } from "@/api/types";
+import type { Overview, SystemInfo } from "@/api/types";
 import { sessionQueryKey, useSessionQuery } from "@/features/auth/use-session";
 import { useOverviewQuery } from "@/features/overview/use-overview-query";
 import { GlobalSearch } from "@/components/layout/global-search";
@@ -38,6 +38,7 @@ const nav: Array<{ href: string; label: string; icon: LucideIcon; adminOnly?: bo
 
 const secondaryNav: Array<{ href: string; label: string; icon: LucideIcon; match: (path: string) => boolean }> = [
   { href: "/registries", label: "镜像仓库", icon: Boxes, match: (path: string) => path.startsWith("/registries") },
+  { href: "/system", label: "系统信息", icon: Info, match: (path: string) => path.startsWith("/system") },
   { href: "/governance", label: "治理与策略", icon: ShieldCheck, match: (path: string) => path.startsWith("/governance") },
   { href: "/access", label: "权限检查", icon: KeyRound, match: (path: string) => path.startsWith("/access") },
 ];
@@ -103,6 +104,13 @@ export function AppShell() {
   const [searchOpen, setSearchOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
   const [otherOpen, setOtherOpen] = useState(false);
+  const systemInfo = useQuery<SystemInfo>({
+    queryKey: ["system", "info"],
+    queryFn: api.systemInfo,
+    enabled: helpOpen,
+    staleTime: 60_000,
+    retry: false,
+  });
   const cluster = clusterPresentation(overview.data, overview.error);
   const { theme, toggleTheme } = useTheme();
   useResourcePreferencesSync(Boolean(session.data));
@@ -179,7 +187,7 @@ export function AppShell() {
           <Button variant="ghost" size="icon" onClick={() => setHelpOpen(true)} aria-label="帮助" className="hidden sm:inline-flex"><HelpCircle className="h-4 w-4" /></Button>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="ghost" className="h-9 gap-2 px-1.5 sm:px-2">
+              <Button variant="ghost" className="h-9 gap-2 px-1.5 sm:px-2" aria-label={`用户菜单 ${session.data?.user.username || "管理员"}`}>
                 <span className="grid h-6 w-6 place-items-center rounded-full bg-primary/10 text-xs font-semibold text-primary">{(session.data?.user.username || "A").slice(0, 1).toUpperCase()}</span>
                 <span className="hidden max-w-28 truncate text-sm lg:block">{session.data?.user.username || "管理员"}</span>
                 <ChevronDown className="hidden h-3.5 w-3.5 text-muted-foreground lg:block" />
@@ -266,7 +274,15 @@ export function AppShell() {
           <div className="space-y-2 text-sm text-muted-foreground">
             <p>支持集群总览、节点、工作负载、Pod、日志、事件、服务、配置、Secret、存储资源，以及通过 API Discovery 浏览内置资源和 CRD 类型。</p>
             <p>所有写操作均经过会话、CSRF、权限和审计检查。默认只读模式可在 Helm values 中切换。</p>
+            {systemInfo.data ? (
+              <dl className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1 rounded-md border bg-muted/25 p-3 text-xs">
+                <dt className="text-muted-foreground">版本</dt><dd className="min-w-0 break-all font-mono text-foreground">v{systemInfo.data.version}</dd>
+                <dt className="text-muted-foreground">Chart</dt><dd className="min-w-0 break-all font-mono text-foreground">{systemInfo.data.chartVersion}</dd>
+                <dt className="text-muted-foreground">Commit</dt><dd className="min-w-0 break-all font-mono text-foreground">{systemInfo.data.commit}</dd>
+              </dl>
+            ) : systemInfo.isError ? <p className="text-xs text-warning">版本信息暂时不可用。</p> : <p className="text-xs text-muted-foreground">正在读取版本信息…</p>}
           </div>
+          <div className="flex justify-end"><Button variant="outline" size="sm" asChild><Link to="/system" onClick={() => setHelpOpen(false)}><Info className="h-3.5 w-3.5" />查看系统信息</Link></Button></div>
         </DialogContent>
       </Dialog>
     </div>

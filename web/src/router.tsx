@@ -121,6 +121,11 @@ const namespacesRoute = createRoute({ getParentRoute: () => appRoute, path: "/na
 const namespaceDetailRoute = createRoute({ getParentRoute: () => appRoute, path: "/namespaces/$name", component: NamespaceDetailPage, validateSearch: parseListSearch });
 const eventsRoute = createRoute({ getParentRoute: () => appRoute, path: "/events", component: EventsPage, validateSearch: parseListSearch });
 const auditRoute = createRoute({ getParentRoute: () => appRoute, path: "/audit", component: AuditPage, validateSearch: parseListSearch });
+const systemRoute = createRoute({
+  getParentRoute: () => appRoute,
+  path: "/system",
+  component: lazyRouteComponent(() => import("@/features/system/system-page"), "SystemPage"),
+});
 
 export const routeTree = rootRoute.addChildren([
   loginRoute,
@@ -159,6 +164,7 @@ export const routeTree = rootRoute.addChildren([
     namespaceDetailRoute,
     eventsRoute,
     auditRoute,
+    systemRoute,
   ]),
 ]);
 

@@ -191,20 +191,38 @@ type HelmChartRollbackRequest struct {
 }
 
 type HelmChartOperation struct {
-	ID           string    `json:"id"`
-	Type         string    `json:"type"`
-	Status       string    `json:"status"`
-	Message      string    `json:"message,omitempty"`
-	RepositoryID string    `json:"repositoryId,omitempty"`
-	ChartName    string    `json:"chartName,omitempty"`
-	ChartVersion string    `json:"chartVersion,omitempty"`
-	Digest       string    `json:"digest,omitempty"`
-	Namespace    string    `json:"namespace"`
-	ReleaseName  string    `json:"releaseName"`
-	Revision     int       `json:"revision,omitempty"`
-	Warnings     []string  `json:"warnings,omitempty"`
-	StartedAt    time.Time `json:"startedAt"`
-	FinishedAt   time.Time `json:"finishedAt,omitempty"`
+	ID           string                  `json:"id"`
+	Type         string                  `json:"type"`
+	Status       string                  `json:"status"`
+	Message      string                  `json:"message,omitempty"`
+	RepositoryID string                  `json:"repositoryId,omitempty"`
+	ChartName    string                  `json:"chartName,omitempty"`
+	ChartVersion string                  `json:"chartVersion,omitempty"`
+	Digest       string                  `json:"digest,omitempty"`
+	Namespace    string                  `json:"namespace"`
+	ReleaseName  string                  `json:"releaseName"`
+	Revision     int                     `json:"revision,omitempty"`
+	Resources    []HelmOperationResource `json:"resources,omitempty"`
+	Warnings     []string                `json:"warnings,omitempty"`
+	StartedAt    time.Time               `json:"startedAt"`
+	FinishedAt   time.Time               `json:"finishedAt,omitempty"`
+}
+
+// HelmOperationResource is the live status of one resource rendered by a Helm
+// operation. The plan identity is copied so clients can keep rendering stable
+// progress rows even after the operation record is refreshed.
+type HelmOperationResource struct {
+	APIVersion string `json:"apiVersion"`
+	Kind       string `json:"kind"`
+	Namespace  string `json:"namespace,omitempty"`
+	Name       string `json:"name"`
+	Hook       bool   `json:"hook"`
+	CRD        bool   `json:"crd"`
+	Action     string `json:"action"`
+	APIGroup   string `json:"apiGroup,omitempty"`
+	Resource   string `json:"resource"`
+	Status     string `json:"status"`
+	Message    string `json:"message,omitempty"`
 }
 
 const (

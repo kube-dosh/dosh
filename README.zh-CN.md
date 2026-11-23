@@ -225,8 +225,55 @@ IMAGE=registry.example.com/dosh/dosh make image TAG=0.1.8
 | `auth.sessionTTL` | `8h` | 登录会话有效期，最大 8 小时 |
 | `runtime.clusterName` | `kubedo-lab` | 控制台展示的集群名称 |
 | `runtime.readOnly` | `false` | 是否禁用全部写操作 |
+| `egress.proxy.mode` | `environment` | 统一出站策略：`environment`、`explicit` 或 `direct` |
+| `egress.proxy.httpProxy` / `httpsProxy` | `""` | `explicit` 模式下的代理地址；代理认证只能通过 Secret 注入 |
+| `egress.proxy.existingSecret` | `""` | 提供 `DOSH_EGRESS_PROXY_USERNAME` / `DOSH_EGRESS_PROXY_PASSWORD` 的 Secret |
+| `egress.proxy.ca.existingConfigMap` | `""` | 代理 TLS 检查所需的自定义 CA ConfigMap |
+| `networkPolicy.outboundProxy.ipBlocks` | `[]` | NetworkPolicy 下允许访问代理的 CIDR；`explicit` 模式开启 NetworkPolicy 时必填 |
+| `networkPolicy.runtimeManagement.enabled` | `false` | 允许 Dosh 保存运行时代理时自动维护独立的精确代理 NetworkPolicy |
+| `updateCheck.enabled` | `false` | 是否启用 Dosh 更新检查；只提示版本，不自动升级 |
+| `updateCheck.url` / `channel` | GitHub Releases / `stable` | 更新源、稳定版或预发布通道 |
 | `audit.webhook.enabled` | `false` | 是否向 HTTPS 审计接收端投递事件 |
 | `networkPolicy.enabled` | `true` | 是否创建默认网络策略 |
+
+### 统一出站网络
+
+Helm Chart 拉取、OCI Chart、镜像仓目录/Tag 探测、OIDC 发现与 Token 交换、审计 Webhook 和 Dosh 更新检查统一经过 `internal/platform/egress` 客户端工厂。修改代理策略不需要分别配置各个功能；新接入的外部拉取能力也不应绕过该工厂。
+
+- `environment`：读取容器环境的 `HTTP_PROXY`、`HTTPS_PROXY` 和 `NO_PROXY`，适合由集群注入代理。
+- `explicit`：使用 `egress.proxy.httpProxy` / `httpsProxy` / `noProxy`。URL 中禁止写入用户名、密码或查询参数，凭据通过 Kubernetes Secret 注入。
+- `direct`：强制直连，忽略环境代理。
+
+Kubernetes API、Pod Exec、日志流、Port-forward 和浏览器访问始终直连集群，不经过业务出站代理。开启 NetworkPolicy 时必须显式放行代理 CIDR，Chart 不会自动使用 `0.0.0.0/0` 兜底：
+
+```yaml
+egress:
+  proxy:
+    mode: explicit
+    httpsProxy: https://proxy.operations.example.test:8443
+    noProxy: .svc,.cluster.local,kubernetes.default.svc
+    existingSecret: dosh-egress-proxy
+    ca:
+      existingConfigMap: dosh-egress-ca
+
+networkPolicy:
+  outboundProxy:
+    ipBlocks:
+      - 10.20.0.0/24
+    ports:
+      - 8443
+  runtimeManagement:
+    enabled: true
+    policyName: ""
+
+updateCheck:
+  enabled: true
+  channel: stable
+```
+
+系统信息页 `/system` 展示版本、构建时间、Go 版本、Chart 版本、认证模式、只读状态和脱敏后的代理状态，并可复制诊断信息。更新检查只有管理员可以手动触发，且只展示状态和 Release Notes 链接。
+
+开启 `networkPolicy.runtimeManagement.enabled` 后，保存代理前会解析目标域名到具体 IP，并只放行对应的 `/32` 或 `/128` 与端口；更换代理地址不再需要人工升级 Helm。切回 `direct` 或 `bootstrap` 会删除专用策略。未开启时，页面预检会明确列出需要写入 `outboundProxy` 的精确 CIDR 和端口。
 
 TLS 证书更新后，Dosh 默认每 30 秒检查一次挂载文件并热加载，不需要重启 Pod。详细证书、审计、网络策略和回滚流程见 [`docs/operations-runbook.md`](docs/operations-runbook.md)。
 
@@ -300,6 +347,7 @@ scripts/                 构建、验证和发布辅助脚本
 ## 文档
 
 - [运维手册](docs/operations-runbook.md)：部署、证书、Token、审计、回滚和故障排查
+- [NFS 挂载卷](docs/nfs-persistence.md)：可选 RWX 卷的部署与挂载检查
 - [Helm Chart 管理](docs/helm-chart-management.md)：受控仓库、凭据、计划审阅、RBAC 和生命周期操作
 - [EARS 实施计划](docs/ears-implementation-plan.md)：需求、验收标准和实施步骤
 - [集群管理路线图](docs/cluster-management-roadmap.md)：后续能力规划

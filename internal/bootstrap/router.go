@@ -23,6 +23,7 @@ import (
 	resiliencehttp "dosh/internal/modules/resilience/http"
 	resourceshttp "dosh/internal/modules/resources/http"
 	storagehttp "dosh/internal/modules/storage/http"
+	systemhttp "dosh/internal/modules/system/http"
 	workloadshttp "dosh/internal/modules/workloads/http"
 	yamlhttp "dosh/internal/modules/yaml/http"
 	"dosh/internal/platform/config"
@@ -56,6 +57,7 @@ type routerDependencies struct {
 	storage       *storagehttp.Handler
 	yaml          *yamlhttp.Handler
 	auditHistory  *audithistoryhttp.Handler
+	system        *systemhttp.Handler
 }
 
 func buildRouter(deps routerDependencies) (stdhttp.Handler, error) {
@@ -108,6 +110,7 @@ func buildRouter(deps routerDependencies) (stdhttp.Handler, error) {
 			deps.storage.Mount(r)
 			deps.yaml.Mount(r)
 			deps.auditHistory.Mount(r)
+			deps.system.Mount(r)
 		})
 	})
 

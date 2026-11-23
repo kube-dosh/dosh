@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -25,6 +26,7 @@ type Config struct {
 	LoginRateLimitMode      string
 	LoginRateLimitNamespace string
 	PreferencesNamespace    string
+	DataDir                 string
 	CookieSecure            bool
 	ReadOnly                bool
 	KubeQPS                 float32
@@ -40,7 +42,29 @@ type Config struct {
 	PortForwardMaxSessions  int
 	LogLevel                string
 	ClusterName             string
+	ChartVersion            string
 	InsecureSkipVerify      bool
+	EgressProxyMode         string
+	EgressHTTPProxy         string
+	EgressHTTPSProxy        string
+	EgressNoProxy           string
+	EgressProxyUsername     string
+	EgressProxyPassword     string
+	EgressProxyCAFile       string
+	NetworkPolicyEnabled    bool
+	NetworkPolicyRuntime    bool
+	NetworkPolicyName       string
+	NetworkPolicyHelmName   string
+	NetworkPolicyPodLabels  string
+	EnvironmentHTTPProxy    string
+	EnvironmentHTTPSProxy   string
+	EnvironmentNoProxy      string
+	UpdateCheckEnabled      bool
+	UpdateCheckURL          string
+	UpdateCheckToken        string
+	UpdateCheckChannel      string
+	UpdateCheckTimeout      time.Duration
+	UpdateCheckCacheTTL     time.Duration
 	AuditWebhookURL         string
 	AuditWebhookToken       string
 	AuditWebhookHMAC        string
@@ -77,6 +101,7 @@ func Load() (Config, error) {
 		LoginRateLimitMode:      strings.ToLower(env("DOSH_LOGIN_RATE_LIMIT_MODE", "memory")),
 		LoginRateLimitNamespace: strings.TrimSpace(env("DOSH_LOGIN_RATE_LIMIT_NAMESPACE", "")),
 		PreferencesNamespace:    strings.TrimSpace(env("DOSH_PREFERENCES_NAMESPACE", "")),
+		DataDir:                 strings.TrimSpace(env("DOSH_DATA_DIR", "/var/lib/dosh")),
 		ReadOnly:                boolEnv("DOSH_READ_ONLY", false, &loadErrs),
 		KubeQPS:                 floatEnv("DOSH_KUBE_QPS", 50, &loadErrs),
 		KubeBurst:               intEnv("DOSH_KUBE_BURST", 100, &loadErrs),
@@ -91,7 +116,29 @@ func Load() (Config, error) {
 		PortForwardMaxSessions:  intEnv("DOSH_PORT_FORWARD_MAX_SESSIONS_PER_USER", 4, &loadErrs),
 		LogLevel:                strings.ToLower(env("DOSH_LOG_LEVEL", "info")),
 		ClusterName:             env("DOSH_CLUSTER_NAME", "kubernetes"),
+		ChartVersion:            env("DOSH_CHART_VERSION", "unknown"),
 		InsecureSkipVerify:      boolEnv("DOSH_INSECURE_SKIP_VERIFY", false, &loadErrs),
+		EgressProxyMode:         strings.ToLower(strings.TrimSpace(env("DOSH_EGRESS_PROXY_MODE", "environment"))),
+		EgressHTTPProxy:         strings.TrimSpace(env("DOSH_EGRESS_HTTP_PROXY", "")),
+		EgressHTTPSProxy:        strings.TrimSpace(env("DOSH_EGRESS_HTTPS_PROXY", "")),
+		EgressNoProxy:           strings.TrimSpace(env("DOSH_EGRESS_NO_PROXY", "")),
+		EgressProxyUsername:     env("DOSH_EGRESS_PROXY_USERNAME", ""),
+		EgressProxyPassword:     env("DOSH_EGRESS_PROXY_PASSWORD", ""),
+		EgressProxyCAFile:       strings.TrimSpace(env("DOSH_EGRESS_PROXY_CA_FILE", "")),
+		NetworkPolicyEnabled:    boolEnv("DOSH_NETWORK_POLICY_ENABLED", false, &loadErrs),
+		NetworkPolicyRuntime:    boolEnv("DOSH_NETWORK_POLICY_RUNTIME_MANAGEMENT_ENABLED", false, &loadErrs),
+		NetworkPolicyName:       strings.TrimSpace(env("DOSH_NETWORK_POLICY_RUNTIME_NAME", "dosh-egress-runtime")),
+		NetworkPolicyHelmName:   strings.TrimSpace(env("DOSH_NETWORK_POLICY_HELM_NAME", "")),
+		NetworkPolicyPodLabels:  strings.TrimSpace(env("DOSH_NETWORK_POLICY_POD_SELECTOR", "")),
+		EnvironmentHTTPProxy:    firstEnv("HTTP_PROXY", "http_proxy"),
+		EnvironmentHTTPSProxy:   firstEnv("HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy"),
+		EnvironmentNoProxy:      firstEnv("NO_PROXY", "no_proxy"),
+		UpdateCheckEnabled:      boolEnv("DOSH_UPDATE_CHECK_ENABLED", false, &loadErrs),
+		UpdateCheckURL:          strings.TrimSpace(env("DOSH_UPDATE_CHECK_URL", "https://api.github.com/repos/kube-dosh/dosh/releases/latest")),
+		UpdateCheckToken:        env("DOSH_UPDATE_CHECK_TOKEN", ""),
+		UpdateCheckChannel:      strings.ToLower(strings.TrimSpace(env("DOSH_UPDATE_CHECK_CHANNEL", "stable"))),
+		UpdateCheckTimeout:      durationEnv("DOSH_UPDATE_CHECK_TIMEOUT", 10*time.Second, &loadErrs),
+		UpdateCheckCacheTTL:     durationEnv("DOSH_UPDATE_CHECK_CACHE_TTL", 6*time.Hour, &loadErrs),
 		AuditWebhookURL:         env("DOSH_AUDIT_WEBHOOK_URL", ""),
 		AuditWebhookToken:       env("DOSH_AUDIT_WEBHOOK_TOKEN", ""),
 		AuditWebhookHMAC:        env("DOSH_AUDIT_WEBHOOK_HMAC_KEY", ""),
@@ -173,6 +220,65 @@ func (c Config) Validate() error {
 	if c.InsecureSkipVerify && c.KubeAPIServer == "" {
 		errs = append(errs, errors.New("DOSH_INSECURE_SKIP_VERIFY requires DOSH_KUBE_API_SERVER"))
 	}
+	switch c.EgressProxyMode {
+	case "", "environment", "direct":
+	case "explicit":
+		if c.EgressHTTPProxy == "" && c.EgressHTTPSProxy == "" {
+			errs = append(errs, errors.New("DOSH_EGRESS_HTTP_PROXY or DOSH_EGRESS_HTTPS_PROXY is required when DOSH_EGRESS_PROXY_MODE=explicit"))
+		}
+	default:
+		errs = append(errs, errors.New("DOSH_EGRESS_PROXY_MODE must be one of environment, explicit, direct"))
+	}
+	for name, value := range map[string]string{
+		"DOSH_EGRESS_HTTP_PROXY":  c.EgressHTTPProxy,
+		"DOSH_EGRESS_HTTPS_PROXY": c.EgressHTTPSProxy,
+	} {
+		if value == "" {
+			continue
+		}
+		if err := validateProxyURL(name, value); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	if (c.EgressProxyUsername == "") != (c.EgressProxyPassword == "") {
+		errs = append(errs, errors.New("DOSH_EGRESS_PROXY_USERNAME and DOSH_EGRESS_PROXY_PASSWORD must be configured together"))
+	}
+	if len(c.EgressProxyUsername) > 1024 || len(c.EgressProxyPassword) > 4096 {
+		errs = append(errs, errors.New("DOSH egress proxy credentials exceed the supported length"))
+	}
+	if c.EgressProxyMode == "explicit" && len(c.EgressProxyCAFile) > 4096 {
+		errs = append(errs, errors.New("DOSH_EGRESS_PROXY_CA_FILE is too long"))
+	}
+	if c.NetworkPolicyRuntime && !c.NetworkPolicyEnabled {
+		errs = append(errs, errors.New("DOSH_NETWORK_POLICY_RUNTIME_MANAGEMENT_ENABLED requires DOSH_NETWORK_POLICY_ENABLED=true"))
+	}
+	if c.NetworkPolicyRuntime {
+		if c.NetworkPolicyName == "" {
+			errs = append(errs, errors.New("DOSH_NETWORK_POLICY_RUNTIME_NAME is required when runtime management is enabled"))
+		}
+		if c.NetworkPolicyPodLabels == "" {
+			errs = append(errs, errors.New("DOSH_NETWORK_POLICY_POD_SELECTOR is required when runtime management is enabled"))
+		}
+	}
+	if c.UpdateCheckEnabled {
+		if err := validateAbsoluteURL("DOSH_UPDATE_CHECK_URL", c.UpdateCheckURL, true); err != nil {
+			errs = append(errs, err)
+		}
+		switch c.UpdateCheckChannel {
+		case "stable", "prerelease":
+		default:
+			errs = append(errs, errors.New("DOSH_UPDATE_CHECK_CHANNEL must be stable or prerelease"))
+		}
+		if c.UpdateCheckTimeout <= 0 || c.UpdateCheckTimeout > time.Minute {
+			errs = append(errs, errors.New("DOSH_UPDATE_CHECK_TIMEOUT must be between 1ns and 1m"))
+		}
+		if c.UpdateCheckCacheTTL < time.Minute || c.UpdateCheckCacheTTL > 7*24*time.Hour {
+			errs = append(errs, errors.New("DOSH_UPDATE_CHECK_CACHE_TTL must be between 1m and 168h"))
+		}
+		if len(c.UpdateCheckToken) > 16*1024 {
+			errs = append(errs, errors.New("DOSH_UPDATE_CHECK_TOKEN must be at most 16KiB"))
+		}
+	}
 	if c.TLSEnabled && (c.TLSCertFile == "" || c.TLSKeyFile == "") {
 		errs = append(errs, errors.New("TLS certificate and key files are required when TLS is enabled"))
 	}
@@ -190,6 +296,11 @@ func (c Config) Validate() error {
 	}
 	if len(c.SessionKeyBytes()) < 32 {
 		errs = append(errs, errors.New("DOSH_SESSION_KEY must contain at least 32 bytes (raw or base64)"))
+	}
+	if c.DataDir != "" {
+		if !filepath.IsAbs(c.DataDir) || len(c.DataDir) > 4096 || strings.ContainsAny(c.DataDir, "\r\n\x00") {
+			errs = append(errs, errors.New("DOSH_DATA_DIR must be an absolute path of at most 4096 characters"))
+		}
 	}
 	switch c.LoginRateLimitMode {
 	case "", "memory":
@@ -286,6 +397,17 @@ func validateAbsoluteURL(name, raw string, requireHTTPS bool) error {
 	return nil
 }
 
+func validateProxyURL(name, raw string) error {
+	parsed, err := url.Parse(raw)
+	if err != nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+		return fmt.Errorf("%s must be an absolute http or https URL", name)
+	}
+	if parsed.User != nil || parsed.Fragment != "" || parsed.RawQuery != "" {
+		return fmt.Errorf("%s must not contain user information, a query, or a fragment; use DOSH_EGRESS_PROXY_USERNAME and DOSH_EGRESS_PROXY_PASSWORD", name)
+	}
+	return nil
+}
+
 func contains(values []string, expected string) bool {
 	for _, value := range values {
 		if value == expected {
@@ -300,6 +422,15 @@ func env(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+func firstEnv(keys ...string) string {
+	for _, key := range keys {
+		if value, ok := os.LookupEnv(key); ok && strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
 }
 
 func boolEnv(key string, fallback bool, errs *[]error) bool {

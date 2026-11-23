@@ -88,6 +88,108 @@ export interface AuthConfig {
   providerName?: string;
 }
 
+export interface EgressStatus {
+  mode: "environment" | "explicit" | "direct";
+  enabled: boolean;
+  httpProxy?: string;
+  httpsProxy?: string;
+  noProxy?: string;
+  credentialsConfigured: boolean;
+  caConfigured: boolean;
+  source: "bootstrap" | "runtime";
+}
+
+export interface EgressSettings {
+  mode: "bootstrap" | "explicit" | "direct";
+  effectiveMode: "environment" | "explicit" | "direct";
+  enabled: boolean;
+  httpProxy?: string;
+  httpsProxy?: string;
+  noProxy?: string;
+  username?: string;
+  credentialsConfigured: boolean;
+  caConfigured: boolean;
+  source: "bootstrap" | "runtime";
+  revision?: string;
+  updatedAt?: string;
+  networkPolicy: EgressNetworkPolicyStatus;
+}
+
+export interface EgressNetworkPolicyStatus {
+  enabled: boolean;
+  mode: "disabled" | "helm" | "runtime";
+  autoManage: boolean;
+  canAutoManage: boolean;
+  policyName?: string;
+  helmPolicyName?: string;
+  message?: string;
+}
+
+export interface EgressProxyTarget {
+  kind: "http" | "https";
+  url: string;
+  host: string;
+  port: number;
+  hostname: boolean;
+  addresses: string[];
+  cidrs: string[];
+  reachable: boolean;
+  latencyMs?: number;
+  error?: string;
+  allowed: boolean;
+  policySource?: string;
+}
+
+export interface EgressPreflight {
+  status: "ok" | "warning" | "error";
+  message: string;
+  networkPolicy: EgressNetworkPolicyStatus;
+  targets: EgressProxyTarget[];
+  requiredIpBlocks: string[];
+  requiredPorts: number[];
+}
+
+export interface EgressSettingsUpdate {
+  mode: "bootstrap" | "explicit" | "direct";
+  httpProxy: string;
+  httpsProxy: string;
+  noProxy: string;
+  username: string;
+  password?: string;
+  clearCredentials: boolean;
+  caPEM?: string;
+  clearCA: boolean;
+  revision?: string;
+}
+
+export interface SystemInfo {
+  version: string;
+  commit: string;
+  buildDate: string;
+  chartVersion: string;
+  goVersion: string;
+  clusterName: string;
+  authMode: "local" | "oidc" | "token";
+  readOnly: boolean;
+  requestTimeout: string;
+  egress: EgressStatus;
+}
+
+export type UpdateStatusValue = "disabled" | "current" | "update_available" | "unknown" | "error";
+
+export interface UpdateStatus {
+  enabled: boolean;
+  status: UpdateStatusValue;
+  currentVersion: string;
+  latestVersion?: string;
+  latestUrl?: string;
+  publishedAt?: string;
+  checkedAt?: string;
+  notes?: string;
+  message?: string;
+  source?: string;
+}
+
 export interface ListMeta {
   total: number;
   totalKnown: boolean;
@@ -1061,9 +1163,24 @@ export interface HelmChartOperation {
   namespace: string;
   releaseName: string;
   revision?: number;
+  resources?: HelmOperationResource[];
   warnings?: string[];
   startedAt: string;
   finishedAt?: string;
+}
+
+export interface HelmOperationResource {
+  apiVersion: string;
+  kind: string;
+  namespace?: string;
+  name: string;
+  hook: boolean;
+  crd: boolean;
+  action: "create" | "update";
+  apiGroup?: string;
+  resource: string;
+  status: "pending" | "waiting" | "ready" | "failed" | "created" | "unknown";
+  message?: string;
 }
 
 export interface HelmChartUninstallInput {

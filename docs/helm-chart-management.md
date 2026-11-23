@@ -13,11 +13,12 @@ Dosh 的 Helm 能力分为两条路径：
 
 - Chart 仓库只能由具备 `create dosh.io/helm-repositories` 权限的身份登记。
 - 支持两类仓库：提供标准 `index.yaml` 的 HTTP/HTTPS 仓库，以及指向单个 Chart 的 `oci://` 仓库。
+- HTTP/HTTPS 仓库的 `index.yaml` 可以把具体版本指向 `oci://registry/.../chart:tag`（Bitnami 已采用该格式）。Dosh 会按 OCI 方式拉取该版本；仓库凭据只发送给仓库原主机，不会泄露给 `index.yaml` 指定的其他 OCI registry。
 - OCI 地址必须指向一个 Chart 仓库路径，例如 `oci://registry.example.com/team/charts/nginx`。地址不能带 `:tag`，版本由 OCI Tag 表示。
 - 一个 OCI 仓库配置只对应一个 Chart；Dosh 不会把整个 OCI namespace 或 registry 下的多个 Chart 自动聚合到目录中。
 - 生产环境应使用 HTTPS。明文 HTTP 仅允许管理员在隔离网络使用，并会在目录和计划中显示风险警告。
-- 对于 HTTP/HTTPS 仓库，Chart 包 URL 必须与仓库保持同一主机；HTTPS 仓库禁止降级到 HTTP。
-- HTTP/HTTPS 仓库的 URL 重定向也限制在同一主机，最多 5 次；OCI registry 重定向必须继续使用 HTTPS。
+- 对于 HTTP/HTTPS 仓库，Chart 包 URL 可以是 `index.yaml` 发布的同主机相对路径，也可以是其他主机的绝对 HTTPS 地址（例如 Kubernetes Autoscaler 指向 GitHub Releases）。跨主机地址禁止降级到 HTTP，且 Dosh 不会把仓库凭据发送给其他主机。
+- HTTP/HTTPS 仓库的 URL 最多跟随 5 次重定向；HTTPS 仓库禁止降级到 HTTP，OCI registry 重定向必须继续使用 HTTPS。
 - 仓库地址不得包含用户名、密码、查询参数或 Fragment，避免凭据进入日志和浏览器历史。
 
 ### 凭据与 CA
@@ -68,6 +69,15 @@ Dosh 的全局只读模式同样阻止安装、升级、卸载和回滚。
 4. 目录支持按仓库筛选，并搜索 Chart 名称与说明。
 5. HTTP 版本按语义化版本倒序排列，无法解析为 SemVer 的版本使用字符串倒序；OCI 仅保留 SemVer Tag 并按语义化版本倒序。
 6. 安装计划固定 Chart 名称、版本和包摘要，不会在后台自动升级到最新版本。
+7. HTTP 仓库的成功 `index.yaml` 不设置基于时间的过期策略。启用 `persistence` 时，索引会原子写入 `${DOSH_DATA_DIR}/cache/helm-repositories/<缓存键>/index.yaml`，Dosh 重启后优先复用该文件；未启用持久化时才退化为进程内缓存。创建、修改或手动同步仓库时主动失效磁盘与内存缓存并重新拉取，不依赖页面访问触发刷新。
+
+8. Chart 包按“仓库 + Chart 名称 + 版本”持久化到 `${DOSH_DATA_DIR}/cache/helm-charts/`。详情页打开、安装计划和安装操作会优先复用本地 `.tgz`；读取时校验请求指定的 SHA-256，摘要不匹配的缓存会被删除并重新下载。
+
+9. Chart 详情页的“同步 Chart 包”只刷新当前最新版本的 Chart 包、README、默认 Values 和 Schema，不会重新同步仓库索引。需要发现新 Chart 或新版本时，仍应使用仓库管理页的“同步”。
+
+安装、升级、卸载和回滚在完成计划与授权校验后会立即返回 `running` 操作记录，实际 Helm 执行在服务端后台继续。前端通过 `/api/v1/helm/operations/{id}` 轮询状态，不依赖单次 HTTP 请求完成整个 Helm 生命周期，避免浏览器或网关超时取消 `--atomic` 安装。
+
+安装和升级的操作记录同时保存计划中的资源列表。后台执行期间每 3 秒读取一次资源真实状态，并在资源处于等待或失败状态时补充最近的相关 Kubernetes 事件（例如 PVC 因没有 StorageClass 而无法绑定）。前端逐项展示 `Kind`、`namespace/name`、状态和原因，避免只显示笼统的“等待资源就绪”。
 
 Chart 详情展示 README、默认 Values、Schema、依赖、维护者和来源链接。README、Values 和 Schema 从 Chart 包读取，不从浏览器直接请求第三方地址。
 
@@ -145,6 +155,10 @@ Chart 详情展示 README、默认 Values、Schema、依赖、维护者和来源
 ### OCI 仓库同步失败
 
 检查 `oci://` 地址是否指向单个 Chart、是否遗漏或误包含 `:tag`，以及 registry 是否允许匿名或当前 Basic/Bearer 凭据访问 `GET /v2/<repository>/tags/list`。自建 registry 使用私有 CA 时，请在仓库配置中提供 CA PEM；仅临时环境才应跳过 TLS 校验。
+
+### `index.yaml` 中的 OCI 包无法下载
+
+检查 `index.yaml` 的 `urls` 是否为完整的 `oci://registry/path/chart:tag`，并确认 Dosh 能访问该 registry。若 OCI registry 与仓库主机不同，Dosh 不会把仓库用户名、密码或 Token 转发给该 registry；请使用可匿名访问的公共 registry，或为该 registry 单独配置受控访问路径。
 
 ### `chart package digest mismatch`
 

@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"dosh/internal/domain"
 	audithistoryapp "dosh/internal/modules/audithistory/app"
 	audithistoryhttp "dosh/internal/modules/audithistory/http"
 	"dosh/internal/modules/auth/app"
@@ -33,6 +34,8 @@ import (
 	resourcesapp "dosh/internal/modules/resources/app"
 	resourceshttp "dosh/internal/modules/resources/http"
 	storagehttp "dosh/internal/modules/storage/http"
+	systemapp "dosh/internal/modules/system/app"
+	systemhttp "dosh/internal/modules/system/http"
 	workloadshttp "dosh/internal/modules/workloads/http"
 	yamlhttp "dosh/internal/modules/yaml/http"
 	"dosh/internal/platform/audit"
@@ -181,6 +184,7 @@ func newRouteTestDependencies(t *testing.T) routerDependencies {
 		storage:       storagehttp.New(nil),
 		yaml:          yamlhttp.New(nil),
 		auditHistory:  audithistoryhttp.New(audithistoryapp.New(audit.New(logger), authz.NewLocal(false))),
+		system:        systemhttp.New(systemapp.New(domain.SystemInfo{}, nil, nil, nil)),
 	}
 }
 

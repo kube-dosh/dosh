@@ -1,5 +1,40 @@
 {{- $authMode := include "dosh.authMode" . -}}
 {{- $oidc := .Values.auth.oidc | default dict -}}
+{{- $egress := .Values.egress | default dict -}}
+{{- $egressProxy := $egress.proxy | default dict -}}
+{{- $egressProxyCA := $egressProxy.ca | default dict -}}
+{{- $networkPolicy := .Values.networkPolicy | default dict -}}
+{{- $runtimePolicy := $networkPolicy.runtimeManagement | default dict -}}
+{{- $runtimePolicyEnabled := $runtimePolicy.enabled | default false -}}
+{{- $runtimePolicyName := $runtimePolicy.policyName | default (printf "%s-egress-runtime" (include "dosh.fullname" .)) -}}
+{{- $updateCheck := .Values.updateCheck | default dict -}}
+{{- $persistence := .Values.persistence | default dict -}}
+{{- if and $persistence.enabled (not $persistence.existingClaim) -}}
+{{- fail "persistence.existingClaim is required when persistence.enabled=true" -}}
+{{- end -}}
+{{- $proxyMode := $egressProxy.mode | default "environment" -}}
+{{- if not (has $proxyMode (list "environment" "explicit" "direct")) -}}
+{{- fail "egress.proxy.mode must be environment, explicit, or direct" -}}
+{{- end -}}
+{{- if and (eq $proxyMode "explicit") (not (or $egressProxy.httpProxy $egressProxy.httpsProxy)) -}}
+{{- fail "egress.proxy.httpProxy or egress.proxy.httpsProxy is required when egress.proxy.mode=explicit" -}}
+{{- end -}}
+{{- if and (eq $proxyMode "explicit") .Values.networkPolicy.enabled (not (($.Values.networkPolicy.outboundProxy | default dict).ipBlocks)) -}}
+{{- fail "networkPolicy.outboundProxy.ipBlocks is required when egress.proxy.mode=explicit and networkPolicy.enabled=true" -}}
+{{- end -}}
+{{- if and $runtimePolicyEnabled (not $networkPolicy.enabled) -}}
+{{- fail "networkPolicy.runtimeManagement.enabled requires networkPolicy.enabled=true" -}}
+{{- end -}}
+{{- if $egressProxy.existingSecret -}}
+{{- $_ := required "egress.proxy.usernameKey is required when egress.proxy.existingSecret is set" $egressProxy.usernameKey -}}
+{{- $_ = required "egress.proxy.passwordKey is required when egress.proxy.existingSecret is set" $egressProxy.passwordKey -}}
+{{- end -}}
+{{- if and $updateCheck.enabled (not (hasPrefix "https://" ($updateCheck.url | default ""))) -}}
+{{- fail "updateCheck.url must be an absolute https:// URL when updateCheck.enabled=true" -}}
+{{- end -}}
+{{- if and $updateCheck.enabled $updateCheck.existingSecret (not $updateCheck.tokenKey) -}}
+{{- fail "updateCheck.tokenKey is required when updateCheck.existingSecret is set" -}}
+{{- end -}}
 {{- $imageDigest := .Values.image.digest | default "" -}}
 {{- if .Values.tls.enabled -}}
 {{- $_ := required "tls.existingSecret is required when tls.enabled=true" .Values.tls.existingSecret -}}
@@ -57,6 +92,15 @@ spec:
         checksum/auth-secret: {{ (lookup "v1" "Secret" .Release.Namespace .Values.auth.existingSecret).data | toYaml | sha256sum | quote }}
         {{- if and (eq $authMode "oidc") $oidc.ca.existingConfigMap }}
         checksum/oidc-ca: {{ (lookup "v1" "ConfigMap" .Release.Namespace $oidc.ca.existingConfigMap).data | toYaml | sha256sum | quote }}
+        {{- end }}
+        {{- if $egressProxy.existingSecret }}
+        checksum/egress-proxy-secret: {{ (lookup "v1" "Secret" .Release.Namespace $egressProxy.existingSecret).data | toYaml | sha256sum | quote }}
+        {{- end }}
+        {{- if $egressProxyCA.existingConfigMap }}
+        checksum/egress-proxy-ca: {{ (lookup "v1" "ConfigMap" .Release.Namespace $egressProxyCA.existingConfigMap).data | toYaml | sha256sum | quote }}
+        {{- end }}
+        {{- if and $updateCheck.enabled $updateCheck.existingSecret }}
+        checksum/update-check-secret: {{ (lookup "v1" "Secret" .Release.Namespace $updateCheck.existingSecret).data | toYaml | sha256sum | quote }}
         {{- end }}
         {{- with .Values.podAnnotations }}
         {{- toYaml . | nindent 8 }}
@@ -166,6 +210,10 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.namespace
+            {{- if $persistence.enabled }}
+            - name: DOSH_DATA_DIR
+              value: {{ $persistence.mountPath | default "/var/lib/dosh" | quote }}
+            {{- end }}
             - name: DOSH_SESSION_KEY
               valueFrom:
                 secretKeyRef:
@@ -177,6 +225,8 @@ spec:
               value: {{ .Values.auth.cookieSecure | quote }}
             - name: DOSH_CLUSTER_NAME
               value: {{ .Values.runtime.clusterName | quote }}
+            - name: DOSH_CHART_VERSION
+              value: {{ .Chart.Version | quote }}
             - name: DOSH_READ_ONLY
               value: {{ .Values.runtime.readOnly | quote }}
             - name: DOSH_LOG_LEVEL
@@ -201,6 +251,59 @@ spec:
               value: {{ .Values.portForward.ttl | quote }}
             - name: DOSH_PORT_FORWARD_MAX_SESSIONS_PER_USER
               value: {{ .Values.portForward.maxSessionsPerUser | quote }}
+            - name: DOSH_EGRESS_PROXY_MODE
+              value: {{ $proxyMode | quote }}
+            - name: DOSH_NETWORK_POLICY_ENABLED
+              value: {{ $networkPolicy.enabled | default false | quote }}
+            - name: DOSH_NETWORK_POLICY_RUNTIME_MANAGEMENT_ENABLED
+              value: {{ $runtimePolicyEnabled | quote }}
+            - name: DOSH_NETWORK_POLICY_RUNTIME_NAME
+              value: {{ $runtimePolicyName | trunc 63 | trimSuffix "-" | quote }}
+            - name: DOSH_NETWORK_POLICY_HELM_NAME
+              value: {{ include "dosh.fullname" . | quote }}
+            - name: DOSH_NETWORK_POLICY_POD_SELECTOR
+              value: {{ printf "app.kubernetes.io/name=%s,app.kubernetes.io/instance=%s" (include "dosh.name" .) .Release.Name | quote }}
+            {{- if eq $proxyMode "explicit" }}
+            - name: DOSH_EGRESS_HTTP_PROXY
+              value: {{ $egressProxy.httpProxy | default "" | quote }}
+            - name: DOSH_EGRESS_HTTPS_PROXY
+              value: {{ $egressProxy.httpsProxy | default "" | quote }}
+            - name: DOSH_EGRESS_NO_PROXY
+              value: {{ $egressProxy.noProxy | default "" | quote }}
+            {{- end }}
+            {{- if $egressProxy.existingSecret }}
+            - name: DOSH_EGRESS_PROXY_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $egressProxy.existingSecret }}
+                  key: {{ $egressProxy.usernameKey }}
+            - name: DOSH_EGRESS_PROXY_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $egressProxy.existingSecret }}
+                  key: {{ $egressProxy.passwordKey }}
+            {{- end }}
+            {{- if $egressProxyCA.existingConfigMap }}
+            - name: DOSH_EGRESS_PROXY_CA_FILE
+              value: /etc/dosh/egress/ca.crt
+            {{- end }}
+            - name: DOSH_UPDATE_CHECK_ENABLED
+              value: {{ $updateCheck.enabled | default false | quote }}
+            - name: DOSH_UPDATE_CHECK_URL
+              value: {{ $updateCheck.url | default "https://api.github.com/repos/kube-dosh/dosh/releases/latest" | quote }}
+            - name: DOSH_UPDATE_CHECK_CHANNEL
+              value: {{ $updateCheck.channel | default "stable" | quote }}
+            - name: DOSH_UPDATE_CHECK_TIMEOUT
+              value: {{ $updateCheck.timeout | default "10s" | quote }}
+            - name: DOSH_UPDATE_CHECK_CACHE_TTL
+              value: {{ $updateCheck.cacheTTL | default "6h" | quote }}
+            {{- if and $updateCheck.enabled $updateCheck.existingSecret }}
+            - name: DOSH_UPDATE_CHECK_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $updateCheck.existingSecret }}
+                  key: {{ $updateCheck.tokenKey }}
+            {{- end }}
             {{- if .Values.audit.webhook.enabled }}
             {{- if and (not .Values.audit.webhook.tokenKey) (not .Values.audit.webhook.hmacKeyKey) }}
             {{- fail "audit.webhook.tokenKey or audit.webhook.hmacKeyKey is required" }}
@@ -262,6 +365,10 @@ spec:
           volumeMounts:
             - name: tmp
               mountPath: /tmp
+            {{- if $persistence.enabled }}
+            - name: dosh-data
+              mountPath: {{ $persistence.mountPath | default "/var/lib/dosh" }}
+            {{- end }}
             {{- if .Values.tls.enabled }}
             - name: tls
               mountPath: /etc/dosh/tls
@@ -277,10 +384,20 @@ spec:
               mountPath: /etc/dosh/audit
               readOnly: true
             {{- end }}
+            {{- if $egressProxyCA.existingConfigMap }}
+            - name: egress-proxy-ca
+              mountPath: /etc/dosh/egress
+              readOnly: true
+            {{- end }}
       volumes:
         - name: tmp
           emptyDir:
             sizeLimit: 32Mi
+        {{- if $persistence.enabled }}
+        - name: dosh-data
+          persistentVolumeClaim:
+            claimName: {{ $persistence.existingClaim }}
+        {{- end }}
         {{- if .Values.tls.enabled }}
         - name: tls
           secret:
@@ -302,6 +419,15 @@ spec:
             name: {{ .Values.audit.webhook.ca.existingConfigMap }}
             items:
               - key: {{ required "audit.webhook.ca.key is required when audit.webhook.ca.existingConfigMap is set" .Values.audit.webhook.ca.key }}
+                path: ca.crt
+            defaultMode: 0444
+        {{- end }}
+        {{- if $egressProxyCA.existingConfigMap }}
+        - name: egress-proxy-ca
+          configMap:
+            name: {{ $egressProxyCA.existingConfigMap }}
+            items:
+              - key: {{ required "egress.proxy.ca.key is required when egress.proxy.ca.existingConfigMap is set" $egressProxyCA.key }}
                 path: ca.crt
             defaultMode: 0444
         {{- end }}

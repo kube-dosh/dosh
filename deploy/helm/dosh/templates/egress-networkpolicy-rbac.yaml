@@ -1,0 +1,37 @@
+{{- if and .Values.rbac.create .Values.networkPolicy.enabled }}
+{{- $runtime := .Values.networkPolicy.runtimeManagement | default dict }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "dosh.fullname" . }}-egress-policy
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "dosh.labels" . | nindent 4 }}
+rules:
+  # 读取策略用于保存前的放行状态预检；仅限 Dosh 所在命名空间。
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["networkpolicies"]
+    verbs: ["get", "list"]
+  {{- if $runtime.enabled }}
+  # Dosh 只维护自己的专用策略，不修改 Helm 主策略。
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["networkpolicies"]
+    verbs: ["create", "update", "patch", "delete"]
+  {{- end }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "dosh.fullname" . }}-egress-policy
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "dosh.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "dosh.fullname" . }}-egress-policy
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "dosh.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}
