@@ -43,6 +43,8 @@ import type {
   HelmChartRollbackInput,
   HelmChartSummary,
   HelmChartUninstallInput,
+  HelmCacheCleanupResult,
+  HelmCacheStats,
   HelmRepository,
   HelmRepositoryUpsertInput,
   HelmReleaseDetail,
@@ -52,7 +54,7 @@ import type {
   HelmReleaseSummary,
   HelmReleaseUpgradePreview,
   HelmReleaseUpgradeRequest,
-  HelmReleaseUpgradeResult,
+  HelmReleaseTestResult,
   ListParams,
   ListResponse,
   NamespaceItem,
@@ -586,6 +588,8 @@ export const api = {
     request<{ status: string }>(`/api/v1/helm/repositories/${encodeURIComponent(id)}${revision ? `?revision=${encodeURIComponent(revision)}` : ""}`, { method: "DELETE" }),
   syncHelmRepository: (id: string) =>
     request<HelmRepository>(`/api/v1/helm/repositories/${encodeURIComponent(id)}/sync`, { method: "POST" }),
+  helmCacheStats: () => request<HelmCacheStats>("/api/v1/helm/cache"),
+  cleanupHelmCache: () => request<HelmCacheCleanupResult>("/api/v1/helm/cache/cleanup", { method: "POST" }),
   helmCharts: async (params: { repositoryId?: string; q?: string } = {}) => {
     const search = new URLSearchParams();
     if (params.repositoryId) search.set("repositoryId", params.repositoryId);
@@ -610,6 +614,12 @@ export const api = {
     request<HelmChartOperation>("/api/v1/helm/charts/rollback", { method: "POST", body: JSON.stringify(input) }),
   helmChartOperation: (id: string) =>
     request<HelmChartOperation>(`/api/v1/helm/operations/${encodeURIComponent(id)}`),
+  helmChartOperations: async (params: { status?: string; namespace?: string; releaseName?: string; limit?: number } = {}) => {
+    const value = await request<{ items?: HelmChartOperation[] }>(`/api/v1/helm/operations${query(params)}`);
+    return list(value.items);
+  },
+  cancelHelmChartOperation: (id: string) =>
+    request<HelmChartOperation>(`/api/v1/helm/operations/${encodeURIComponent(id)}/cancel`, { method: "POST" }),
   helmReleases: async (namespace: string) => {
     const value = await request<{ items?: HelmReleaseSummary[]; warnings?: string[] }>(`/api/v1/helm/releases${query({ namespace })}`);
     return { items: list(value.items), warnings: list(value.warnings) };
@@ -631,8 +641,12 @@ export const api = {
     return { ...value, warnings: list(value.warnings) };
   },
   upgradeHelmRelease: async (namespace: string, name: string, input: HelmReleaseUpgradeRequest) => {
-    const value = await request<HelmReleaseUpgradeResult>(`/api/v1/helm/releases/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}/upgrade`, { method: "POST", body: JSON.stringify(input) });
-    return { ...value, warnings: list(value.warnings) };
+    const value = await request<HelmChartOperation>(`/api/v1/helm/releases/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}/upgrade`, { method: "POST", body: JSON.stringify(input) });
+    return { ...value, warnings: list(value.warnings), resources: list(value.resources) };
+  },
+  testHelmRelease: async (namespace: string, name: string) => {
+    const value = await request<HelmReleaseTestResult>(`/api/v1/helm/releases/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}/test`, { method: "POST" });
+    return { ...value, hooks: list(value.hooks), warnings: list(value.warnings) };
   },
   deletePod: (namespace: string, name: string) =>
     request<{ status: string }>(`/api/v1/pods/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}`, { method: "DELETE" }),

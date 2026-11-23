@@ -34,13 +34,16 @@ const (
 	maxChartBytes              = 64 << 20
 	detailCacheTTL             = 10 * time.Minute
 	maxChartDetailCacheEntries = 64
+	defaultCacheLimitBytes     = 2 << 30
 )
 
 type cachedIndex struct {
-	index     *repo.IndexFile
-	modTime   time.Time
-	size      int64
-	persisted bool
+	index        *repo.IndexFile
+	modTime      time.Time
+	size         int64
+	etag         string
+	lastModified string
+	persisted    bool
 }
 
 type chartDetailContent struct {
@@ -67,6 +70,7 @@ type Client struct {
 	cache         map[string]cachedIndex
 	detailCache   map[string]cachedChartDetail
 	cacheDir      string
+	cacheLimit    int64
 	indexFlight   singleflight.Group
 	detailFlight  singleflight.Group
 	packageFlight singleflight.Group
@@ -87,7 +91,7 @@ func New(timeout time.Duration, factories ...*egress.Factory) *Client {
 	}
 	return &Client{
 		timeout: timeout, egress: factory,
-		cache: map[string]cachedIndex{}, detailCache: map[string]cachedChartDetail{},
+		cache: map[string]cachedIndex{}, detailCache: map[string]cachedChartDetail{}, cacheLimit: defaultCacheLimitBytes,
 	}
 }
 
@@ -97,6 +101,12 @@ func New(timeout time.Duration, factories ...*egress.Factory) *Client {
 // succeeding.
 func (c *Client) SetCacheDir(dir string) {
 	c.cacheDir = strings.TrimSpace(dir)
+}
+
+func (c *Client) SetCacheLimit(maxBytes int64) {
+	if maxBytes > 0 {
+		c.cacheLimit = maxBytes
+	}
 }
 
 func (c *Client) Index(ctx context.Context, repository domain.HelmRepository) (*repo.IndexFile, error) {
@@ -138,6 +148,30 @@ func (c *Client) Index(ctx context.Context, repository domain.HelmRepository) (*
 	return result.(*repo.IndexFile), nil
 }
 
+// Refresh performs a network-backed synchronization while still using HTTP
+// validators when the repository supports them. A 304 response reuses the
+// persisted index instead of downloading it again.
+func (c *Client) Refresh(ctx context.Context, repository domain.HelmRepository) ([]domain.HelmChartSummary, error) {
+	if isOCI(repository.URL) {
+		if err := c.refreshOCITags(ctx, repository); err != nil {
+			return nil, err
+		}
+		return c.Charts(ctx, repository)
+	}
+	key := cacheKey(repository)
+	c.mu.Lock()
+	delete(c.cache, key)
+	c.mu.Unlock()
+	cached, err := c.fetchIndex(ctx, repository)
+	if err != nil {
+		return nil, err
+	}
+	c.mu.Lock()
+	c.cache[key] = cached
+	c.mu.Unlock()
+	return chartSummaries(repository, cached.index), nil
+}
+
 // Invalidate clears the in-memory and shared on-disk repository cache. The
 // index itself has no time-based expiry: an administrator-triggered repository
 // sync is the explicit refresh boundary.
@@ -166,11 +200,36 @@ func (c *Client) fetchIndex(ctx context.Context, repository domain.HelmRepositor
 	if err != nil {
 		return cachedIndex{}, err
 	}
-	response, err := c.get(ctx, client, repository, target)
+	metadata, _ := c.loadIndexCacheMetadata(repository)
+	headers := make(map[string]string, 2)
+	if metadata.ETag != "" {
+		headers["If-None-Match"] = metadata.ETag
+	}
+	if metadata.LastModified != "" {
+		headers["If-Modified-Since"] = metadata.LastModified
+	}
+	response, err := c.getWithHeaders(ctx, client, repository, target, headers)
 	if err != nil {
 		return cachedIndex{}, err
 	}
 	defer response.Body.Close()
+	if response.StatusCode == http.StatusNotModified {
+		cached, cacheErr := c.loadIndexCache(repository)
+		if cacheErr != nil {
+			return cachedIndex{}, fmt.Errorf("%w: repository returned 304 but no valid cached index exists", domain.ErrUnavailable)
+		}
+		metadata.FetchedAt = time.Now().UTC()
+		if response.Header.Get("ETag") != "" {
+			metadata.ETag = response.Header.Get("ETag")
+		}
+		if response.Header.Get("Last-Modified") != "" {
+			metadata.LastModified = response.Header.Get("Last-Modified")
+		}
+		_ = c.storeIndexCacheMetadata(repository, metadata)
+		cached.etag = metadata.ETag
+		cached.lastModified = metadata.LastModified
+		return cached, nil
+	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		return cachedIndex{}, fmt.Errorf("%w: Helm repository returned HTTP %d", domain.ErrUnavailable, response.StatusCode)
 	}
@@ -192,6 +251,12 @@ func (c *Client) fetchIndex(ctx context.Context, repository domain.HelmRepositor
 	if stored, storeErr := c.storeIndexCache(repository, body, &index); storeErr == nil {
 		cached = stored
 	}
+	metadata = indexCacheMetadata{
+		ETag: response.Header.Get("ETag"), LastModified: response.Header.Get("Last-Modified"), FetchedAt: time.Now().UTC(),
+	}
+	_ = c.storeIndexCacheMetadata(repository, metadata)
+	cached.etag = metadata.ETag
+	cached.lastModified = metadata.LastModified
 	return cached, nil
 }
 
@@ -280,9 +345,16 @@ func (c *Client) downloadRemote(ctx context.Context, repository domain.HelmRepos
 func (c *Client) RefreshChart(ctx context.Context, repository domain.HelmRepository, chartName string) (domain.HelmChartDetail, error) {
 	version := ""
 	if isOCI(repository.URL) {
-		tags, target, _, err := c.ociTags(ctx, repository)
-		if err != nil {
+		target, parseErr := parseOCITarget(repository.URL)
+		if parseErr != nil {
+			return domain.HelmChartDetail{}, parseErr
+		}
+		if err := c.refreshOCITags(ctx, repository); err != nil {
 			return domain.HelmChartDetail{}, err
+		}
+		tags, ok := c.loadOCITagsCache(repository)
+		if !ok || len(tags) == 0 {
+			return domain.HelmChartDetail{}, fmt.Errorf("%w: OCI Chart %s has no semver tags", domain.ErrNotFound, target.Repository)
 		}
 		if target.ChartName != chartName {
 			return domain.HelmChartDetail{}, fmt.Errorf("%w: OCI Chart %s", domain.ErrNotFound, chartName)
@@ -560,12 +632,19 @@ func tlsConfigForRepository(repository domain.HelmRepository) (*tls.Config, erro
 }
 
 func (c *Client) get(ctx context.Context, client *http.Client, repository domain.HelmRepository, target string) (*http.Response, error) {
+	return c.getWithHeaders(ctx, client, repository, target, nil)
+}
+
+func (c *Client) getWithHeaders(ctx context.Context, client *http.Client, repository domain.HelmRepository, target string, headers map[string]string) (*http.Response, error) {
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
 	if err != nil {
 		return nil, fmt.Errorf("%w: Helm repository request URL is invalid", domain.ErrInvalid)
 	}
 	request.Header.Set("Accept", "application/yaml, text/yaml, application/x-yaml, application/octet-stream")
 	request.Header.Set("User-Agent", "dosh/0.1")
+	for key, value := range headers {
+		request.Header.Set(key, value)
+	}
 	if sameRepositoryHost(repository.URL, target) {
 		if token := strings.TrimSpace(repository.Credentials.Token); token != "" {
 			request.Header.Set("Authorization", "Bearer "+token)

@@ -20,7 +20,6 @@ import { NamespaceDetailPage } from "@/features/namespaces/namespace-detail-page
 import { EventsPage } from "@/features/events/events-page";
 import { AuditPage } from "@/features/audit/audit-page";
 import { ClusterConfigurationPage } from "@/features/cluster/cluster-configuration-page";
-import { YAMLCreatePage } from "@/features/yaml/yaml-create-page";
 import { ResourcesPage } from "@/features/resources/resources-page";
 import { ResourceListPage } from "@/features/resources/resource-list-page";
 import { ResourceDetailPage } from "@/features/resources/resource-detail-page";
@@ -75,7 +74,11 @@ const applicationsRoute = createRoute({
   validateSearch: parseListSearch,
 });
 const clusterConfigurationRoute = createRoute({ getParentRoute: () => appRoute, path: "/cluster/config", component: ClusterConfigurationPage });
-const yamlCreateRoute = createRoute({ getParentRoute: () => appRoute, path: "/yaml/create", component: YAMLCreatePage });
+const yamlCreateRoute = createRoute({
+  getParentRoute: () => appRoute,
+  path: "/yaml/create",
+  component: lazyRouteComponent(() => import("@/features/yaml/yaml-create-page"), "YAMLCreatePage"),
+});
 const resourcesRoute = createRoute({ getParentRoute: () => appRoute, path: "/resources", component: ResourcesPage, validateSearch: parseListSearch });
 const resourceListRoute = createRoute({ getParentRoute: () => appRoute, path: "/resources/$group/$version/$resource", component: ResourceListPage, validateSearch: parseListSearch });
 const resourceDetailRoute = createRoute({ getParentRoute: () => appRoute, path: "/resources/$group/$version/$resource/$name", component: ResourceDetailPage, validateSearch: parseListSearch });
@@ -85,6 +88,12 @@ const accessReviewRoute = createRoute({ getParentRoute: () => appRoute, path: "/
 const registriesRoute = createRoute({ getParentRoute: () => appRoute, path: "/registries", component: RegistriesPage });
 const helmReleasesRoute = createRoute({ getParentRoute: () => appRoute, path: "/helm/releases", component: HelmReleasesPage, validateSearch: parseListSearch });
 const helmReleaseDetailRoute = createRoute({ getParentRoute: () => appRoute, path: "/helm/releases/$namespace/$name", component: HelmReleaseDetailPage, validateSearch: parseListSearch });
+const helmOperationsRoute = createRoute({
+  getParentRoute: () => appRoute,
+  path: "/helm/operations",
+  component: lazyRouteComponent(() => import("@/features/helm/helm-operations-page"), "HelmOperationsPage"),
+  validateSearch: parseListSearch,
+});
 const helmChartsRoute = createRoute({
   getParentRoute: () => appRoute,
   path: "/helm/charts",
@@ -143,6 +152,7 @@ export const routeTree = rootRoute.addChildren([
     registriesRoute,
     helmReleasesRoute,
     helmReleaseDetailRoute,
+    helmOperationsRoute,
     helmChartsRoute,
     helmChartDetailRoute,
     helmRepositoriesRoute,

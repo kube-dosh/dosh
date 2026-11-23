@@ -15,6 +15,7 @@ import type {
   HelmChartDetail,
   HelmChartOperation,
   HelmChartPlan,
+  HelmExecutionOptionsInput,
   HelmOperationResource,
 } from "@/api/types";
 import { NamespaceSelect } from "@/components/layout/namespace-select";
@@ -39,6 +40,10 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import {
+  defaultHelmExecutionOptions,
+  HelmExecutionOptionsFields,
+} from "@/features/helm/helm-execution-options";
 
 type Mode = "install" | "upgrade";
 
@@ -177,6 +182,9 @@ export function HelmInstallDialog({
   const [manualVersion, setManualVersion] = useState(false);
   const [manualRelease, setManualRelease] = useState(false);
   const [values, setValues] = useState(chart.values || "{}");
+  const [options, setOptions] = useState<HelmExecutionOptionsInput>({
+    ...defaultHelmExecutionOptions,
+  });
   const [plan, setPlan] = useState<HelmChartPlan>();
   const [operation, setOperation] = useState<HelmChartOperation>();
   const [confirmation, setConfirmation] = useState("");
@@ -191,6 +199,7 @@ export function HelmInstallDialog({
     setManualVersion(false);
     setManualRelease(false);
     setValues(chart.values || "{}");
+    setOptions({ ...defaultHelmExecutionOptions });
     setPlan(undefined);
     setOperation(undefined);
     setConfirmation("");
@@ -232,6 +241,13 @@ export function HelmInstallDialog({
   const changeMode = (next: Mode) => {
     setMode(next);
     setManualRelease(false);
+    setValues(
+      next === "upgrade"
+        ? ""
+        : version === chart.version
+          ? chart.values || "{}"
+          : "",
+    );
     invalidatePlan();
   };
   const changeNamespace = (next: string) => {
@@ -247,10 +263,17 @@ export function HelmInstallDialog({
   const changeVersion = (next: string) => {
     setVersion(next);
     setManualVersion(false);
+    if (mode === "install") {
+      setValues(next === chart.version ? chart.values || "{}" : "");
+    }
     invalidatePlan();
   };
   const changeValues = (next: string) => {
     setValues(next);
+    invalidatePlan();
+  };
+  const changeOptions = (next: HelmExecutionOptionsInput) => {
+    setOptions(next);
     invalidatePlan();
   };
 
@@ -265,6 +288,7 @@ export function HelmInstallDialog({
         namespace,
         releaseName,
         values,
+        options,
       }),
     onSuccess: (result) => {
       setPlan(result);
@@ -307,6 +331,7 @@ export function HelmInstallDialog({
         namespace,
         releaseName,
         values,
+        options: plan.options,
         planDigest: plan.planDigest,
         confirmation,
       };
@@ -479,12 +504,26 @@ export function HelmInstallDialog({
                 onChange={(event) => changeValues(event.target.value)}
                 className="min-h-44 max-h-72 resize-y font-mono text-xs"
                 spellCheck={false}
+                placeholder={
+                  mode === "upgrade"
+                    ? "留空保留 Release 当前 Values；填写的内容会作为增量覆盖。"
+                    : "留空使用所选 Chart 版本的默认 Values。"
+                }
               />
               <p className="text-xs text-muted-foreground">
-                默认 values 来自当前 Chart 包；服务端会先用 values.schema.json
-                校验合并结果，并对敏感字段做遮蔽后再返回计划。
+                {mode === "upgrade"
+                  ? "服务端会先合并 Release 当前 Values 与这里的增量，再用目标版本的 values.schema.json 校验；敏感字段在计划中遮蔽。"
+                  : "安装时留空会使用所选 Chart 版本的默认 Values；服务端会用该版本的 values.schema.json 校验，并遮蔽敏感字段。"}
               </p>
             </div>
+
+            <HelmExecutionOptionsFields
+              idPrefix="helm-install-options"
+              mode={mode}
+              value={options}
+              onChange={changeOptions}
+              disabled={planMutation.isPending}
+            />
 
             {error ? (
               <p
@@ -536,6 +575,12 @@ export function HelmInstallDialog({
                 <span className="text-muted-foreground">资源：</span>
                 {plan.resources.length} 项 · {plan.hookCount} Hook ·{" "}
                 {plan.crdCount} CRD
+              </p>
+              <p className="min-w-0 break-all">
+                <span className="text-muted-foreground">执行策略：</span>
+                超时 {plan.options.timeoutSeconds}s · 历史 {plan.options.maxHistory} 个 ·{" "}
+                {plan.options.wait ? "等待就绪" : "不等待"} ·{" "}
+                {plan.options.atomic ? "原子回滚" : "非原子"}
               </p>
               {chart.schema ? (
                 <p className="min-w-0 break-all">
@@ -591,7 +636,11 @@ export function HelmInstallDialog({
                     <div className="flex min-w-0 flex-wrap items-center gap-1.5">
                       <Badge
                         variant={
-                          resource.action === "create" ? "success" : "warning"
+                          resource.action === "create"
+                            ? "success"
+                            : resource.action === "delete"
+                              ? "destructive"
+                              : "warning"
                         }
                       >
                         {resource.action}

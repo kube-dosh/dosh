@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Archive, CheckCircle2, CircleAlert, Loader2, LockKeyhole, Pencil, Plus, RefreshCw, Star, Trash2 } from "lucide-react";
+import { Archive, CalendarClock, CheckCircle2, CircleAlert, Database, Loader2, LockKeyhole, Pencil, Plus, RefreshCw, Star, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/api/client";
 import type { HelmRepository, HelmRepositoryUpsertInput } from "@/api/types";
@@ -37,6 +37,8 @@ type FormState = {
   caPEM: string;
   default: boolean;
   enabled: boolean;
+  syncEnabled: boolean;
+  syncIntervalHours: string;
   insecureSkipTLSVerify: boolean;
   replaceCredentials: boolean;
   clearCredentials: boolean;
@@ -44,7 +46,7 @@ type FormState = {
 
 const emptyForm: FormState = {
   protocol: "http", name: "", url: "https://", description: "", authType: "anonymous", username: "", password: "", token: "", caPEM: "",
-  default: false, enabled: true, insecureSkipTLSVerify: false, replaceCredentials: false, clearCredentials: false,
+  default: false, enabled: true, syncEnabled: false, syncIntervalHours: "3", insecureSkipTLSVerify: false, replaceCredentials: false, clearCredentials: false,
 };
 
 function formFor(repository?: HelmRepository): FormState {
@@ -58,6 +60,8 @@ function formFor(repository?: HelmRepository): FormState {
     username: "", password: "", token: "", caPEM: "",
     default: repository.default,
     enabled: repository.enabled,
+    syncEnabled: repository.syncEnabled,
+    syncIntervalHours: String(Math.max(1, Math.round(repository.syncIntervalSeconds / 3600))),
     insecureSkipTLSVerify: repository.insecureSkipTLSVerify,
     replaceCredentials: false,
     clearCredentials: false,
@@ -76,6 +80,12 @@ export function HelmRepositoriesPage() {
     queryKey: ["helm-repositories"],
     queryFn: api.helmRepositories,
     enabled: Boolean(capabilities?.helmChartRepositories),
+  });
+  const cache = useQuery({
+    queryKey: ["helm-cache"],
+    queryFn: api.helmCacheStats,
+    enabled: Boolean(capabilities?.helmChartRepositories),
+    refetchInterval: 60_000,
   });
 
   const refresh = async () => {
@@ -126,6 +136,15 @@ export function HelmRepositoriesPage() {
     onError: (error) => toast.error(error.message),
   });
 
+  const cleanupCache = useMutation({
+    mutationFn: api.cleanupHelmCache,
+    onSuccess: async (result) => {
+      toast.success(result.deletedFiles > 0 ? `已清理 ${result.deletedFiles} 个缓存文件，释放 ${formatBytes(result.freedBytes)}` : "缓存未超过容量上限，无需清理");
+      await queryClient.invalidateQueries({ queryKey: ["helm-cache"] });
+    },
+    onError: (error) => toast.error(error.message),
+  });
+
   useEffect(() => {
     if (!editorOpen) return;
     setForm(formFor(editing));
@@ -165,12 +184,19 @@ export function HelmRepositoriesPage() {
       return;
     }
     const replace = !editing || form.replaceCredentials;
+    const syncIntervalHours = Number(form.syncIntervalHours);
+    if (form.syncEnabled && (!Number.isFinite(syncIntervalHours) || syncIntervalHours < 1 || syncIntervalHours > 168)) {
+      setFormError("定时同步间隔必须在 1 到 168 小时之间");
+      return;
+    }
     const input: HelmRepositoryUpsertInput = {
       name: form.name,
       url,
       description: form.description,
       default: form.default,
       enabled: form.enabled,
+      syncEnabled: form.syncEnabled,
+      syncIntervalSeconds: Math.round(syncIntervalHours * 3600),
       insecureSkipTLSVerify: form.insecureSkipTLSVerify,
       clearCredentials: form.clearCredentials,
       revision: editing?.revision,
@@ -195,6 +221,7 @@ export function HelmRepositoriesPage() {
   }
   if (repositories.isError) return <ErrorState error={repositories.error} onRetry={() => void repositories.refetch()} />;
   const canWrite = Boolean(capabilities.helmChartWrite);
+  const failedRepositories = (repositories.data ?? []).filter((item) => item.enabled && item.lastSync?.ok === false);
 
   return (
     <>
@@ -209,6 +236,15 @@ export function HelmRepositoriesPage() {
       {!canWrite ? (
         <div className="mb-4 flex items-start gap-2 rounded-md border border-warning/35 bg-warning/10 px-3 py-2 text-xs text-warning">
           <CircleAlert className="mt-0.5 h-4 w-4 shrink-0" />当前身份可以浏览仓库，但没有 create dosh.io/helm-repositories 权限。
+        </div>
+      ) : null}
+
+      {failedRepositories.length > 0 ? (
+        <div role="alert" className="mb-4 flex min-w-0 items-start gap-2 rounded-md border border-warning/35 bg-warning/10 px-3 py-2 text-xs text-warning">
+          <CircleAlert className="mt-0.5 h-4 w-4 shrink-0" />
+          <span className="min-w-0 break-words">
+            {failedRepositories.length} 个仓库最近同步失败：{failedRepositories.map((item) => item.name).join("、")}。失败后会自动退避重试，仍可手动同步验证凭据与网络。
+          </span>
         </div>
       ) : null}
 
@@ -229,6 +265,7 @@ export function HelmRepositoriesPage() {
                   <div className="grid h-9 w-9 shrink-0 place-items-center rounded-md bg-primary/10 text-primary"><Archive className="h-4 w-4" /></div>
                   <div className="min-w-0 flex-1">
                     <CardTitle className="flex min-w-0 flex-wrap items-center gap-2 text-base"><span className="break-all">{repository.name}</span>{repository.default ? <Badge>默认</Badge> : null}{!repository.enabled ? <Badge variant="secondary">已停用</Badge> : null}</CardTitle>
+                    {repository.syncEnabled ? <Badge variant="outline"><CalendarClock className="h-3 w-3" />每 {formatInterval(repository.syncIntervalSeconds)} 同步</Badge> : null}
                     <CardDescription className="mt-1 break-all font-mono text-xs" title={repository.url}>{repository.url}</CardDescription>
                   </div>
                 </div>
@@ -242,6 +279,7 @@ export function HelmRepositoriesPage() {
                   {repository.insecureSkipTLSVerify ? <Badge variant="warning">跳过 TLS 校验</Badge> : null}
                   {repository.url.startsWith("http://") ? <Badge variant="destructive">明文 HTTP</Badge> : null}
                   {repository.url.startsWith("oci://") ? <Badge variant="outline">OCI</Badge> : null}
+                  {(repository.syncFailureCount ?? 0) > 0 ? <Badge variant="destructive">连续失败 {repository.syncFailureCount} 次</Badge> : null}
                 </div>
                 <div className={`rounded-md border px-3 py-2 text-xs ${repository.lastSync?.ok ? "border-success/25 bg-success/5" : "border-warning/30 bg-warning/5"}`}>
                   <div className="flex min-w-0 items-start gap-2">
@@ -250,6 +288,8 @@ export function HelmRepositoriesPage() {
                       <p className="break-words font-medium">{repository.lastSync ? (repository.lastSync.ok ? "最近同步成功" : "最近同步失败") : "尚未同步"}</p>
                       <p className="mt-0.5 break-words text-muted-foreground">{repository.lastSync?.message ?? "点击同步检查仓库可用性。"}</p>
                       {repository.lastSync ? <p className="mt-1 text-muted-foreground">{formatDate(repository.lastSync.syncedAt)}</p> : null}
+                      {repository.syncEnabled && repository.nextSyncAt ? <p className="mt-1 text-muted-foreground">{repository.lastSync?.ok === false ? "下次重试" : "下次同步"}：{formatDate(repository.nextSyncAt)}</p> : null}
+                      {repository.lastSync?.trigger ? <p className="mt-1 text-muted-foreground">触发方式：{triggerLabel(repository.lastSync.trigger)}{repository.lastSync.attempt ? ` · 第 ${repository.lastSync.attempt} 次尝试` : ""}</p> : null}
                     </div>
                   </div>
                 </div>
@@ -264,6 +304,26 @@ export function HelmRepositoriesPage() {
           ))}
         </div>
       )}
+
+      <Card className="mt-4 min-w-0">
+        <CardHeader className="min-w-0 flex-row items-start justify-between gap-3 p-4 sm:p-5">
+          <div className="min-w-0">
+            <CardTitle className="flex items-center gap-2 text-base"><Database className="h-4 w-4" />Chart 缓存</CardTitle>
+            <CardDescription className="mt-1 break-words">索引、Chart 包和 OCI Tag 元数据持久化在 Dosh 数据目录；达到容量上限时优先淘汰最旧的 Chart 包。</CardDescription>
+          </div>
+          <Button size="sm" variant="outline" onClick={() => cleanupCache.mutate()} disabled={!canWrite || cleanupCache.isPending}>{cleanupCache.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}清理缓存</Button>
+        </CardHeader>
+        <CardContent className="min-w-0 px-4 pb-4 sm:px-5">
+          {cache.isLoading ? <LoadingState label="正在读取缓存统计" /> : cache.isError ? <p className="break-words text-sm text-destructive-strong">缓存统计不可用：{cache.error.message}</p> : cache.data ? (
+            <div className="grid min-w-0 gap-3 text-sm sm:grid-cols-2 lg:grid-cols-4">
+              <div className="min-w-0 rounded-md border p-3"><p className="text-xs text-muted-foreground">总使用量</p><p className="mt-1 break-all font-medium">{formatBytes(cache.data.totalBytes)} / {formatBytes(cache.data.limitBytes)}</p></div>
+              <div className="min-w-0 rounded-md border p-3"><p className="text-xs text-muted-foreground">索引 / Chart 包</p><p className="mt-1 break-all font-medium">{cache.data.indexCount} / {cache.data.packageCount}</p></div>
+              <div className="min-w-0 rounded-md border p-3"><p className="text-xs text-muted-foreground">索引大小</p><p className="mt-1 break-all font-medium">{formatBytes(cache.data.indexBytes)}</p></div>
+              <div className="min-w-0 rounded-md border p-3"><p className="text-xs text-muted-foreground">Chart 包大小</p><p className="mt-1 break-all font-medium">{formatBytes(cache.data.packageBytes)}</p></div>
+            </div>
+          ) : null}
+        </CardContent>
+      </Card>
 
       <Dialog open={editorOpen} onOpenChange={(next) => { if (!save.isPending) { setEditorOpen(next); if (!next) setEditing(undefined); } }}>
         <DialogContent className="max-h-[calc(100dvh-1rem)] w-[calc(100vw-1rem)] max-w-2xl overflow-y-auto p-4 sm:w-[calc(100%-2rem)] sm:p-6">
@@ -298,6 +358,21 @@ export function HelmRepositoriesPage() {
               <div className="flex min-w-0 flex-col justify-end gap-2 text-sm">
                 <label className="flex items-center gap-2"><input type="checkbox" checked={form.insecureSkipTLSVerify} onChange={(event) => update("insecureSkipTLSVerify", event.target.checked)} />跳过 TLS 证书校验</label>
                 {editing?.hasCredentials || editing?.hasCustomCA ? <label className="flex items-center gap-2"><input type="checkbox" checked={form.clearCredentials} onChange={(event) => update("clearCredentials", event.target.checked)} />清除已保存认证与 CA</label> : null}
+              </div>
+            </div>
+
+            <div className="min-w-0 space-y-3 rounded-md border p-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="min-w-0">
+                  <p className="text-sm font-medium">定时同步</p>
+                  <p className="mt-0.5 break-words text-xs text-muted-foreground">默认关闭。开启后由 Dosh 按固定周期刷新 index.yaml 与 OCI Tag；Chart 目录只读取已同步结果。</p>
+                </div>
+                <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={form.syncEnabled} onChange={(event) => update("syncEnabled", event.target.checked)} />启用定时同步</label>
+              </div>
+              <div className="max-w-xs min-w-0 space-y-1.5">
+                <Label htmlFor="helm-repo-sync-interval">同步间隔（小时）</Label>
+                <Input id="helm-repo-sync-interval" type="number" min={1} max={168} step={1} value={form.syncIntervalHours} onChange={(event) => update("syncIntervalHours", event.target.value)} disabled={!form.syncEnabled} />
+                <p className="text-xs text-muted-foreground">默认 3 小时，允许 1 到 168 小时。</p>
               </div>
             </div>
 
@@ -373,8 +448,33 @@ function toInput(repository: HelmRepository, overrides: Partial<HelmRepositoryUp
     description: repository.description,
     default: repository.default,
     enabled: repository.enabled,
+    syncEnabled: repository.syncEnabled,
+    syncIntervalSeconds: repository.syncIntervalSeconds,
     insecureSkipTLSVerify: repository.insecureSkipTLSVerify,
     revision: repository.revision,
     ...overrides,
   };
+}
+
+function formatInterval(seconds: number): string {
+  if (seconds < 3600) return `${Math.max(1, Math.round(seconds / 60))} 分钟`;
+  const hours = seconds / 3600;
+  return Number.isInteger(hours) ? `${hours} 小时` : `${hours.toFixed(1)} 小时`;
+}
+
+function triggerLabel(trigger: string): string {
+  switch (trigger) {
+    case "scheduled": return "定时同步";
+    case "manual": return "手动同步";
+    case "create": return "创建仓库";
+    case "update": return "保存配置";
+    default: return trigger;
+  }
+}
+
+function formatBytes(value: number): string {
+  if (!Number.isFinite(value) || value <= 0) return "0 B";
+  const units = ["B", "KiB", "MiB", "GiB", "TiB"];
+  const index = Math.min(units.length - 1, Math.floor(Math.log(value) / Math.log(1024)));
+  return `${(value / 1024 ** index).toFixed(index === 0 ? 0 : 1)} ${units[index]}`;
 }

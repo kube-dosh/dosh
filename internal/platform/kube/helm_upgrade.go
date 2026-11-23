@@ -14,9 +14,10 @@ import (
 
 	"dosh/internal/domain"
 
+	"helm.sh/helm/v3/pkg/action"
 	"helm.sh/helm/v3/pkg/chart"
 	"helm.sh/helm/v3/pkg/chartutil"
-	"helm.sh/helm/v3/pkg/engine"
+	helmrelease "helm.sh/helm/v3/pkg/release"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/yaml"
@@ -24,6 +25,7 @@ import (
 
 type renderedHelmUpgrade struct {
 	domain.HelmReleaseUpgradeRender
+	chart    *chart.Chart
 	release  *decodedHelmRelease
 	config   map[string]any
 	manifest string
@@ -33,7 +35,8 @@ type renderedHelmUpgrade struct {
 // config. The values argument is treated as an override, never as a replacement
 // for redacted values that were shown in the browser.
 func (c *Client) PreviewHelmUpgrade(ctx context.Context, namespace, name, values string) (domain.HelmReleaseUpgradeRender, error) {
-	rendered, err := c.renderHelmUpgrade(ctx, namespace, name, values)
+	actor, _ := domain.ActorFromContext(ctx)
+	rendered, err := c.renderHelmUpgrade(ctx, actor, namespace, name, values)
 	if err != nil {
 		return domain.HelmReleaseUpgradeRender{}, err
 	}
@@ -45,7 +48,8 @@ func (c *Client) PreviewHelmUpgrade(ctx context.Context, namespace, name, values
 // compatible revision. Hooks and removed-object pruning are intentionally out
 // of scope and reported as warnings.
 func (c *Client) UpgradeHelmRelease(ctx context.Context, namespace, name, values string) (domain.HelmReleaseUpgradeResult, error) {
-	rendered, err := c.renderHelmUpgrade(ctx, namespace, name, values)
+	actor, _ := domain.ActorFromContext(ctx)
+	rendered, err := c.renderHelmUpgrade(ctx, actor, namespace, name, values)
 	if err != nil {
 		return domain.HelmReleaseUpgradeResult{}, err
 	}
@@ -96,11 +100,61 @@ func (c *Client) UpgradeHelmRelease(ctx context.Context, namespace, name, values
 	}, nil
 }
 
-func (c *Client) renderHelmUpgrade(ctx context.Context, namespace, name, values string) (renderedHelmUpgrade, error) {
+// PlanHelmReleaseUpgrade builds the same reviewed resource and values view used
+// by the asynchronous Helm operation engine. The chart comes from the current
+// release payload and request values are merged over the deployed config.
+func (c *Client) PlanHelmReleaseUpgrade(ctx context.Context, actor domain.Actor, namespace, name, values string) (domain.HelmChartPlanTemplate, error) {
+	if err := c.validateHelmTarget(ctx, namespace, name); err != nil {
+		return domain.HelmChartPlanTemplate{}, err
+	}
+	rendered, err := c.renderHelmUpgrade(ctx, actor, namespace, name, values)
+	if err != nil {
+		return domain.HelmChartPlanTemplate{}, err
+	}
+	return c.helmPlanTemplateForChart(ctx, actor, namespace, name, rendered.CurrentRevision, rendered.release.payload.Manifest, rendered.chart, rendered.config, true, rendered.Warnings)
+}
+
+// UpgradeHelmReleaseWithHelm executes the stored Chart through the native Helm
+// action. Unlike the legacy compatibility path this runs Hooks, prunes removed
+// objects and keeps Helm's atomic rollout and history semantics.
+func (c *Client) UpgradeHelmReleaseWithHelm(ctx context.Context, actor domain.Actor, namespace, name, values string, options domain.HelmExecutionOptions) (int, error) {
+	if err := c.validateHelmTarget(ctx, namespace, name); err != nil {
+		return 0, err
+	}
+	rendered, err := c.renderHelmUpgrade(ctx, actor, namespace, name, values)
+	if err != nil {
+		return 0, err
+	}
+	configuration, err := c.helmConfiguration(actor, namespace)
+	if err != nil {
+		return 0, err
+	}
+	upgrade := action.NewUpgrade(configuration)
+	upgrade.Namespace = namespace
+	upgrade.Wait = options.Wait
+	upgrade.WaitForJobs = options.WaitForJobs
+	upgrade.Atomic = options.Atomic
+	upgrade.CleanupOnFail = options.CleanupOnFail
+	upgrade.DisableHooks = options.DisableHooks
+	upgrade.SkipCRDs = options.SkipCRDs
+	upgrade.MaxHistory = helmMaxHistory(options)
+	upgrade.Timeout = helmExecutionTimeout(options)
+	upgrade.Description = "Upgraded by Dosh with reviewed incremental values"
+	result, err := upgrade.RunWithContext(ctx, name, rendered.chart, rendered.config)
+	if err != nil {
+		return 0, mapHelmActionError(err)
+	}
+	if result == nil {
+		return 0, fmt.Errorf("%w: Helm upgrade returned no release", domain.ErrUnavailable)
+	}
+	return result.Version, nil
+}
+
+func (c *Client) renderHelmUpgrade(ctx context.Context, actor domain.Actor, namespace, name, values string) (renderedHelmUpgrade, error) {
 	if strings.TrimSpace(namespace) == "" || strings.TrimSpace(name) == "" {
 		return renderedHelmUpgrade{}, fmt.Errorf("%w: namespace and Helm release name are required", domain.ErrInvalid)
 	}
-	releases, warnings, err := c.readHelmReleases(ctx, namespace)
+	releases, warnings, err := c.readHelmReleaseHistory(ctx, namespace, name)
 	if err != nil {
 		return renderedHelmUpgrade{}, err
 	}
@@ -116,8 +170,8 @@ func (c *Client) renderHelmUpgrade(ctx context.Context, namespace, name, values 
 	if current == nil {
 		return renderedHelmUpgrade{}, fmt.Errorf("%w: helm release %s/%s", domain.ErrNotFound, namespace, name)
 	}
-	if current.payload.Info.Status != "" && current.payload.Info.Status != "deployed" {
-		return renderedHelmUpgrade{}, fmt.Errorf("%w: only a deployed Helm release can be upgraded (current status %s)", domain.ErrInvalid, current.payload.Info.Status)
+	if current.payload.Info.Status != "" && !helmReleaseCanUpgrade(helmrelease.Status(current.payload.Info.Status)) {
+		return renderedHelmUpgrade{}, fmt.Errorf("%w: only a deployed, failed or superseded Helm release can be upgraded (current status %s)", domain.ErrInvalid, current.payload.Info.Status)
 	}
 	ch, err := decodeHelmChart(current.raw)
 	if err != nil {
@@ -134,19 +188,18 @@ func (c *Client) renderHelmUpgrade(ctx context.Context, namespace, name, values 
 		}
 		nextConfig = mergeHelmValues(nextConfig, map[string]any(override))
 	}
-	caps := chartutil.DefaultCapabilities.Copy()
-	if info, versionErr := c.serverVersion(ctx); versionErr == nil && info != nil {
-		caps.KubeVersion = chartutil.KubeVersion{Version: info.GitVersion, Major: info.Major, Minor: info.Minor}
-	} else {
-		warnings = append(warnings, "无法读取 Kubernetes 版本，模板 Capabilities 使用 Helm 默认值")
+	if err := chartutil.ProcessDependenciesWithMerge(ch, nextConfig); err != nil {
+		return renderedHelmUpgrade{}, fmt.Errorf("%w: process Helm chart dependencies: %v", domain.ErrInvalid, err)
 	}
+	caps, capabilitiesWarnings := c.helmRenderCapabilities(ctx)
+	warnings = append(warnings, capabilitiesWarnings...)
 	renderValues, err := chartutil.ToRenderValues(ch, nextConfig, chartutil.ReleaseOptions{
 		Name: name, Namespace: namespace, Revision: maxRevision + 1, IsUpgrade: true,
-	}, caps)
+	}, &caps)
 	if err != nil {
 		return renderedHelmUpgrade{}, fmt.Errorf("%w: prepare Helm render values: %v", domain.ErrInvalid, err)
 	}
-	files, err := engine.Render(ch, renderValues)
+	files, err := c.renderHelmFiles(ch, renderValues, actor)
 	if err != nil {
 		return renderedHelmUpgrade{}, fmt.Errorf("%w: render Helm chart: %v", domain.ErrInvalid, err)
 	}
@@ -166,7 +219,7 @@ func (c *Client) renderHelmUpgrade(ctx context.Context, namespace, name, values 
 			CurrentManifest: current.payload.Manifest, NextManifest: nextManifest,
 			Warnings: warnings,
 		},
-		release: current, config: nextConfig, manifest: nextManifest,
+		chart: ch, release: current, config: nextConfig, manifest: nextManifest,
 	}, nil
 }
 
@@ -250,6 +303,17 @@ func mergeHelmValues(base, override map[string]any) map[string]any {
 		out[key] = value
 	}
 	return out
+}
+
+// mergeHelmUpgradeValues keeps the deployed release configuration and applies
+// the reviewed request as an override. This makes "upgrade to another Chart
+// version" safe by default instead of silently replacing custom values with the
+// new Chart's defaults.
+func mergeHelmUpgradeValues(current *helmrelease.Release, override map[string]any) map[string]any {
+	if current == nil {
+		return mergeHelmValues(nil, override)
+	}
+	return mergeHelmValues(current.Config, override)
 }
 
 func helmDescriptorsByGVK(descriptors []domain.ResourceDescriptor) map[string]domain.ResourceDescriptor {

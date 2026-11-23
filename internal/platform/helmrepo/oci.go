@@ -182,6 +182,9 @@ func (c *Client) ociTags(ctx context.Context, repository domain.HelmRepository) 
 	if err != nil {
 		return nil, ociTarget{}, nil, err
 	}
+	if tags, ok := c.loadOCITagsCache(repository); ok {
+		return tags, target, client, nil
+	}
 	tags, err := client.Tags(target.Repository)
 	if err != nil {
 		return nil, ociTarget{}, nil, fmt.Errorf("%w: list OCI Chart tags: %v", domain.ErrUnavailable, sanitizeError(err))
@@ -189,7 +192,26 @@ func (c *Client) ociTags(ctx context.Context, repository domain.HelmRepository) 
 	if len(tags) == 0 {
 		return nil, target, client, fmt.Errorf("%w: OCI Chart %s has no semver tags", domain.ErrNotFound, target.Repository)
 	}
+	_ = c.storeOCITagsCache(repository, tags)
 	return tags, target, client, nil
+}
+
+func (c *Client) refreshOCITags(ctx context.Context, repository domain.HelmRepository) error {
+	client, target, err := c.ociClient(repository)
+	if err != nil {
+		return err
+	}
+	tags, err := client.Tags(target.Repository)
+	if err != nil {
+		return fmt.Errorf("%w: list OCI Chart tags: %v", domain.ErrUnavailable, sanitizeError(err))
+	}
+	if len(tags) == 0 {
+		return fmt.Errorf("%w: OCI Chart %s has no semver tags", domain.ErrNotFound, target.Repository)
+	}
+	if err := c.storeOCITagsCache(repository, tags); err != nil {
+		return fmt.Errorf("%w: store OCI Chart tags: %v", domain.ErrUnavailable, err)
+	}
+	return nil
 }
 
 func (c *Client) pullOCIChart(repository domain.HelmRepository, client *helmregistry.Client, target ociTarget, version string) ([]byte, string, *chart.Chart, error) {
@@ -313,22 +335,12 @@ func (c *Client) ociChartDetail(ctx context.Context, repository domain.HelmRepos
 }
 
 func (c *Client) downloadOCI(ctx context.Context, repository domain.HelmRepository, chartName, version, expectedDigest string) ([]byte, string, error) {
-	tags, target, client, err := c.ociTags(ctx, repository)
+	client, target, err := c.ociClient(repository)
 	if err != nil {
 		return nil, "", err
 	}
 	if target.ChartName != chartName {
 		return nil, "", fmt.Errorf("%w: OCI Chart %s", domain.ErrNotFound, chartName)
-	}
-	found := false
-	for _, tag := range tags {
-		if tag == version {
-			found = true
-			break
-		}
-	}
-	if !found {
-		return nil, "", fmt.Errorf("%w: OCI Chart %s version %s", domain.ErrNotFound, chartName, version)
 	}
 	data, digest, _, err := c.obtainOCIChartPackage(repository, client, target, version, expectedDigest)
 	if err != nil {

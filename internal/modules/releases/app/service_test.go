@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"dosh/internal/domain"
 )
@@ -27,6 +28,8 @@ type fakeReleaseRepository struct {
 	upgradeResult      domain.HelmReleaseUpgradeResult
 	upgradeErr         error
 	lastValues         string
+	testResult         domain.HelmReleaseTestResult
+	testCalls          int
 }
 
 func (f *fakeReleaseRepository) ListHelmReleases(_ context.Context, namespace string) ([]domain.HelmReleaseSummary, []string, error) {
@@ -65,6 +68,12 @@ func (f *fakeReleaseRepository) UpgradeHelmRelease(_ context.Context, namespace,
 	return f.upgradeResult, f.upgradeErr
 }
 
+func (f *fakeReleaseRepository) TestHelmRelease(_ context.Context, _ domain.Actor, namespace, name string) (domain.HelmReleaseTestResult, error) {
+	f.testCalls++
+	f.lastNS, f.lastName = namespace, name
+	return f.testResult, nil
+}
+
 type releaseGuard struct {
 	err    error
 	access domain.Access
@@ -78,6 +87,27 @@ func (g *releaseGuard) Require(_ context.Context, _ domain.Actor, access domain.
 type releaseAuditor struct {
 	actions []string
 	results []string
+}
+
+type fakeUpgradeStarter struct {
+	calls      int
+	testCalls  int
+	input      domain.HelmReleaseUpgradeOperationRequest
+	operation  domain.HelmChartOperation
+	err        error
+	testResult domain.HelmReleaseTestResult
+	testErr    error
+}
+
+func (s *fakeUpgradeStarter) StartHelmReleaseUpgrade(_ context.Context, _ domain.Actor, input domain.HelmReleaseUpgradeOperationRequest) (domain.HelmChartOperation, error) {
+	s.calls++
+	s.input = input
+	return s.operation, s.err
+}
+
+func (s *fakeUpgradeStarter) TestHelmReleaseWithLock(_ context.Context, _ domain.Actor, _, _ string) (domain.HelmReleaseTestResult, error) {
+	s.testCalls++
+	return s.testResult, s.testErr
 }
 
 func (a *releaseAuditor) Record(_ context.Context, _ domain.Actor, event domain.AuditEvent) {
@@ -216,5 +246,49 @@ func TestRollbackAuditsSuccessfulRevision(t *testing.T) {
 	}
 	if result.Revision != 4 || repo.lastTargetRevision != 1 || len(auditor.actions) != 1 || auditor.actions[0] != "rollback-helm-release" || auditor.results[0] != "success" {
 		t.Fatalf("result/repository/audit = %#v %d %#v %#v", result, repo.lastTargetRevision, auditor.actions, auditor.results)
+	}
+}
+
+func TestUpgradeDelegatesToNativeStarterWithCurrentRevision(t *testing.T) {
+	starter := &fakeUpgradeStarter{operation: domain.HelmChartOperation{
+		ID: "operation-upgrade", Type: "upgrade", Status: domain.HelmOperationRunning,
+		Namespace: "apps", ReleaseName: "web", StartedAt: time.Now().UTC(),
+	}}
+	auditor := &releaseAuditor{}
+	service := New(&fakeReleaseRepository{}, &releaseGuard{}, auditor, starter)
+	wait := false
+	options := &domain.HelmExecutionOptionsInput{Wait: &wait, Atomic: &wait, CleanupOnFail: &wait}
+	operation, err := service.Upgrade(context.Background(), domain.Actor{Username: "admin"}, "apps", "web", "replicaCount: 3\n", "web", 4, options)
+	if err != nil {
+		t.Fatalf("Upgrade() error = %v", err)
+	}
+	if operation.ID != "operation-upgrade" || starter.calls != 1 {
+		t.Fatalf("operation/starter = %#v / %#v", operation, starter)
+	}
+	if starter.input.Namespace != "apps" || starter.input.ReleaseName != "web" || starter.input.Values != "replicaCount: 3\n" || starter.input.Confirmation != "web" || starter.input.CurrentRevision != 4 || starter.input.Options != options {
+		t.Fatalf("starter input = %#v", starter.input)
+	}
+	if len(auditor.actions) != 1 || auditor.actions[0] != "upgrade-helm-release" || auditor.results[0] != "success" {
+		t.Fatalf("audit = %#v %#v", auditor.actions, auditor.results)
+	}
+}
+
+func TestUpgradeWithoutNativeStarterIsUnsupported(t *testing.T) {
+	service := New(&fakeReleaseRepository{}, &releaseGuard{}, &releaseAuditor{})
+	if _, err := service.Upgrade(context.Background(), domain.Actor{Username: "admin"}, "apps", "web", "", "web", 1, nil); !errors.Is(err, domain.ErrUnsupported) {
+		t.Fatalf("Upgrade() without starter error = %v", err)
+	}
+}
+
+func TestHelmReleaseTestUsesLockedStarterWhenAvailable(t *testing.T) {
+	starter := &fakeUpgradeStarter{testResult: domain.HelmReleaseTestResult{Namespace: "apps", Name: "web", Status: "succeeded"}}
+	repository := &fakeReleaseRepository{testResult: domain.HelmReleaseTestResult{Status: "repository-path"}}
+	service := New(repository, &releaseGuard{}, &releaseAuditor{}, starter)
+	result, err := service.Test(context.Background(), domain.Actor{Username: "admin"}, "apps", "web")
+	if err != nil {
+		t.Fatalf("Test() error = %v", err)
+	}
+	if result.Status != "succeeded" || starter.testCalls != 1 || repository.testCalls != 0 {
+		t.Fatalf("result=%#v starter=%d repository=%d", result, starter.testCalls, repository.testCalls)
 	}
 }

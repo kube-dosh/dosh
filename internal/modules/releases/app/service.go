@@ -18,17 +18,30 @@ type Repository interface {
 	GetHelmReleaseRevision(ctx context.Context, namespace, name string, revision int) (domain.HelmReleaseDetail, error)
 	RollbackHelmRelease(ctx context.Context, namespace, name string, targetRevision int) (domain.HelmReleaseRollbackResult, error)
 	PreviewHelmUpgrade(ctx context.Context, namespace, name, values string) (domain.HelmReleaseUpgradeRender, error)
-	UpgradeHelmRelease(ctx context.Context, namespace, name, values string) (domain.HelmReleaseUpgradeResult, error)
+	TestHelmRelease(ctx context.Context, actor domain.Actor, namespace, name string) (domain.HelmReleaseTestResult, error)
+}
+
+type UpgradeStarter interface {
+	StartHelmReleaseUpgrade(ctx context.Context, actor domain.Actor, input domain.HelmReleaseUpgradeOperationRequest) (domain.HelmChartOperation, error)
+}
+
+type ReleaseTestStarter interface {
+	TestHelmReleaseWithLock(ctx context.Context, actor domain.Actor, namespace, releaseName string) (domain.HelmReleaseTestResult, error)
 }
 
 type Service struct {
-	repository Repository
-	authorizer domain.Authorizer
-	auditor    domain.Auditor
+	repository     Repository
+	authorizer     domain.Authorizer
+	auditor        domain.Auditor
+	upgradeStarter UpgradeStarter
 }
 
-func New(repository Repository, authorizer domain.Authorizer, auditor domain.Auditor) *Service {
-	return &Service{repository: repository, authorizer: authorizer, auditor: auditor}
+func New(repository Repository, authorizer domain.Authorizer, auditor domain.Auditor, starters ...UpgradeStarter) *Service {
+	service := &Service{repository: repository, authorizer: authorizer, auditor: auditor}
+	if len(starters) > 0 {
+		service.upgradeStarter = starters[0]
+	}
+	return service
 }
 
 func (s *Service) List(ctx context.Context, actor domain.Actor, namespace string) ([]domain.HelmReleaseSummary, []string, error) {
@@ -160,7 +173,7 @@ func (s *Service) PreviewUpgrade(ctx context.Context, actor domain.Actor, namesp
 		warnings = append(warnings, "升级后 manifest 无法安全解析，Manifest Diff 已隐藏")
 		nextManifest = "# manifest 无法安全解析，内容已隐藏"
 	}
-	warnings = append(warnings, "升级预览不会修改集群；Helm Hook 在正式升级时不会执行")
+	warnings = append(warnings, "升级预览不会修改集群；正式升级会使用 Helm 原生流程执行 Hook，并在失败时按原子策略处理")
 	result := domain.HelmReleaseUpgradePreview{
 		Namespace: namespace, Name: name, CurrentRevision: render.CurrentRevision, NextRevision: render.NextRevision,
 		ValuesDiff:   unifiedDiff(currentValues, nextValues, fmt.Sprintf("values rev %d", render.CurrentRevision), "values 升级后"),
@@ -171,28 +184,59 @@ func (s *Service) PreviewUpgrade(ctx context.Context, actor domain.Actor, namesp
 	return result, nil
 }
 
-// Upgrade applies a server-rendered chart revision after confirming both the
-// release name and the ability to write Helm's Secret-backed history.
-func (s *Service) Upgrade(ctx context.Context, actor domain.Actor, namespace, name, values, confirmation string) (domain.HelmReleaseUpgradeResult, error) {
+// Upgrade starts the same native Helm operation engine used by the Chart
+// catalog. The returned operation can be followed in the Helm operation center.
+func (s *Service) Upgrade(ctx context.Context, actor domain.Actor, namespace, name, values, confirmation string, currentRevision int, options *domain.HelmExecutionOptionsInput) (domain.HelmChartOperation, error) {
 	if strings.TrimSpace(namespace) == "" || strings.TrimSpace(name) == "" {
-		return domain.HelmReleaseUpgradeResult{}, fmt.Errorf("%w: namespace and Helm release name are required", domain.ErrInvalid)
+		return domain.HelmChartOperation{}, fmt.Errorf("%w: namespace and Helm release name are required", domain.ErrInvalid)
 	}
 	if len(values) > 1<<20 {
-		return domain.HelmReleaseUpgradeResult{}, fmt.Errorf("%w: values must not exceed 1 MiB", domain.ErrInvalid)
+		return domain.HelmChartOperation{}, fmt.Errorf("%w: values must not exceed 1 MiB", domain.ErrInvalid)
 	}
 	if confirmation != name {
 		err := fmt.Errorf("%w: release name confirmation does not match", domain.ErrInvalid)
 		s.audit(ctx, actor, "upgrade-helm-release", namespace, name, err)
-		return domain.HelmReleaseUpgradeResult{}, err
+		return domain.HelmChartOperation{}, err
 	}
-	for _, verb := range []string{"update", "create"} {
-		if err := s.authorizer.Require(ctx, actor, domain.Access{Verb: verb, Resource: "secrets", Namespace: namespace}); err != nil {
-			s.audit(ctx, actor, "upgrade-helm-release", namespace, name, err)
-			return domain.HelmReleaseUpgradeResult{}, err
+	if s.upgradeStarter == nil {
+		err := fmt.Errorf("%w: native Helm release upgrade is unavailable", domain.ErrUnsupported)
+		s.audit(ctx, actor, "upgrade-helm-release", namespace, name, err)
+		return domain.HelmChartOperation{}, err
+	}
+	result, err := s.upgradeStarter.StartHelmReleaseUpgrade(ctx, actor, domain.HelmReleaseUpgradeOperationRequest{
+		Namespace: namespace, ReleaseName: name, Values: values, Confirmation: confirmation, CurrentRevision: currentRevision, Options: options,
+	})
+	s.audit(ctx, actor, "upgrade-helm-release", namespace, name, err)
+	return result, err
+}
+
+// Test runs the release's test hooks through the Helm SDK. Helm test updates
+// the release history and may create/delete Pods and Jobs, so it requires
+// explicit namespace-scoped write access instead of only Secret listing.
+func (s *Service) Test(ctx context.Context, actor domain.Actor, namespace, name string) (domain.HelmReleaseTestResult, error) {
+	if strings.TrimSpace(namespace) == "" || strings.TrimSpace(name) == "" {
+		return domain.HelmReleaseTestResult{}, fmt.Errorf("%w: namespace and Helm release name are required", domain.ErrInvalid)
+	}
+	for _, verb := range []string{"list", "create", "update", "delete"} {
+		for _, resource := range []domain.Access{
+			{Verb: verb, Resource: "secrets", Namespace: namespace},
+			{Verb: verb, Resource: "pods", Namespace: namespace},
+			{Verb: verb, Resource: "jobs", APIGroup: "batch", Namespace: namespace},
+		} {
+			if err := s.authorizer.Require(ctx, actor, resource); err != nil {
+				s.audit(ctx, actor, "test-helm-release", namespace, name, err)
+				return domain.HelmReleaseTestResult{}, err
+			}
 		}
 	}
-	result, err := s.repository.UpgradeHelmRelease(ctx, namespace, name, values)
-	s.audit(ctx, actor, "upgrade-helm-release", namespace, name, err)
+	var result domain.HelmReleaseTestResult
+	var err error
+	if starter, ok := s.upgradeStarter.(ReleaseTestStarter); ok {
+		result, err = starter.TestHelmReleaseWithLock(ctx, actor, namespace, name)
+	} else {
+		result, err = s.repository.TestHelmRelease(ctx, actor, namespace, name)
+	}
+	s.audit(ctx, actor, "test-helm-release", namespace, name, err)
 	return result, err
 }
 

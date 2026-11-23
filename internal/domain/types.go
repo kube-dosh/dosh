@@ -852,6 +852,35 @@ type HelmReleaseUpgradeResult struct {
 	Warnings         []string `json:"warnings,omitempty"`
 }
 
+// HelmReleaseTestHook reports one helm.sh/hook: test resource. Logs are
+// bounded before this type leaves the platform layer.
+type HelmReleaseTestHook struct {
+	Name        string    `json:"name"`
+	Kind        string    `json:"kind"`
+	Path        string    `json:"path,omitempty"`
+	Status      string    `json:"status"`
+	Message     string    `json:"message,omitempty"`
+	StartedAt   time.Time `json:"startedAt,omitempty"`
+	CompletedAt time.Time `json:"completedAt,omitempty"`
+}
+
+// HelmReleaseTestResult is returned by a server-side `helm test` run. A test
+// run updates the Helm release history and may create/delete test Pods and
+// Jobs, so callers must authorize both Secret history writes and test resource
+// lifecycle operations.
+type HelmReleaseTestResult struct {
+	Namespace  string                 `json:"namespace"`
+	Name       string                 `json:"name"`
+	Revision   int                    `json:"revision"`
+	Status     string                 `json:"status"`
+	Message    string                 `json:"message,omitempty"`
+	Hooks      []HelmReleaseTestHook  `json:"hooks"`
+	Logs       string                 `json:"logs,omitempty"`
+	Warnings   []string               `json:"warnings,omitempty"`
+	StartedAt  time.Time              `json:"startedAt"`
+	FinishedAt time.Time              `json:"finishedAt"`
+}
+
 // WorkloadLogStream is one opened pod/container log stream. The HTTP adapter
 // multiplexes streams into bounded NDJSON frames.
 type WorkloadLogStream struct {

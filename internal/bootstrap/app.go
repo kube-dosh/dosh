@@ -75,6 +75,7 @@ type App struct {
 	audit  *audit.Logger
 	certs  *tlscert.Store
 	egress *egress.Controller
+	helm   *helmchartsapp.Service
 }
 
 func New(ctx context.Context, cfg config.Config) (*App, error) {
@@ -187,10 +188,12 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 	})
 	registriesService := registriesapp.New(kubeClient, registryclient.New(cfg.RequestTimeout, egressFactory), authorizer, auditLogger)
 	workloadsService.SetImageRegistryResolver(registriesService)
-	releasesService := releasesapp.New(kubeClient, authorizer, auditLogger)
 	helmRepositoryClient := helmrepo.New(cfg.RequestTimeout, egressFactory)
 	helmRepositoryClient.SetCacheDir(cfg.DataDir)
+	helmRepositoryClient.SetCacheLimit(cfg.HelmCacheMaxBytes)
 	helmChartsService := helmchartsapp.New(kubeClient, helmRepositoryClient, kubeClient, authorizer, auditLogger)
+	helmChartsService.SetCacheLimit(cfg.HelmCacheMaxBytes)
+	releasesService := releasesapp.New(kubeClient, authorizer, auditLogger, helmChartsService)
 	eventsService := eventsapp.New(kubeClient)
 	networkService := networkapp.New(kubeClient, authorizer, auditLogger)
 	configurationService := configurationapp.New(kubeClient, authorizer, auditLogger)
@@ -245,7 +248,7 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 		return nil, err
 	}
 	logger.Info("dosh_initialized", "version", version.Version, "commit", version.Commit, "auth_mode", cfg.AuthMode, "read_only", cfg.ReadOnly, "login_rate_limit_mode", cfg.LoginRateLimitMode, "audit_webhook", cfg.AuditWebhookURL != "", "oidc_issuer", cfg.OIDCIssuer)
-	return &App{Config: cfg, Logger: logger, Router: router, audit: auditLogger, certs: certificateStore, egress: egressController}, nil
+	return &App{Config: cfg, Logger: logger, Router: router, audit: auditLogger, certs: certificateStore, egress: egressController, helm: helmChartsService}, nil
 }
 
 func oidcPostLogoutRedirect(callbackURL string) string {
@@ -268,6 +271,9 @@ func (a *App) Run(ctx context.Context) error {
 	}
 	if a.egress != nil {
 		go a.egress.Run(ctx)
+	}
+	if a.helm != nil {
+		go a.helm.RunScheduler(ctx)
 	}
 	server := httpserver.New(a.Router, a.Config, a.Logger)
 	httpserver.UseCertificate(server, a.certs)

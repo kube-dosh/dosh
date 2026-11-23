@@ -23,14 +23,20 @@ import (
 )
 
 const (
-	maxRepositoryNameLength = 128
-	maxRepositoryURLSize    = 2048
-	maxCredentialSize       = 16 << 10
-	maxCASize               = 64 << 10
-	maxChartValuesSize      = 1024 * 1024
-	helmOperationTimeout    = 12 * time.Minute
-	helmProgressInterval    = 3 * time.Second
-	maxOperationResources   = 300
+	maxRepositoryNameLength       = 128
+	maxRepositoryURLSize          = 2048
+	maxCredentialSize             = 16 << 10
+	maxCASize                     = 64 << 10
+	maxChartValuesSize            = 1024 * 1024
+	helmOperationTimeout          = 12 * time.Minute
+	helmProgressInterval          = 3 * time.Second
+	helmOperationHeartbeat        = 30 * time.Second
+	helmOperationStaleAfter       = 2 * time.Minute
+	helmOperationLegacyStaleAfter = helmOperationTimeout + 2*time.Minute
+	helmSyncRetryBaseDelay        = 5 * time.Minute
+	helmCacheMaintenance          = 10 * time.Minute
+	helmOperationListLimit        = 500
+	maxOperationResources         = 300
 )
 
 var (
@@ -54,16 +60,44 @@ type Source interface {
 	Download(ctx context.Context, repository domain.HelmRepository, chartName, version, expectedDigest string) ([]byte, string, error)
 }
 
+type RepositoryRefresher interface {
+	Refresh(ctx context.Context, repository domain.HelmRepository) ([]domain.HelmChartSummary, error)
+}
+
+type CacheManager interface {
+	CacheStats() (domain.HelmCacheStats, error)
+	CleanupCache(maxBytes int64) (domain.HelmCacheCleanupResult, error)
+	RemoveRepositoryCache(repository domain.HelmRepository) error
+}
+
+type OperationLister interface {
+	ListHelmChartOperations(ctx context.Context, filter domain.HelmOperationFilter) ([]domain.HelmChartOperation, error)
+}
+
+type OperationLocker interface {
+	AcquireHelmOperationLock(ctx context.Context, namespace, releaseName, operationID string, ttl time.Duration) error
+	ReleaseHelmOperationLock(ctx context.Context, namespace, releaseName, operationID string) error
+}
+
+type OperationLockCleaner interface {
+	CleanupHelmOperationLocks(ctx context.Context) (int, error)
+}
+
 type ChartRefresher interface {
 	RefreshChart(ctx context.Context, repository domain.HelmRepository, chartName string) (domain.HelmChartDetail, error)
 }
 
 type Executor interface {
 	PlanHelmChart(ctx context.Context, actor domain.Actor, archive []byte, request domain.HelmChartPlanRequest) (domain.HelmChartPlanTemplate, error)
-	InstallHelmChart(ctx context.Context, actor domain.Actor, archive []byte, request domain.HelmChartPlanRequest) (int, error)
-	UpgradeHelmChart(ctx context.Context, actor domain.Actor, archive []byte, request domain.HelmChartPlanRequest) (int, error)
-	UninstallHelmChart(ctx context.Context, actor domain.Actor, namespace, releaseName string) error
-	RollbackHelmChart(ctx context.Context, actor domain.Actor, namespace, releaseName string, targetRevision int) (int, error)
+	InstallHelmChart(ctx context.Context, actor domain.Actor, archive []byte, request domain.HelmChartPlanRequest, options domain.HelmExecutionOptions) (int, error)
+	UpgradeHelmChart(ctx context.Context, actor domain.Actor, archive []byte, request domain.HelmChartPlanRequest, options domain.HelmExecutionOptions) (int, error)
+	UninstallHelmChart(ctx context.Context, actor domain.Actor, namespace, releaseName string, options domain.HelmExecutionOptions) error
+	RollbackHelmChart(ctx context.Context, actor domain.Actor, namespace, releaseName string, targetRevision int, options domain.HelmExecutionOptions) (int, error)
+}
+
+type ReleaseUpgradeExecutor interface {
+	PlanHelmReleaseUpgrade(ctx context.Context, actor domain.Actor, namespace, releaseName, values string) (domain.HelmChartPlanTemplate, error)
+	UpgradeHelmReleaseWithHelm(ctx context.Context, actor domain.Actor, namespace, releaseName, values string, options domain.HelmExecutionOptions) (int, error)
 }
 
 // HelmResourceObserver exposes live object status for an operation. Executors
@@ -73,16 +107,35 @@ type HelmResourceObserver interface {
 	ObserveHelmOperationResources(ctx context.Context, resources []domain.HelmChartPlanResource) []domain.HelmOperationResource
 }
 
+type HelmReleaseTester interface {
+	TestHelmRelease(ctx context.Context, actor domain.Actor, namespace, releaseName string) (domain.HelmReleaseTestResult, error)
+}
+
 type Service struct {
 	repository Repository
 	source     Source
 	executor   Executor
 	authorizer domain.Authorizer
 	auditor    domain.Auditor
+
+	syncMu       sync.Mutex
+	syncInFlight map[string]bool
+	cacheLimit   int64
+
+	operationMu      sync.Mutex
+	operationCancels map[string]context.CancelFunc
+	operationLocks   map[string]string
 }
 
 func New(repository Repository, source Source, executor Executor, authorizer domain.Authorizer, auditor domain.Auditor) *Service {
-	return &Service{repository: repository, source: source, executor: executor, authorizer: authorizer, auditor: auditor}
+	return &Service{
+		repository: repository, source: source, executor: executor, authorizer: authorizer, auditor: auditor,
+		syncInFlight: map[string]bool{}, operationCancels: map[string]context.CancelFunc{}, operationLocks: map[string]string{},
+	}
+}
+
+func (s *Service) SetCacheLimit(maxBytes int64) {
+	s.cacheLimit = maxBytes
 }
 
 func (s *Service) ListRepositories(ctx context.Context, actor domain.Actor) ([]domain.HelmRepository, error) {
@@ -92,6 +145,9 @@ func (s *Service) ListRepositories(ctx context.Context, actor domain.Actor) ([]d
 	items, err := s.repository.ListHelmRepositories(ctx)
 	if err != nil {
 		return nil, err
+	}
+	for index := range items {
+		items[index] = decorateRepository(items[index])
 	}
 	return stripRepositorySecrets(items), nil
 }
@@ -115,7 +171,7 @@ func (s *Service) CreateRepository(ctx context.Context, actor domain.Actor, inpu
 		s.audit(ctx, actor, "create-helm-repository", "", err)
 		return domain.HelmRepository{}, err
 	}
-	saved = s.refreshBestEffort(ctx, saved)
+	saved, _ = s.refreshRepository(ctx, saved, domain.HelmRepositorySyncTriggerCreate)
 	s.audit(ctx, actor, "create-helm-repository", saved.ID, nil)
 	return stripRepositorySecret(saved), nil
 }
@@ -142,16 +198,20 @@ func (s *Service) UpdateRepository(ctx context.Context, actor domain.Actor, id s
 	}
 	repository.ID = current.ID
 	repository.Revision = current.Revision
+	repository.SyncHistory = current.SyncHistory
+	repository.SyncFailureCount = current.SyncFailureCount
 	if repository.URL == current.URL && repository.InsecureSkipTLS == current.InsecureSkipTLS && credentialsEqual(repository.Credentials, current.Credentials) {
 		repository.LastSync = current.LastSync
 		repository.ChartCount = current.ChartCount
+	} else {
+		repository.SyncFailureCount = 0
 	}
 	saved, err := s.repository.SaveHelmRepository(ctx, repository)
 	if err != nil {
 		s.audit(ctx, actor, "update-helm-repository", id, err)
 		return domain.HelmRepository{}, err
 	}
-	saved = s.refreshBestEffort(ctx, saved)
+	saved, _ = s.refreshRepository(ctx, saved, domain.HelmRepositorySyncTriggerUpdate)
 	s.audit(ctx, actor, "update-helm-repository", id, nil)
 	return stripRepositorySecret(saved), nil
 }
@@ -161,7 +221,17 @@ func (s *Service) DeleteRepository(ctx context.Context, actor domain.Actor, id, 
 		s.audit(ctx, actor, "delete-helm-repository", id, err)
 		return err
 	}
+	repository, getErr := s.repository.GetHelmRepository(ctx, id)
+	if getErr != nil {
+		s.audit(ctx, actor, "delete-helm-repository", id, getErr)
+		return getErr
+	}
 	err := s.repository.DeleteHelmRepository(ctx, id, revision)
+	if err == nil {
+		if cache, ok := s.source.(CacheManager); ok {
+			_ = cache.RemoveRepositoryCache(repository)
+		}
+	}
 	s.audit(ctx, actor, "delete-helm-repository", id, err)
 	return err
 }
@@ -176,8 +246,8 @@ func (s *Service) SyncRepository(ctx context.Context, actor domain.Actor, id str
 		s.audit(ctx, actor, "sync-helm-repository", id, err)
 		return domain.HelmRepository{}, err
 	}
-	repository = s.refreshBestEffort(ctx, repository)
-	s.audit(ctx, actor, "sync-helm-repository", id, nil)
+	repository, syncErr := s.refreshRepository(ctx, repository, domain.HelmRepositorySyncTriggerManual)
+	s.audit(ctx, actor, "sync-helm-repository", id, syncErr)
 	return stripRepositorySecret(repository), nil
 }
 
@@ -240,14 +310,31 @@ func (s *Service) Chart(ctx context.Context, actor domain.Actor, repositoryID, c
 
 // SyncChart forces a fresh Chart package download and refreshes the metadata
 // extracted from that package. It does not re-synchronize the repository index.
+// This is a cache mutation and therefore requires repository update permission.
 func (s *Service) SyncChart(ctx context.Context, actor domain.Actor, repositoryID, chartName string) (domain.HelmChartDetail, error) {
-	if err := s.requireRead(ctx, actor); err != nil {
+	if err := s.require(ctx, actor, "update"); err != nil {
+		s.audit(ctx, actor, "sync-helm-chart", chartName, err)
 		return domain.HelmChartDetail{}, err
 	}
 	repository, chartName, err := s.repositoryAndChart(ctx, repositoryID, chartName)
 	if err != nil {
 		return domain.HelmChartDetail{}, err
 	}
+	lockName := "helm-chart-sync-" + repository.ID + "-" + chartName
+	lockID := newOperationID()
+	if err := s.acquireOperationLock(ctx, "dosh-internal", lockName, lockID); err != nil {
+		s.audit(ctx, actor, "sync-helm-chart", chartName, err)
+		return domain.HelmChartDetail{}, err
+	}
+	locked := true
+	defer func() {
+		if !locked {
+			return
+		}
+		releaseCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
+		defer cancel()
+		s.releaseOperationLock(releaseCtx, "dosh-internal", lockName, lockID)
+	}()
 	var detail domain.HelmChartDetail
 	if refresher, ok := s.source.(ChartRefresher); ok {
 		detail, err = refresher.RefreshChart(ctx, repository, chartName)
@@ -261,6 +348,10 @@ func (s *Service) SyncChart(ctx context.Context, actor domain.Actor, repositoryI
 	if strings.HasPrefix(strings.ToLower(repository.URL), "http://") {
 		detail.Warnings = append(detail.Warnings, "该仓库使用明文 HTTP，传输内容可能被篡改；生产环境请使用 HTTPS")
 	}
+	locked = false
+	releaseCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
+	defer cancel()
+	s.releaseOperationLock(releaseCtx, "dosh-internal", lockName, lockID)
 	s.audit(ctx, actor, "sync-helm-chart", chartName, nil)
 	return detail, nil
 }
@@ -275,6 +366,26 @@ func (s *Service) Install(ctx context.Context, actor domain.Actor, input domain.
 		return domain.HelmChartOperation{}, err
 	}
 	input.Mode = "install"
+	normalized, err := normalizePlanRequest(input.HelmChartPlanRequest)
+	if err != nil {
+		s.audit(ctx, actor, "install-helm-chart", input.ReleaseName, err)
+		return domain.HelmChartOperation{}, err
+	}
+	input.HelmChartPlanRequest = normalized
+	operationID := newOperationID()
+	if err := s.acquireOperationLock(ctx, normalized.Namespace, normalized.ReleaseName, operationID); err != nil {
+		s.audit(ctx, actor, "install-helm-chart", input.ReleaseName, err)
+		return domain.HelmChartOperation{}, err
+	}
+	locked := true
+	defer func() {
+		if !locked {
+			return
+		}
+		releaseCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
+		defer cancel()
+		s.releaseOperationLock(releaseCtx, normalized.Namespace, normalized.ReleaseName, operationID)
+	}()
 	plan, archive, err := s.plan(ctx, actor, input.HelmChartPlanRequest)
 	if err != nil {
 		return domain.HelmChartOperation{}, err
@@ -283,12 +394,15 @@ func (s *Service) Install(ctx context.Context, actor domain.Actor, input domain.
 		s.audit(ctx, actor, "install-helm-chart", input.ReleaseName, err)
 		return domain.HelmChartOperation{}, err
 	}
+	input.ExpectedRevision = plan.CurrentRevision
 	operation := s.newOperation("install", input.HelmChartPlanRequest, plan)
+	operation.ID = operationID
 	if err := s.saveOperation(ctx, &operation); err != nil {
 		return domain.HelmChartOperation{}, err
 	}
+	locked = false
 	s.runOperation(ctx, operation, actor, "install-helm-chart", func(runCtx context.Context) (int, error) {
-		return s.executor.InstallHelmChart(runCtx, actor, archive, input.HelmChartPlanRequest)
+		return s.executor.InstallHelmChart(runCtx, actor, archive, input.HelmChartPlanRequest, plan.Options)
 	})
 	return operation, nil
 }
@@ -298,6 +412,26 @@ func (s *Service) Upgrade(ctx context.Context, actor domain.Actor, input domain.
 		return domain.HelmChartOperation{}, err
 	}
 	input.Mode = "upgrade"
+	normalized, err := normalizePlanRequest(input.HelmChartPlanRequest)
+	if err != nil {
+		s.audit(ctx, actor, "upgrade-helm-chart", input.ReleaseName, err)
+		return domain.HelmChartOperation{}, err
+	}
+	input.HelmChartPlanRequest = normalized
+	operationID := newOperationID()
+	if err := s.acquireOperationLock(ctx, normalized.Namespace, normalized.ReleaseName, operationID); err != nil {
+		s.audit(ctx, actor, "upgrade-helm-chart", input.ReleaseName, err)
+		return domain.HelmChartOperation{}, err
+	}
+	locked := true
+	defer func() {
+		if !locked {
+			return
+		}
+		releaseCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
+		defer cancel()
+		s.releaseOperationLock(releaseCtx, normalized.Namespace, normalized.ReleaseName, operationID)
+	}()
 	plan, archive, err := s.plan(ctx, actor, input.HelmChartPlanRequest)
 	if err != nil {
 		return domain.HelmChartOperation{}, err
@@ -306,12 +440,94 @@ func (s *Service) Upgrade(ctx context.Context, actor domain.Actor, input domain.
 		s.audit(ctx, actor, "upgrade-helm-chart", input.ReleaseName, err)
 		return domain.HelmChartOperation{}, err
 	}
+	input.ExpectedRevision = plan.CurrentRevision
 	operation := s.newOperation("upgrade", input.HelmChartPlanRequest, plan)
+	operation.ID = operationID
 	if err := s.saveOperation(ctx, &operation); err != nil {
 		return domain.HelmChartOperation{}, err
 	}
+	locked = false
 	s.runOperation(ctx, operation, actor, "upgrade-helm-chart", func(runCtx context.Context) (int, error) {
-		return s.executor.UpgradeHelmChart(runCtx, actor, archive, input.HelmChartPlanRequest)
+		return s.executor.UpgradeHelmChart(runCtx, actor, archive, input.HelmChartPlanRequest, plan.Options)
+	})
+	return operation, nil
+}
+
+// StartHelmReleaseUpgrade executes an installed Release's stored Chart through
+// the same operation, locking, progress and cancellation engine used by Chart
+// catalog operations. Values are an override over the deployed configuration.
+func (s *Service) StartHelmReleaseUpgrade(ctx context.Context, actor domain.Actor, input domain.HelmReleaseUpgradeOperationRequest) (domain.HelmChartOperation, error) {
+	if strings.TrimSpace(input.Namespace) == "" || strings.TrimSpace(input.ReleaseName) == "" {
+		return domain.HelmChartOperation{}, fmt.Errorf("%w: namespace and Helm release name are required", domain.ErrInvalid)
+	}
+	if len(input.Values) > maxChartValuesSize {
+		return domain.HelmChartOperation{}, fmt.Errorf("%w: values must not exceed 1 MiB", domain.ErrInvalid)
+	}
+	if err := requireConfirmation(input.Confirmation, input.ReleaseName); err != nil {
+		return domain.HelmChartOperation{}, err
+	}
+	executionOptions, err := domain.ResolveHelmExecutionOptions(input.Options)
+	if err != nil {
+		s.audit(ctx, actor, "upgrade-helm-release", input.ReleaseName, err)
+		return domain.HelmChartOperation{}, err
+	}
+	upgrader, ok := s.executor.(ReleaseUpgradeExecutor)
+	if !ok {
+		return domain.HelmChartOperation{}, fmt.Errorf("%w: native Helm release upgrade is unavailable", domain.ErrUnsupported)
+	}
+	if err := s.requireReleaseRead(ctx, actor, input.Namespace); err != nil {
+		s.audit(ctx, actor, "upgrade-helm-release", input.ReleaseName, err)
+		return domain.HelmChartOperation{}, err
+	}
+	if err := s.requireReleaseWrite(ctx, actor, input.Namespace, "create"); err != nil {
+		s.audit(ctx, actor, "upgrade-helm-release", input.ReleaseName, err)
+		return domain.HelmChartOperation{}, err
+	}
+
+	operationID := newOperationID()
+	if err := s.acquireOperationLock(ctx, input.Namespace, input.ReleaseName, operationID); err != nil {
+		s.audit(ctx, actor, "upgrade-helm-release", input.ReleaseName, err)
+		return domain.HelmChartOperation{}, err
+	}
+	locked := true
+	defer func() {
+		if locked {
+			releaseCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
+			defer cancel()
+			s.releaseOperationLock(releaseCtx, input.Namespace, input.ReleaseName, operationID)
+		}
+	}()
+
+	plan, err := upgrader.PlanHelmReleaseUpgrade(ctx, actor, input.Namespace, input.ReleaseName, input.Values)
+	if err != nil {
+		s.audit(ctx, actor, "upgrade-helm-release", input.ReleaseName, err)
+		return domain.HelmChartOperation{}, err
+	}
+	if input.CurrentRevision > 0 && plan.CurrentRevision != input.CurrentRevision {
+		err := fmt.Errorf("%w: Helm release revision changed; refresh the upgrade preview", domain.ErrConflict)
+		s.audit(ctx, actor, "upgrade-helm-release", input.ReleaseName, err)
+		return domain.HelmChartOperation{}, err
+	}
+	if err := s.authorizeRenderedResources(ctx, actor, plan.Resources); err != nil {
+		s.audit(ctx, actor, "upgrade-helm-release", input.ReleaseName, err)
+		return domain.HelmChartOperation{}, err
+	}
+
+	operation := s.newOperationFromTemplate("upgrade", domain.HelmChartPlanRequest{
+		HelmChartRef: domain.HelmChartRef{ChartName: plan.ChartName, Version: plan.ChartVersion},
+		Namespace:    input.Namespace, ReleaseName: input.ReleaseName,
+	}, plan)
+	operation.ID = operationID
+	operation.ChartName = plan.ChartName
+	operation.ChartVersion = plan.ChartVersion
+	operation.Options = &executionOptions
+	operation.Warnings = append(operation.Warnings, "使用 Helm 原生升级执行：将运行 Hook、清理目标清单中已移除的对象，并保留原子回滚语义")
+	if err := s.saveOperation(ctx, &operation); err != nil {
+		return domain.HelmChartOperation{}, err
+	}
+	locked = false
+	s.runOperation(ctx, operation, actor, "upgrade-helm-release", func(runCtx context.Context) (int, error) {
+		return upgrader.UpgradeHelmReleaseWithHelm(runCtx, actor, input.Namespace, input.ReleaseName, input.Values, executionOptions)
 	})
 	return operation, nil
 }
@@ -320,20 +536,34 @@ func (s *Service) Uninstall(ctx context.Context, actor domain.Actor, input domai
 	if err := requireConfirmation(input.Confirmation, input.ReleaseName); err != nil {
 		return domain.HelmChartOperation{}, err
 	}
+	executionOptions, err := domain.ResolveHelmExecutionOptions(input.Options)
+	if err != nil {
+		s.audit(ctx, actor, "uninstall-helm-chart", input.ReleaseName, err)
+		return domain.HelmChartOperation{}, err
+	}
 	if err := s.requireReleaseWrite(ctx, actor, input.Namespace, "delete"); err != nil {
 		s.audit(ctx, actor, "uninstall-helm-chart", input.ReleaseName, err)
 		return domain.HelmChartOperation{}, err
 	}
 	operation := domain.HelmChartOperation{
 		ID: newOperationID(), Type: "uninstall", Status: domain.HelmOperationRunning,
-		Namespace: input.Namespace, ReleaseName: input.ReleaseName, StartedAt: time.Now().UTC(),
+		Namespace: input.Namespace, ReleaseName: input.ReleaseName, StartedAt: time.Now().UTC(), HeartbeatAt: time.Now().UTC(),
+		Options:  &executionOptions,
 		Warnings: []string{"卸载会删除 Helm 管理的资源；默认保留的 PVC、CRD 和外部资源需要单独清理"},
 	}
+	if executionOptions.KeepHistory {
+		operation.Warnings = append(operation.Warnings, "保留 Helm 历史：Release 记录会以 uninstalled 状态保留，后续可审计和恢复")
+	}
+	if err := s.acquireOperationLock(ctx, operation.Namespace, operation.ReleaseName, operation.ID); err != nil {
+		s.audit(ctx, actor, "uninstall-helm-chart", input.ReleaseName, err)
+		return domain.HelmChartOperation{}, err
+	}
 	if err := s.saveOperation(ctx, &operation); err != nil {
+		s.releaseOperationLock(ctx, operation.Namespace, operation.ReleaseName, operation.ID)
 		return domain.HelmChartOperation{}, err
 	}
 	s.runOperation(ctx, operation, actor, "uninstall-helm-chart", func(runCtx context.Context) (int, error) {
-		return 0, s.executor.UninstallHelmChart(runCtx, actor, input.Namespace, input.ReleaseName)
+		return 0, s.executor.UninstallHelmChart(runCtx, actor, input.Namespace, input.ReleaseName, executionOptions)
 	})
 	return operation, nil
 }
@@ -345,31 +575,151 @@ func (s *Service) Rollback(ctx context.Context, actor domain.Actor, input domain
 	if input.TargetRevision <= 0 {
 		return domain.HelmChartOperation{}, fmt.Errorf("%w: target revision must be positive", domain.ErrInvalid)
 	}
+	executionOptions, err := domain.ResolveHelmExecutionOptions(input.Options)
+	if err != nil {
+		s.audit(ctx, actor, "rollback-helm-chart", input.ReleaseName, err)
+		return domain.HelmChartOperation{}, err
+	}
 	if err := s.requireReleaseWrite(ctx, actor, input.Namespace, "update"); err != nil {
 		s.audit(ctx, actor, "rollback-helm-chart", input.ReleaseName, err)
 		return domain.HelmChartOperation{}, err
 	}
 	operation := domain.HelmChartOperation{
 		ID: newOperationID(), Type: "rollback", Status: domain.HelmOperationRunning,
-		Namespace: input.Namespace, ReleaseName: input.ReleaseName, StartedAt: time.Now().UTC(),
+		Namespace: input.Namespace, ReleaseName: input.ReleaseName, StartedAt: time.Now().UTC(), HeartbeatAt: time.Now().UTC(),
+		Options: &executionOptions,
+	}
+	if err := s.acquireOperationLock(ctx, operation.Namespace, operation.ReleaseName, operation.ID); err != nil {
+		s.audit(ctx, actor, "rollback-helm-chart", input.ReleaseName, err)
+		return domain.HelmChartOperation{}, err
 	}
 	if err := s.saveOperation(ctx, &operation); err != nil {
+		s.releaseOperationLock(ctx, operation.Namespace, operation.ReleaseName, operation.ID)
 		return domain.HelmChartOperation{}, err
 	}
 	s.runOperation(ctx, operation, actor, "rollback-helm-chart", func(runCtx context.Context) (int, error) {
-		return s.executor.RollbackHelmChart(runCtx, actor, input.Namespace, input.ReleaseName, input.TargetRevision)
+		return s.executor.RollbackHelmChart(runCtx, actor, input.Namespace, input.ReleaseName, input.TargetRevision, executionOptions)
 	})
 	return operation, nil
 }
 
 func (s *Service) Operation(ctx context.Context, actor domain.Actor, id string) (domain.HelmChartOperation, error) {
-	if err := s.requireRead(ctx, actor); err != nil {
-		return domain.HelmChartOperation{}, err
-	}
 	if strings.TrimSpace(id) == "" {
 		return domain.HelmChartOperation{}, fmt.Errorf("%w: operation id is required", domain.ErrInvalid)
 	}
-	return s.repository.GetHelmChartOperation(ctx, id)
+	operation, err := s.repository.GetHelmChartOperation(ctx, id)
+	if err != nil {
+		return domain.HelmChartOperation{}, err
+	}
+	if err := s.requireReleaseRead(ctx, actor, operation.Namespace); err != nil {
+		return domain.HelmChartOperation{}, err
+	}
+	return operation, nil
+}
+
+func (s *Service) ListOperations(ctx context.Context, actor domain.Actor, filter domain.HelmOperationFilter) ([]domain.HelmChartOperation, error) {
+	lister, ok := s.repository.(OperationLister)
+	if !ok {
+		return nil, fmt.Errorf("%w: Helm operation history is unavailable", domain.ErrUnsupported)
+	}
+	items, err := lister.ListHelmChartOperations(ctx, filter)
+	if err != nil {
+		return nil, err
+	}
+	allowed := map[string]bool{}
+	filtered := make([]domain.HelmChartOperation, 0, len(items))
+	for _, operation := range items {
+		if operation.Namespace == "" {
+			continue
+		}
+		if _, checked := allowed[operation.Namespace]; !checked {
+			allowed[operation.Namespace] = s.requireReleaseRead(ctx, actor, operation.Namespace) == nil
+		}
+		if allowed[operation.Namespace] {
+			filtered = append(filtered, operation)
+		}
+	}
+	return filtered, nil
+}
+
+func (s *Service) CancelOperation(ctx context.Context, actor domain.Actor, id string) (domain.HelmChartOperation, error) {
+	operation, err := s.repository.GetHelmChartOperation(ctx, id)
+	if err != nil {
+		return domain.HelmChartOperation{}, err
+	}
+	if operation.Status != domain.HelmOperationRunning && operation.Status != domain.HelmOperationPending {
+		return domain.HelmChartOperation{}, fmt.Errorf("%w: operation %s is already finished", domain.ErrConflict, id)
+	}
+	if err := s.requireReleaseWrite(ctx, actor, operation.Namespace, "update"); err != nil {
+		return domain.HelmChartOperation{}, err
+	}
+	s.operationMu.Lock()
+	cancel := s.operationCancels[id]
+	s.operationMu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+	operation.CancelRequested = true
+	operation.Message = "已请求取消，等待 Helm 操作安全退出"
+	if err := s.saveOperation(ctx, &operation); err != nil {
+		return domain.HelmChartOperation{}, err
+	}
+	s.audit(ctx, actor, "cancel-helm-operation", operation.ReleaseName, nil)
+	return operation, nil
+}
+
+// TestHelmReleaseWithLock serializes Helm test with every other mutation of the
+// same Release. Helm test updates Release history and creates/deletes hook
+// resources, so it must not overlap an upgrade, rollback or uninstall.
+func (s *Service) TestHelmReleaseWithLock(ctx context.Context, actor domain.Actor, namespace, releaseName string) (domain.HelmReleaseTestResult, error) {
+	if strings.TrimSpace(namespace) == "" || strings.TrimSpace(releaseName) == "" {
+		return domain.HelmReleaseTestResult{}, fmt.Errorf("%w: namespace and Helm release name are required", domain.ErrInvalid)
+	}
+	tester, ok := s.executor.(HelmReleaseTester)
+	if !ok {
+		return domain.HelmReleaseTestResult{}, fmt.Errorf("%w: Helm test execution is unavailable", domain.ErrUnsupported)
+	}
+	operationID := newOperationID()
+	if err := s.acquireOperationLock(ctx, namespace, releaseName, operationID); err != nil {
+		return domain.HelmReleaseTestResult{}, err
+	}
+	releaseCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
+	defer cancel()
+	defer s.releaseOperationLock(releaseCtx, namespace, releaseName, operationID)
+	return tester.TestHelmRelease(ctx, actor, namespace, releaseName)
+}
+
+func (s *Service) acquireOperationLock(ctx context.Context, namespace, releaseName, operationID string) error {
+	if locker, ok := s.repository.(OperationLocker); ok {
+		return locker.AcquireHelmOperationLock(ctx, namespace, releaseName, operationID, 20*time.Minute)
+	}
+	key := namespace + "/" + releaseName
+	s.operationMu.Lock()
+	defer s.operationMu.Unlock()
+	if existing := s.operationLocks[key]; existing != "" && existing != operationID {
+		return fmt.Errorf("%w: release %s already has operation %s in progress", domain.ErrConflict, key, existing)
+	}
+	s.operationLocks[key] = operationID
+	return nil
+}
+
+func (s *Service) renewOperationLock(ctx context.Context, namespace, releaseName, operationID string) {
+	if locker, ok := s.repository.(OperationLocker); ok {
+		_ = locker.AcquireHelmOperationLock(ctx, namespace, releaseName, operationID, 20*time.Minute)
+	}
+}
+
+func (s *Service) releaseOperationLock(ctx context.Context, namespace, releaseName, operationID string) {
+	if locker, ok := s.repository.(OperationLocker); ok {
+		_ = locker.ReleaseHelmOperationLock(ctx, namespace, releaseName, operationID)
+		return
+	}
+	key := namespace + "/" + releaseName
+	s.operationMu.Lock()
+	defer s.operationMu.Unlock()
+	if s.operationLocks[key] == operationID {
+		delete(s.operationLocks, key)
+	}
 }
 
 func (s *Service) plan(ctx context.Context, actor domain.Actor, input domain.HelmChartPlanRequest) (domain.HelmChartPlan, []byte, error) {
@@ -377,6 +727,11 @@ func (s *Service) plan(ctx context.Context, actor domain.Actor, input domain.Hel
 		return domain.HelmChartPlan{}, nil, err
 	}
 	normalized, err := normalizePlanRequest(input)
+	if err != nil {
+		s.audit(ctx, actor, "plan-helm-chart", input.ReleaseName, err)
+		return domain.HelmChartPlan{}, nil, err
+	}
+	executionOptions, err := domain.ResolveHelmExecutionOptions(input.Options)
 	if err != nil {
 		s.audit(ctx, actor, "plan-helm-chart", input.ReleaseName, err)
 		return domain.HelmChartPlan{}, nil, err
@@ -416,7 +771,7 @@ func (s *Service) plan(ctx context.Context, actor domain.Actor, input domain.Hel
 		Namespace: normalized.Namespace, ReleaseName: normalized.ReleaseName,
 		CurrentRevision: template.CurrentRevision, Manifest: redactManifest(template.Manifest),
 		Values: redactValues(template.Values), Resources: template.Resources,
-		Warnings: append([]string(nil), template.Warnings...), PlanDigest: computePlanDigest(normalized, repository, actualDigest, template),
+		Warnings: append([]string(nil), template.Warnings...), PlanDigest: computePlanDigest(normalized, repository, actualDigest, template, executionOptions), Options: executionOptions,
 	}
 	for _, resource := range template.Resources {
 		if resource.Hook {
@@ -455,26 +810,296 @@ func (s *Service) repositoryAndChart(ctx context.Context, repositoryID, chartNam
 	return repository, chartName, nil
 }
 
-func (s *Service) refreshBestEffort(ctx context.Context, repository domain.HelmRepository) domain.HelmRepository {
-	if invalidator, ok := s.source.(interface{ Invalidate(domain.HelmRepository) }); ok {
-		invalidator.Invalidate(repository)
+func (s *Service) refreshRepository(ctx context.Context, repository domain.HelmRepository, trigger string) (domain.HelmRepository, error) {
+	if !s.beginRepositorySync(repository.ID) {
+		return decorateRepository(repository), fmt.Errorf("%w: repository %s is already synchronizing", domain.ErrConflict, repository.Name)
 	}
-	started := time.Now().UTC()
-	charts, err := s.source.Charts(ctx, repository)
-	sync := &domain.HelmRepositorySync{OK: err == nil, SyncedAt: started}
+	return s.refreshRepositoryClaimed(ctx, repository, trigger)
+}
+
+func (s *Service) refreshRepositoryClaimed(ctx context.Context, repository domain.HelmRepository, trigger string) (domain.HelmRepository, error) {
+	defer s.endRepositorySync(repository.ID)
+	started := time.Now()
+	var charts []domain.HelmChartSummary
+	var err error
+	if refresher, ok := s.source.(RepositoryRefresher); ok {
+		charts, err = refresher.Refresh(ctx, repository)
+	} else {
+		if invalidator, ok := s.source.(interface{ Invalidate(domain.HelmRepository) }); ok {
+			invalidator.Invalidate(repository)
+		}
+		charts, err = s.source.Charts(ctx, repository)
+	}
+	finished := time.Now().UTC()
+	attempt := repository.SyncFailureCount + 1
+	sync := domain.HelmRepositorySync{
+		OK: err == nil, Trigger: trigger, Attempt: attempt, DurationMS: time.Since(started).Milliseconds(), SyncedAt: finished,
+	}
 	if err != nil {
+		repository.SyncFailureCount = attempt
 		sync.Message = truncate(err.Error(), 300)
 	} else {
+		repository.SyncFailureCount = 0
 		sync.Message = "同步成功"
 		sync.ChartCount = len(charts)
 		repository.ChartCount = len(charts)
 	}
-	repository.LastSync = sync
+	repository.LastSync = &sync
+	repository.SyncHistory = append([]domain.HelmRepositorySync{sync}, repository.SyncHistory...)
+	if len(repository.SyncHistory) > domain.MaxHelmRepositorySyncHistory {
+		repository.SyncHistory = repository.SyncHistory[:domain.MaxHelmRepositorySyncHistory]
+	}
+	repository = decorateRepository(repository)
 	saved, saveErr := s.repository.SaveHelmRepository(ctx, repository)
 	if saveErr != nil {
+		return repository, errors.Join(err, saveErr)
+	}
+	return saved, err
+}
+
+func (s *Service) beginRepositorySync(id string) bool {
+	s.syncMu.Lock()
+	defer s.syncMu.Unlock()
+	if s.syncInFlight[id] {
+		return false
+	}
+	s.syncInFlight[id] = true
+	return true
+}
+
+func (s *Service) endRepositorySync(id string) {
+	s.syncMu.Lock()
+	defer s.syncMu.Unlock()
+	delete(s.syncInFlight, id)
+}
+
+// RunScheduler periodically refreshes repositories whose administrator-enabled
+// interval has elapsed. It is safe to call once per Dosh replica; the per-repo
+// in-flight guard prevents duplicate work within a process.
+func (s *Service) RunScheduler(ctx context.Context) {
+	const tick = 30 * time.Second
+	lastReconcile := time.Time{}
+	lastCacheMaintenance := time.Time{}
+	lastLockCleanup := time.Time{}
+	maintain := func() {
+		now := time.Now()
+		if lastReconcile.IsZero() || now.Sub(lastReconcile) >= helmOperationStaleAfter {
+			_, _ = s.ReconcileOperations(ctx)
+			lastReconcile = now
+		}
+		if lastCacheMaintenance.IsZero() || now.Sub(lastCacheMaintenance) >= helmCacheMaintenance {
+			s.maintainCache()
+			lastCacheMaintenance = now
+		}
+		if lastLockCleanup.IsZero() || now.Sub(lastLockCleanup) >= helmCacheMaintenance {
+			if cleaner, ok := s.repository.(OperationLockCleaner); ok {
+				_, _ = cleaner.CleanupHelmOperationLocks(ctx)
+			}
+			lastLockCleanup = now
+		}
+	}
+	maintain()
+	s.syncDueRepositories(ctx)
+	ticker := time.NewTicker(tick)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			maintain()
+			s.syncDueRepositories(ctx)
+		}
+	}
+}
+
+// ReconcileOperations marks operations whose owning Dosh process stopped
+// heartbeating as failed. It is safe to run on every replica: live operations
+// refresh their heartbeat every 30 seconds, well inside the stale threshold.
+func (s *Service) ReconcileOperations(ctx context.Context) (int, error) {
+	lister, ok := s.repository.(OperationLister)
+	if !ok {
+		return 0, nil
+	}
+	now := time.Now().UTC()
+	reconciled := 0
+	var resultErr error
+	for _, status := range []string{domain.HelmOperationPending, domain.HelmOperationRunning} {
+		items, err := lister.ListHelmChartOperations(ctx, domain.HelmOperationFilter{Status: status, Limit: helmOperationListLimit})
+		if err != nil {
+			resultErr = errors.Join(resultErr, err)
+			continue
+		}
+		for index := range items {
+			operation := items[index]
+			lastSeen := operation.HeartbeatAt
+			staleAfter := helmOperationStaleAfter
+			if lastSeen.IsZero() {
+				lastSeen = operation.StartedAt
+				// Older Dosh versions did not write heartbeats. During a rolling
+				// update, use the full operation timeout before declaring them
+				// orphaned so a live previous-version replica is not interrupted.
+				staleAfter = helmOperationLegacyStaleAfter
+			}
+			if !lastSeen.IsZero() && now.Sub(lastSeen) < staleAfter {
+				continue
+			}
+			operation.FinishedAt = now
+			if operation.CancelRequested {
+				operation.Status = domain.HelmOperationCancelled
+				operation.Message = "取消请求已生效；原 Dosh 执行进程已停止心跳"
+			} else {
+				operation.Status = domain.HelmOperationFailed
+				operation.Message = "Helm 操作执行进程已停止心跳，可能因 Dosh 重启、Pod 驱逐或执行器崩溃而中断；请核对 Release 与资源状态后重试"
+			}
+			if err := s.repository.SaveHelmChartOperation(ctx, operation); err != nil {
+				resultErr = errors.Join(resultErr, err)
+				continue
+			}
+			reconciled++
+		}
+	}
+	return reconciled, resultErr
+}
+
+func (s *Service) maintainCache() {
+	if s.cacheLimit <= 0 {
+		return
+	}
+	cache, ok := s.source.(CacheManager)
+	if !ok {
+		return
+	}
+	stats, err := cache.CacheStats()
+	if err != nil || stats.TotalBytes <= s.cacheLimit {
+		return
+	}
+	_, _ = cache.CleanupCache(s.cacheLimit)
+}
+
+// SyncDueRepositories is exported for deterministic tests and controlled
+// operational invocations. It returns the number of repositories attempted.
+func (s *Service) SyncDueRepositories(ctx context.Context) int {
+	return s.syncDueRepositories(ctx)
+}
+
+func (s *Service) syncDueRepositories(ctx context.Context) int {
+	items, err := s.repository.ListHelmRepositories(ctx)
+	if err != nil {
+		return 0
+	}
+	attempted := 0
+	for _, repository := range items {
+		repository = decorateRepository(repository)
+		if !repository.Enabled || !repository.SyncEnabled || repository.NextSyncAt == nil || time.Now().Before(*repository.NextSyncAt) {
+			continue
+		}
+		if locker, ok := s.repository.(OperationLocker); ok {
+			token := newOperationID()
+			if err := locker.AcquireHelmOperationLock(ctx, "dosh-internal", "helm-sync-"+repository.ID, token, 10*time.Minute); err != nil {
+				continue
+			}
+			attempted++
+			go func(item domain.HelmRepository, lockToken string) {
+				runCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+				defer cancel()
+				defer func() {
+					releaseCtx, releaseCancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
+					defer releaseCancel()
+					_ = locker.ReleaseHelmOperationLock(releaseCtx, "dosh-internal", "helm-sync-"+item.ID, lockToken)
+				}()
+				if s.beginRepositorySync(item.ID) {
+					_, _ = s.refreshRepositoryClaimed(runCtx, item, domain.HelmRepositorySyncTriggerScheduled)
+				}
+			}(repository, token)
+			continue
+		}
+		if s.beginRepositorySync(repository.ID) {
+			attempted++
+			go func(item domain.HelmRepository) {
+				runCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+				defer cancel()
+				_, _ = s.refreshRepositoryClaimed(runCtx, item, domain.HelmRepositorySyncTriggerScheduled)
+			}(repository)
+		}
+	}
+	return attempted
+}
+
+func (s *Service) CacheStats(ctx context.Context, actor domain.Actor) (domain.HelmCacheStats, error) {
+	if err := s.requireRead(ctx, actor); err != nil {
+		return domain.HelmCacheStats{}, err
+	}
+	cache, ok := s.source.(CacheManager)
+	if !ok {
+		return domain.HelmCacheStats{}, fmt.Errorf("%w: Helm cache management is unavailable", domain.ErrUnsupported)
+	}
+	stats, err := cache.CacheStats()
+	if err == nil {
+		stats.LimitBytes = s.cacheLimit
+	}
+	return stats, err
+}
+
+func (s *Service) CleanupCache(ctx context.Context, actor domain.Actor) (domain.HelmCacheCleanupResult, error) {
+	if err := s.require(ctx, actor, "update"); err != nil {
+		return domain.HelmCacheCleanupResult{}, err
+	}
+	cache, ok := s.source.(CacheManager)
+	if !ok {
+		return domain.HelmCacheCleanupResult{}, fmt.Errorf("%w: Helm cache management is unavailable", domain.ErrUnsupported)
+	}
+	result, err := cache.CleanupCache(s.cacheLimit)
+	s.audit(ctx, actor, "cleanup-helm-cache", "", err)
+	return result, err
+}
+
+func decorateRepository(repository domain.HelmRepository) domain.HelmRepository {
+	if repository.SyncIntervalSec <= 0 {
+		repository.SyncIntervalSec = int(domain.DefaultHelmRepositorySyncInterval / time.Second)
+	}
+	if !repository.SyncEnabled {
+		repository.NextSyncAt = nil
 		return repository
 	}
-	return saved
+	base := repository.UpdatedAt
+	if repository.LastSync != nil && !repository.LastSync.SyncedAt.IsZero() {
+		base = repository.LastSync.SyncedAt
+	}
+	if !base.IsZero() {
+		interval := time.Duration(repository.SyncIntervalSec) * time.Second
+		delay := interval
+		if repository.LastSync != nil && !repository.LastSync.OK && repository.SyncFailureCount > 0 {
+			delay = helmSyncRetryDelay(repository.SyncFailureCount, interval)
+		}
+		next := base.Add(delay).UTC()
+		repository.NextSyncAt = &next
+	}
+	return repository
+}
+
+// helmSyncRetryDelay applies exponential backoff to failed scheduled syncs,
+// capped by the administrator-configured interval. The first retry is five
+// minutes after failure so transient registry or proxy outages recover without
+// waiting for the normal multi-hour cadence.
+func helmSyncRetryDelay(failureCount int, interval time.Duration) time.Duration {
+	if failureCount <= 0 || interval <= 0 {
+		return interval
+	}
+	delay := helmSyncRetryBaseDelay
+	if delay > interval {
+		return interval
+	}
+	for attempt := 1; attempt < failureCount && delay < interval; attempt++ {
+		if delay > interval/2 {
+			return interval
+		}
+		delay *= 2
+	}
+	if delay > interval {
+		return interval
+	}
+	return delay
 }
 
 func normalizeRepository(input domain.HelmRepositoryUpsert, current domain.HelmRepository) (domain.HelmRepository, error) {
@@ -528,6 +1153,20 @@ func normalizeRepository(input domain.HelmRepositoryUpsert, current domain.HelmR
 	}
 	if input.Enabled != nil {
 		enabled = *input.Enabled
+	}
+	syncEnabled := current.SyncEnabled
+	if input.SyncEnabled != nil {
+		syncEnabled = *input.SyncEnabled
+	}
+	syncIntervalSec := current.SyncIntervalSec
+	if syncIntervalSec <= 0 {
+		syncIntervalSec = int(domain.DefaultHelmRepositorySyncInterval / time.Second)
+	}
+	if input.SyncIntervalSec > 0 {
+		syncIntervalSec = input.SyncIntervalSec
+	}
+	if syncIntervalSec < int(domain.MinHelmRepositorySyncInterval/time.Second) || syncIntervalSec > int(domain.MaxHelmRepositorySyncInterval/time.Second) {
+		return domain.HelmRepository{}, fmt.Errorf("%w: sync interval must be between %s and %s", domain.ErrInvalid, domain.MinHelmRepositorySyncInterval, domain.MaxHelmRepositorySyncInterval)
 	}
 	authType := strings.ToLower(strings.TrimSpace(input.AuthType))
 	if authType == "" {
@@ -587,7 +1226,8 @@ func normalizeRepository(input domain.HelmRepositoryUpsert, current domain.HelmR
 	}
 	return domain.HelmRepository{
 		Name: name, URL: parsed.String(), Description: strings.TrimSpace(input.Description), Default: input.Default,
-		Enabled: enabled, InsecureSkipTLS: input.InsecureSkipTLS, AuthType: authType, Credentials: credentials,
+		Enabled: enabled, SyncEnabled: syncEnabled, SyncIntervalSec: syncIntervalSec,
+		InsecureSkipTLS: input.InsecureSkipTLS, AuthType: authType, Credentials: credentials,
 		CreatedAt: current.CreatedAt,
 	}, nil
 }
@@ -710,14 +1350,27 @@ func (s *Service) requireRead(ctx context.Context, actor domain.Actor) error {
 }
 
 func (s *Service) newOperation(action string, request domain.HelmChartPlanRequest, plan domain.HelmChartPlan) domain.HelmChartOperation {
-	resources := make([]domain.HelmOperationResource, 0, len(plan.Resources))
-	for _, resource := range plan.Resources {
+	operation := newHelmOperation(action, request, plan.Digest, plan.Resources, plan.Warnings)
+	operation.Options = &plan.Options
+	return operation
+}
+
+func (s *Service) newOperationFromTemplate(action string, request domain.HelmChartPlanRequest, plan domain.HelmChartPlanTemplate) domain.HelmChartOperation {
+	return newHelmOperation(action, request, "", plan.Resources, plan.Warnings)
+}
+
+func newHelmOperation(action string, request domain.HelmChartPlanRequest, digest string, planResources []domain.HelmChartPlanResource, planWarnings []string) domain.HelmChartOperation {
+	resources := make([]domain.HelmOperationResource, 0, len(planResources))
+	for _, resource := range planResources {
 		if len(resources) >= maxOperationResources {
 			break
 		}
 		message := "等待 Helm 创建资源"
-		if resource.Action == "update" {
+		switch resource.Action {
+		case "update":
 			message = "等待 Helm 更新资源"
+		case "delete":
+			message = "等待 Helm 删除资源"
 		}
 		if resource.Hook {
 			message = "等待 Helm 执行 Hook"
@@ -728,15 +1381,15 @@ func (s *Service) newOperation(action string, request domain.HelmChartPlanReques
 			APIGroup: resource.APIGroup, Resource: resource.Resource, Status: "pending", Message: message,
 		})
 	}
-	warnings := append([]string(nil), plan.Warnings...)
-	if len(plan.Resources) > maxOperationResources {
-		warnings = append(warnings, fmt.Sprintf("该操作包含 %d 个资源，进度列表仅展示前 %d 个", len(plan.Resources), maxOperationResources))
+	warnings := append([]string(nil), planWarnings...)
+	if len(planResources) > maxOperationResources {
+		warnings = append(warnings, fmt.Sprintf("该操作包含 %d 个资源，进度列表仅展示前 %d 个", len(planResources), maxOperationResources))
 	}
 	return domain.HelmChartOperation{
 		ID: newOperationID(), Type: action, Status: domain.HelmOperationRunning,
 		RepositoryID: request.RepositoryID, ChartName: request.ChartName, ChartVersion: request.Version,
-		Digest: plan.Digest, Namespace: request.Namespace, ReleaseName: request.ReleaseName,
-		StartedAt: time.Now().UTC(), Resources: resources, Warnings: warnings,
+		Digest: digest, Namespace: request.Namespace, ReleaseName: request.ReleaseName,
+		StartedAt: time.Now().UTC(), HeartbeatAt: time.Now().UTC(), Resources: resources, Warnings: warnings,
 	}
 }
 
@@ -746,9 +1399,17 @@ func (s *Service) saveOperation(ctx context.Context, operation *domain.HelmChart
 
 func (s *Service) finishOperation(ctx context.Context, operation *domain.HelmChartOperation, actionErr error) {
 	operation.FinishedAt = time.Now().UTC()
+	operation.HeartbeatAt = operation.FinishedAt
 	if actionErr != nil {
 		operation.Status = domain.HelmOperationFailed
-		operation.Message = truncate(actionErr.Error(), 1000)
+		if errors.Is(actionErr, context.Canceled) {
+			operation.Status = domain.HelmOperationCancelled
+		}
+		if operation.CancelRequested {
+			operation.Message = "操作已响应取消请求并停止"
+		} else {
+			operation.Message = truncate(actionErr.Error(), 1000)
+		}
 	} else {
 		operation.Status = domain.HelmOperationSuccess
 		operation.Message = "操作成功"
@@ -759,11 +1420,68 @@ func (s *Service) finishOperation(ctx context.Context, operation *domain.HelmCha
 }
 
 func (s *Service) runOperation(parent context.Context, operation domain.HelmChartOperation, actor domain.Actor, action string, execute func(context.Context) (int, error)) {
+	timeout := helmOperationTimeout
+	if operation.Options != nil && operation.Options.TimeoutSeconds > 0 {
+		timeout = time.Duration(operation.Options.TimeoutSeconds)*time.Second + 2*time.Minute
+	}
+	runCtx, cancel := context.WithTimeout(context.WithoutCancel(parent), timeout)
+	s.operationMu.Lock()
+	s.operationCancels[operation.ID] = cancel
+	s.operationMu.Unlock()
 	go func() {
-		runCtx, cancel := context.WithTimeout(context.WithoutCancel(parent), helmOperationTimeout)
-		defer cancel()
+		defer func() {
+			cancel()
+			s.operationMu.Lock()
+			delete(s.operationCancels, operation.ID)
+			s.operationMu.Unlock()
+			releaseCtx, releaseCancel := context.WithTimeout(context.WithoutCancel(parent), 15*time.Second)
+			defer releaseCancel()
+			s.releaseOperationLock(releaseCtx, operation.Namespace, operation.ReleaseName, operation.ID)
+		}()
 
 		var operationMu sync.Mutex
+		var saveMu sync.Mutex
+		persist := func(saveCtx context.Context, mutate func()) {
+			saveMu.Lock()
+			defer saveMu.Unlock()
+			operationMu.Lock()
+			mutate()
+			snapshot := operation
+			operationMu.Unlock()
+			_ = s.saveOperation(saveCtx, &snapshot)
+		}
+
+		stopHeartbeat := make(chan struct{})
+		heartbeatDone := make(chan struct{})
+		go func() {
+			defer close(heartbeatDone)
+			ticker := time.NewTicker(helmOperationHeartbeat)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-stopHeartbeat:
+					return
+				case <-ticker.C:
+					heartbeatCtx, heartbeatCancel := context.WithTimeout(context.WithoutCancel(parent), 5*time.Second)
+					stored, getErr := s.repository.GetHelmChartOperation(heartbeatCtx, operation.ID)
+					cancelRequested := getErr == nil && stored.CancelRequested
+					persist(heartbeatCtx, func() {
+						operation.HeartbeatAt = time.Now().UTC()
+						if cancelRequested {
+							operation.CancelRequested = true
+						}
+					})
+					renewCtx, renewCancel := context.WithTimeout(context.WithoutCancel(parent), 5*time.Second)
+					s.renewOperationLock(renewCtx, operation.Namespace, operation.ReleaseName, operation.ID)
+					renewCancel()
+					heartbeatCancel()
+					if cancelRequested {
+						cancel()
+					}
+				}
+			}
+		}()
+
 		stopProgress := make(chan struct{})
 		progressDone := make(chan struct{})
 		observer, canObserve := s.executor.(HelmResourceObserver)
@@ -778,11 +1496,7 @@ func (s *Service) runOperation(parent context.Context, operation domain.HelmChar
 					if len(resources) == 0 {
 						return
 					}
-					operationMu.Lock()
-					operation.Resources = resources
-					snapshot := operation
-					operationMu.Unlock()
-					_ = s.saveOperation(runCtx, &snapshot)
+					persist(runCtx, func() { operation.Resources = resources })
 				}
 				observe()
 				for {
@@ -799,16 +1513,25 @@ func (s *Service) runOperation(parent context.Context, operation domain.HelmChar
 		}
 
 		revision, err := execute(runCtx)
+		close(stopHeartbeat)
+		<-heartbeatDone
 		close(stopProgress)
 		<-progressDone
 
+		finishCtx, finishCancel := context.WithTimeout(context.WithoutCancel(parent), 15*time.Second)
+		defer finishCancel()
+		if stored, getErr := s.repository.GetHelmChartOperation(finishCtx, operation.ID); getErr == nil && stored.CancelRequested {
+			operationMu.Lock()
+			operation.CancelRequested = true
+			operationMu.Unlock()
+		}
+		saveMu.Lock()
+		defer saveMu.Unlock()
 		operationMu.Lock()
 		operation.Revision = revision
 		finished := operation
 		operationMu.Unlock()
 
-		finishCtx, finishCancel := context.WithTimeout(context.WithoutCancel(parent), 15*time.Second)
-		defer finishCancel()
 		s.finishOperation(finishCtx, &finished, err)
 		s.audit(finishCtx, actor, action, operation.ReleaseName, err)
 	}()
@@ -840,7 +1563,7 @@ func (s *Service) audit(ctx context.Context, actor domain.Actor, action string, 
 	s.auditor.Record(ctx, actor, domain.AuditEvent{Action: action, Resource: "helm-chart", Name: name, Result: result, Err: err})
 }
 
-func computePlanDigest(request domain.HelmChartPlanRequest, repository domain.HelmRepository, actualDigest string, template domain.HelmChartPlanTemplate) string {
+func computePlanDigest(request domain.HelmChartPlanRequest, repository domain.HelmRepository, actualDigest string, template domain.HelmChartPlanTemplate, options domain.HelmExecutionOptions) string {
 	payload := struct {
 		Action          string                         `json:"action"`
 		RepositoryID    string                         `json:"repositoryId"`
@@ -853,10 +1576,11 @@ func computePlanDigest(request domain.HelmChartPlanRequest, repository domain.He
 		CurrentRevision int                            `json:"currentRevision"`
 		Values          string                         `json:"values"`
 		Resources       []domain.HelmChartPlanResource `json:"resources"`
+		Options         domain.HelmExecutionOptions    `json:"options"`
 	}{
 		Action: request.Mode, RepositoryID: repository.ID, RepositoryURL: repository.URL,
 		ChartName: request.ChartName, ChartVersion: request.Version, Digest: actualDigest,
-		Namespace: request.Namespace, ReleaseName: request.ReleaseName,
+		Namespace: request.Namespace, ReleaseName: request.ReleaseName, Options: options,
 		CurrentRevision: template.CurrentRevision, Values: template.Values, Resources: template.Resources,
 	}
 	encoded, _ := json.Marshal(payload)

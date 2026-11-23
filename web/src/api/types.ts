@@ -1010,6 +1010,8 @@ export interface HelmReleaseRollbackResult {
 export interface HelmReleaseUpgradeRequest {
   values: string;
   confirmation?: string;
+  currentRevision?: number;
+  options?: HelmExecutionOptionsInput;
 }
 
 export interface HelmReleaseUpgradePreview {
@@ -1022,19 +1024,36 @@ export interface HelmReleaseUpgradePreview {
   warnings?: string[];
 }
 
-export interface HelmReleaseUpgradeResult {
+export interface HelmReleaseTestHook {
+  name: string;
+  kind: string;
+  path?: string;
+  status: string;
+  message?: string;
+  startedAt?: string;
+  completedAt?: string;
+}
+
+export interface HelmReleaseTestResult {
   namespace: string;
   name: string;
-  previousRevision: number;
   revision: number;
-  appliedObjects: number;
+  status: "succeeded" | "failed" | string;
+  message?: string;
+  hooks: HelmReleaseTestHook[];
+  logs?: string;
   warnings?: string[];
+  startedAt: string;
+  finishedAt: string;
 }
 
 export interface HelmRepositorySync {
   ok: boolean;
   message: string;
   chartCount: number;
+  trigger?: "create" | "update" | "manual" | "scheduled";
+  attempt?: number;
+  durationMs?: number;
   syncedAt: string;
 }
 
@@ -1045,11 +1064,16 @@ export interface HelmRepository {
   description?: string;
   default: boolean;
   enabled: boolean;
+  syncEnabled: boolean;
+  syncIntervalSeconds: number;
+  syncFailureCount?: number;
   insecureSkipTLSVerify: boolean;
   authType: "anonymous" | "basic" | "bearer";
   hasCredentials: boolean;
   hasCustomCA: boolean;
   lastSync?: HelmRepositorySync;
+  syncHistory?: HelmRepositorySync[];
+  nextSyncAt?: string;
   chartCount: number;
   revision?: string;
   createdAt: string;
@@ -1062,6 +1086,8 @@ export interface HelmRepositoryUpsertInput {
   description?: string;
   default: boolean;
   enabled?: boolean;
+  syncEnabled?: boolean;
+  syncIntervalSeconds?: number;
   insecureSkipTLSVerify?: boolean;
   authType?: "anonymous" | "basic" | "bearer";
   username?: string;
@@ -1070,6 +1096,24 @@ export interface HelmRepositoryUpsertInput {
   caPEM?: string;
   clearCredentials?: boolean;
   revision?: string;
+}
+
+export interface HelmCacheStats {
+  root: string;
+  limitBytes: number;
+  totalBytes: number;
+  indexBytes: number;
+  packageBytes: number;
+  indexCount: number;
+  packageCount: number;
+  oldestAt?: string;
+  newestAt?: string;
+}
+
+export interface HelmCacheCleanupResult {
+  deletedFiles: number;
+  freedBytes: number;
+  stats: HelmCacheStats;
 }
 
 export interface HelmChartSummary {
@@ -1116,6 +1160,33 @@ export interface HelmChartPlanInput {
   namespace: string;
   releaseName: string;
   values?: string;
+  options?: HelmExecutionOptionsInput;
+}
+
+export interface HelmExecutionOptionsInput {
+  timeoutSeconds?: number;
+  wait?: boolean;
+  waitForJobs?: boolean;
+  atomic?: boolean;
+  cleanupOnFail?: boolean;
+  maxHistory?: number;
+  createNamespace?: boolean;
+  disableHooks?: boolean;
+  skipCRDs?: boolean;
+  keepHistory?: boolean;
+}
+
+export interface HelmExecutionOptions {
+  timeoutSeconds: number;
+  wait: boolean;
+  waitForJobs: boolean;
+  atomic: boolean;
+  cleanupOnFail: boolean;
+  maxHistory: number;
+  createNamespace: boolean;
+  disableHooks: boolean;
+  skipCRDs: boolean;
+  keepHistory: boolean;
 }
 
 export interface HelmChartPlanResource {
@@ -1125,17 +1196,22 @@ export interface HelmChartPlanResource {
   name: string;
   hook: boolean;
   crd: boolean;
-  action: "create" | "update";
+  action: "create" | "update" | "delete";
   apiGroup?: string;
   resource: string;
   exists: boolean;
 }
 
-export interface HelmChartPlan extends HelmChartPlanInput {
+export interface HelmChartPlan {
+  action: "install" | "upgrade";
+  repositoryId: string;
   repositoryName: string;
+  chartName: string;
   chartVersion: string;
   appVersion?: string;
   digest: string;
+  namespace: string;
+  releaseName: string;
   currentRevision?: number;
   manifest: string;
   values: string;
@@ -1144,6 +1220,7 @@ export interface HelmChartPlan extends HelmChartPlanInput {
   crdCount: number;
   warnings?: string[];
   planDigest: string;
+  options: HelmExecutionOptions;
 }
 
 export interface HelmChartOperationInput extends HelmChartPlanInput {
@@ -1154,7 +1231,7 @@ export interface HelmChartOperationInput extends HelmChartPlanInput {
 export interface HelmChartOperation {
   id: string;
   type: "install" | "upgrade" | "uninstall" | "rollback";
-  status: "pending" | "running" | "success" | "failed";
+  status: "pending" | "running" | "success" | "failed" | "cancelled";
   message?: string;
   repositoryId?: string;
   chartName?: string;
@@ -1165,8 +1242,11 @@ export interface HelmChartOperation {
   revision?: number;
   resources?: HelmOperationResource[];
   warnings?: string[];
+  options?: HelmExecutionOptions;
   startedAt: string;
   finishedAt?: string;
+  heartbeatAt?: string;
+  cancelRequested?: boolean;
 }
 
 export interface HelmOperationResource {
@@ -1176,7 +1256,7 @@ export interface HelmOperationResource {
   name: string;
   hook: boolean;
   crd: boolean;
-  action: "create" | "update";
+  action: "create" | "update" | "delete";
   apiGroup?: string;
   resource: string;
   status: "pending" | "waiting" | "ready" | "failed" | "created" | "unknown";
@@ -1187,6 +1267,7 @@ export interface HelmChartUninstallInput {
   namespace: string;
   releaseName: string;
   confirmation: string;
+  options?: HelmExecutionOptionsInput;
 }
 
 export interface HelmChartRollbackInput extends HelmChartUninstallInput {

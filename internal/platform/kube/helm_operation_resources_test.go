@@ -35,6 +35,25 @@ func TestObserveHelmOperationResourcesReadsLiveObjects(t *testing.T) {
 	}
 }
 
+func TestObserveHelmOperationResourcesReportsDeletedResources(t *testing.T) {
+	t.Parallel()
+	client := newGenericResourceClient(&unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": "example.io/v1", "kind": "Widget",
+		"metadata": map[string]any{"name": "still-here", "namespace": "default"},
+	}})
+	resources := []domain.HelmChartPlanResource{
+		{APIVersion: "example.io/v1", Kind: "Widget", Namespace: "default", Name: "still-here", APIGroup: "example.io", Resource: "widgets", Action: "delete"},
+		{APIVersion: "example.io/v1", Kind: "Widget", Namespace: "default", Name: "already-gone", APIGroup: "example.io", Resource: "widgets", Action: "delete"},
+	}
+	items := client.ObserveHelmOperationResources(context.Background(), resources)
+	if len(items) != 2 || items[0].Status != "waiting" || items[0].Message != "等待 Helm 删除资源" {
+		t.Fatalf("existing deletion resource = %#v", items)
+	}
+	if items[1].Status != "ready" || items[1].Message != "资源已删除" {
+		t.Fatalf("completed deletion resource = %#v", items[1])
+	}
+}
+
 func TestHelmResourceObjectStatusReportsPendingPVCAndPodFailure(t *testing.T) {
 	t.Parallel()
 	pvc := map[string]any{"status": map[string]any{"phase": "Pending"}}

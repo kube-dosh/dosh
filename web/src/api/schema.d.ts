@@ -3278,8 +3278,8 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Render and apply a Helm-compatible upgrade revision
-         * @description Renders the chart stored in the current revision with server-side values merged with the supplied override. Every object is server-side apply DryRun preflighted before any live write. Helm hooks are skipped and removed objects are not pruned; both are reported as warnings. Requires create and update access to Secrets and exact release-name confirmation.
+         * Start an asynchronous native Helm upgrade operation
+         * @description Plans the stored Chart with server-side current values merged with the supplied override, authorizes every rendered resource, and starts a native Helm upgrade in the background. The operation runs Helm hooks, prunes objects removed from the target manifest, and uses atomic rollout semantics. Callers can follow resource progress in the Helm operation center. Requires create and update access to Secrets and exact release-name confirmation. When currentRevision is supplied, the operation is rejected if the release changed after preview.
          */
         post: {
             parameters: {
@@ -3297,13 +3297,62 @@ export interface paths {
                 };
             };
             responses: {
-                /** @description Upgrade completed and new Helm revision recorded */
+                /** @description Native Helm upgrade operation accepted */
                 202: {
                     headers: {
                         [name: string]: unknown;
                     };
                     content: {
-                        "application/json": components["schemas"]["HelmReleaseUpgradeResult"];
+                        "application/json": components["schemas"]["HelmChartOperation"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+                404: components["responses"]["NotFound"];
+                409: components["responses"]["Conflict"];
+                501: components["responses"]["NotSupported"];
+                503: components["responses"]["DependencyUnavailable"];
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/helm/releases/{namespace}/{name}/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Run Helm test hooks for an installed release
+         * @description Runs resources annotated with helm.sh/hook: test through the Helm SDK. Helm test may update release history and create or delete test Pods and Jobs, so it requires namespace-scoped write access to Secrets, Pods and Jobs. Test failures are returned as a completed result with hook statuses and bounded Pod logs instead of an HTTP error.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    namespace: components["parameters"]["NamespacePath"];
+                    name: components["parameters"]["Name"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Helm test completed, including failed test-hook results */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["HelmReleaseTestResult"];
                     };
                 };
                 400: components["responses"]["BadRequest"];
@@ -3610,7 +3659,7 @@ export interface paths {
         put?: never;
         /**
          * Refresh the cached Chart package and its extracted metadata
-         * @description Deletes the cached package for the latest Chart version and downloads it again. The repository index is not re-synchronized; use the repository sync endpoint when the Chart catalog itself needs refreshing.
+         * @description Deletes the cached package for the latest Chart version and downloads it again. The repository index is not re-synchronized; use the repository sync endpoint when the Chart catalog itself needs refreshing. This mutates the shared cache, so it requires update access to dosh.io/helm-repositories. Concurrent refreshes for the same repository and Chart are serialized by a cross-replica operation lock.
          */
         post: {
             parameters: {
@@ -3657,7 +3706,7 @@ export interface paths {
         put?: never;
         /**
          * Render a chart and preflight resources, hooks and RBAC
-         * @description The response includes a planDigest bound to the exact chart package, values, target namespace, release name, current revision and rendered resources. Installation and upgrade require this digest.
+         * @description The response includes a planDigest bound to the exact chart package, values, target namespace, release name, current revision and rendered resources. Installation and upgrade require this digest. For upgrades, values are treated as an override on the Release's server-side current values; an empty value preserves the deployed configuration.
          */
         post: {
             parameters: {
@@ -3878,6 +3927,52 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/helm/operations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List recent Helm chart operations */
+        get: {
+            parameters: {
+                query?: {
+                    limit?: number;
+                    status?: "pending" | "running" | "success" | "failed" | "cancelled";
+                    namespace?: string;
+                    releaseName?: string;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Helm chart operation history */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            items: components["schemas"]["HelmChartOperation"][];
+                        };
+                    };
+                };
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+                503: components["responses"]["DependencyUnavailable"];
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/helm/operations/{id}": {
         parameters: {
             query?: never;
@@ -3914,6 +4009,129 @@ export interface paths {
         };
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/helm/operations/{id}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Request cancellation of a running Helm chart operation */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Cancellation requested */
+                202: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["HelmChartOperation"];
+                    };
+                };
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+                404: components["responses"]["NotFound"];
+                409: components["responses"]["Conflict"];
+                503: components["responses"]["DependencyUnavailable"];
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/helm/cache": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read persisted Helm cache usage and limit */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Helm cache statistics */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["HelmCacheStats"];
+                    };
+                };
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+                501: components["responses"]["NotSupported"];
+                503: components["responses"]["DependencyUnavailable"];
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/helm/cache/cleanup": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Evict the oldest persisted Helm cache entries */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Cache cleanup result */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["HelmCacheCleanupResult"];
+                    };
+                };
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+                501: components["responses"]["NotSupported"];
+                503: components["responses"]["DependencyUnavailable"];
+            };
+        };
         delete?: never;
         options?: never;
         head?: never;
@@ -7653,6 +7871,9 @@ export interface components {
             values?: string;
             /** @description Required for the apply endpoint; must exactly equal the release name. */
             confirmation?: string;
+            /** @description Optional revision reviewed by the caller. The apply endpoint rejects the request when the installed release has moved to another revision. */
+            currentRevision?: number;
+            options?: components["schemas"]["HelmExecutionOptionsInput"];
         };
         HelmReleaseUpgradePreview: {
             namespace: string;
@@ -7665,13 +7886,39 @@ export interface components {
             manifestDiff: string;
             warnings?: string[];
         };
-        HelmReleaseUpgradeResult: {
+        HelmReleaseTestHook: {
+            /** @description Hook resource name. */
+            name: string;
+            /** @description Kubernetes resource kind. */
+            kind: string;
+            /** @description Source template path when available. */
+            path?: string;
+            /** @description Helm hook execution phase. */
+            status: string;
+            message?: string;
+            /** Format: date-time */
+            startedAt?: string;
+            /** Format: date-time */
+            completedAt?: string;
+        };
+        HelmReleaseTestResult: {
             namespace: string;
             name: string;
-            previousRevision: number;
             revision: number;
-            appliedObjects: number;
+            /**
+             * @description A failed test hook is a completed test result, not an API failure.
+             * @enum {string}
+             */
+            status: "succeeded" | "failed";
+            message?: string;
+            hooks: components["schemas"]["HelmReleaseTestHook"][];
+            /** @description Combined test Pod logs, truncated to 128 KiB. */
+            logs?: string;
             warnings?: string[];
+            /** Format: date-time */
+            startedAt: string;
+            /** Format: date-time */
+            finishedAt: string;
         };
         /** @description An administrator-managed Helm repository. HTTP/HTTPS repositories expose index.yaml; OCI repositories point at one Chart repository path. */
         HelmRepository: {
@@ -7685,12 +7932,24 @@ export interface components {
             description?: string;
             default: boolean;
             enabled: boolean;
+            /** @description Whether periodic repository synchronization is enabled. */
+            syncEnabled?: boolean;
+            /** @description Synchronization interval in seconds. Defaults to 10800 (3 hours). */
+            syncIntervalSeconds?: number;
+            /** @description Consecutive failed synchronization attempts. Used to apply retry backoff and reset to zero after success. */
+            syncFailureCount?: number;
             insecureSkipTLSVerify?: boolean;
             /** @enum {string} */
             authType?: "anonymous" | "basic" | "bearer";
             hasCredentials?: boolean;
             hasCustomCA?: boolean;
             lastSync?: components["schemas"]["HelmRepositorySync"];
+            syncHistory?: components["schemas"]["HelmRepositorySync"][];
+            /**
+             * Format: date-time
+             * @description Next scheduled synchronization or retry time. Failures use bounded exponential backoff instead of the normal interval.
+             */
+            nextSyncAt?: string;
             chartCount: number;
             revision?: string;
             /** Format: date-time */
@@ -7702,6 +7961,10 @@ export interface components {
             ok: boolean;
             message: string;
             chartCount: number;
+            /** @enum {string} */
+            trigger?: "create" | "update" | "manual" | "scheduled";
+            attempt?: number;
+            durationMs?: number;
             /** Format: date-time */
             syncedAt: string;
         };
@@ -7717,6 +7980,8 @@ export interface components {
             description?: string;
             default?: boolean;
             enabled?: boolean;
+            syncEnabled?: boolean;
+            syncIntervalSeconds?: number;
             insecureSkipTLSVerify?: boolean;
             /** @enum {string} */
             authType?: "anonymous" | "basic" | "bearer";
@@ -7728,6 +7993,29 @@ export interface components {
             caPEM?: string;
             clearCredentials?: boolean;
             revision?: string;
+        };
+        HelmCacheStats: {
+            root: string;
+            /** Format: int64 */
+            limitBytes: number;
+            /** Format: int64 */
+            totalBytes: number;
+            /** Format: int64 */
+            indexBytes: number;
+            /** Format: int64 */
+            packageBytes: number;
+            indexCount: number;
+            packageCount: number;
+            /** Format: date-time */
+            oldestAt?: string;
+            /** Format: date-time */
+            newestAt?: string;
+        };
+        HelmCacheCleanupResult: {
+            deletedFiles: number;
+            /** Format: int64 */
+            freedBytes: number;
+            stats: components["schemas"]["HelmCacheStats"];
         };
         HelmChartSummary: {
             repositoryId: string;
@@ -7785,7 +8073,53 @@ export interface components {
             mode: "install" | "upgrade";
             namespace: string;
             releaseName: string;
+            /** @description Install values */
             values?: string;
+            options?: components["schemas"]["HelmExecutionOptionsInput"];
+        };
+        /** @description Optional Helm execution policy. Omitted fields use conservative product defaults; false is distinct from omission. */
+        HelmExecutionOptionsInput: {
+            /** @default 600 */
+            timeoutSeconds: number;
+            /** @default true */
+            wait: boolean;
+            /** @default true */
+            waitForJobs: boolean;
+            /**
+             * @description Atomic execution requires wait=true.
+             * @default true
+             */
+            atomic: boolean;
+            /**
+             * @description CleanupOnFail requires wait=true.
+             * @default true
+             */
+            cleanupOnFail: boolean;
+            /** @default 10 */
+            maxHistory: number;
+            /** @default false */
+            createNamespace: boolean;
+            /** @default false */
+            disableHooks: boolean;
+            /** @default false */
+            skipCRDs: boolean;
+            /**
+             * @description Applies to uninstall; preserves Helm history so an uninstalled release remains auditable and recoverable.
+             * @default false
+             */
+            keepHistory: boolean;
+        };
+        HelmExecutionOptions: {
+            timeoutSeconds: number;
+            wait: boolean;
+            waitForJobs: boolean;
+            atomic: boolean;
+            cleanupOnFail: boolean;
+            maxHistory: number;
+            createNamespace: boolean;
+            disableHooks: boolean;
+            skipCRDs: boolean;
+            keepHistory: boolean;
         };
         HelmChartPlanResource: {
             apiVersion: string;
@@ -7795,7 +8129,7 @@ export interface components {
             hook: boolean;
             crd: boolean;
             /** @enum {string} */
-            action: "create" | "update";
+            action: "create" | "update" | "delete";
             apiGroup?: string;
             resource: string;
             exists: boolean;
@@ -7819,6 +8153,7 @@ export interface components {
             crdCount: number;
             warnings?: string[];
             planDigest: string;
+            options: components["schemas"]["HelmExecutionOptions"];
         };
         HelmChartOperationRequest: components["schemas"]["HelmChartPlanRequest"] & {
             planDigest: string;
@@ -7828,19 +8163,21 @@ export interface components {
             namespace: string;
             releaseName: string;
             confirmation: string;
+            options?: components["schemas"]["HelmExecutionOptionsInput"];
         };
         HelmChartRollbackRequest: {
             namespace: string;
             releaseName: string;
             targetRevision: number;
             confirmation: string;
+            options?: components["schemas"]["HelmExecutionOptionsInput"];
         };
         HelmChartOperation: {
             id: string;
             /** @enum {string} */
             type: "install" | "upgrade" | "uninstall" | "rollback";
             /** @enum {string} */
-            status: "pending" | "running" | "success" | "failed";
+            status: "pending" | "running" | "success" | "failed" | "cancelled";
             message?: string;
             repositoryId?: string;
             chartName?: string;
@@ -7856,6 +8193,14 @@ export interface components {
             startedAt: string;
             /** Format: date-time */
             finishedAt?: string;
+            /**
+             * Format: date-time
+             * @description Last execution heartbeat. Missing heartbeats cause the operation to be reconciled as failed after a restart or executor crash.
+             */
+            heartbeatAt?: string;
+            /** @description A cancellation was accepted. The owning replica observes this flag through its heartbeat loop and cancels the execution context. */
+            cancelRequested?: boolean;
+            options?: components["schemas"]["HelmExecutionOptions"];
         };
         HelmOperationResource: {
             apiVersion: string;
@@ -7865,7 +8210,7 @@ export interface components {
             hook: boolean;
             crd: boolean;
             /** @enum {string} */
-            action: "create" | "update";
+            action: "create" | "update" | "delete";
             apiGroup?: string;
             resource: string;
             /** @enum {string} */

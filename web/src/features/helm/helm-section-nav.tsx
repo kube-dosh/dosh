@@ -1,17 +1,18 @@
 import { Link } from "@tanstack/react-router";
 import { cn } from "@/lib/utils";
 
-type HelmSection = "charts" | "releases" | "repositories";
+type HelmSection = "charts" | "releases" | "operations" | "repositories";
 
 const items: Array<{ id: HelmSection; label: string; to: string }> = [
   { id: "charts", label: "Chart 目录", to: "/helm/charts" },
   { id: "releases", label: "Releases", to: "/helm/releases" },
+  { id: "operations", label: "操作中心", to: "/helm/operations" },
   { id: "repositories", label: "仓库管理", to: "/helm/repositories" },
 ];
 
 export function HelmSectionNav({ active }: { active: HelmSection }) {
   return (
-    <nav aria-label="Helm 功能" className="mb-4 grid w-full grid-cols-3 gap-1 rounded-lg border bg-muted/50 p-1 text-muted-foreground sm:inline-flex sm:w-auto">
+    <nav aria-label="Helm 功能" className="mb-4 grid w-full grid-cols-2 gap-1 rounded-lg border bg-muted/50 p-1 text-muted-foreground sm:inline-flex sm:w-auto">
       {items.map((item) => {
         const current = item.id === active;
         return (

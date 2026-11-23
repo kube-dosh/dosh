@@ -1698,13 +1698,16 @@ paths:
   /api/v1/helm/releases/{namespace}/{name}/upgrade:
     post:
       tags: [releases]
-      summary: Render and apply a Helm-compatible upgrade revision
+      summary: Start an asynchronous native Helm upgrade operation
       description: >-
-        Renders the chart stored in the current revision with server-side values
-        merged with the supplied override. Every object is server-side apply
-        DryRun preflighted before any live write. Helm hooks are skipped and
-        removed objects are not pruned; both are reported as warnings. Requires
-        create and update access to Secrets and exact release-name confirmation.
+        Plans the stored Chart with server-side current values merged with the
+        supplied override, authorizes every rendered resource, and starts a
+        native Helm upgrade in the background. The operation runs Helm hooks,
+        prunes objects removed from the target manifest, and uses atomic rollout
+        semantics. Callers can follow resource progress in the Helm operation
+        center. Requires create and update access to Secrets and exact
+        release-name confirmation. When currentRevision is supplied, the
+        operation is rejected if the release changed after preview.
       security:
         - cookieAuth: []
           csrfToken: []
@@ -1718,10 +1721,39 @@ paths:
             schema: { $ref: "#/components/schemas/HelmReleaseUpgradeRequest" }
       responses:
         "202":
-          description: Upgrade completed and new Helm revision recorded
+          description: Native Helm upgrade operation accepted
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/HelmReleaseUpgradeResult" }
+              schema: { $ref: "#/components/schemas/HelmChartOperation" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "501": { $ref: "#/components/responses/NotSupported" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
+  /api/v1/helm/releases/{namespace}/{name}/test:
+    post:
+      tags: [releases]
+      summary: Run Helm test hooks for an installed release
+      description: >-
+        Runs resources annotated with helm.sh/hook: test through the Helm SDK.
+        Helm test may update release history and create or delete test Pods and
+        Jobs, so it requires namespace-scoped write access to Secrets, Pods and
+        Jobs. Test failures are returned as a completed result with hook statuses
+        and bounded Pod logs instead of an HTTP error.
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      parameters:
+        - { $ref: "#/components/parameters/NamespacePath" }
+        - { $ref: "#/components/parameters/Name" }
+      responses:
+        "200":
+          description: Helm test completed, including failed test-hook results
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/HelmReleaseTestResult" }
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
@@ -1885,7 +1917,10 @@ paths:
       description: >-
         Deletes the cached package for the latest Chart version and downloads it
         again. The repository index is not re-synchronized; use the repository
-        sync endpoint when the Chart catalog itself needs refreshing.
+        sync endpoint when the Chart catalog itself needs refreshing. This
+        mutates the shared cache, so it requires update access to
+        dosh.io/helm-repositories. Concurrent refreshes for the same repository
+        and Chart are serialized by a cross-replica operation lock.
       security:
         - cookieAuth: []
           csrfToken: []
@@ -1910,7 +1945,9 @@ paths:
       description: >-
         The response includes a planDigest bound to the exact chart package,
         values, target namespace, release name, current revision and rendered
-        resources. Installation and upgrade require this digest.
+        resources. Installation and upgrade require this digest. For upgrades,
+        values are treated as an override on the Release's server-side current
+        values; an empty value preserves the deployed configuration.
       security:
         - cookieAuth: []
           csrfToken: []
@@ -2026,6 +2063,30 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "503": { $ref: "#/components/responses/DependencyUnavailable" }
+  /api/v1/helm/operations:
+    get:
+      tags: [helm-charts]
+      summary: List recent Helm chart operations
+      parameters:
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 500 } }
+        - { name: status, in: query, schema: { type: string, enum: [pending, running, success, failed, cancelled] } }
+        - { name: namespace, in: query, schema: { type: string, maxLength: 63 } }
+        - { name: releaseName, in: query, schema: { type: string, maxLength: 53 } }
+      responses:
+        "200":
+          description: Helm chart operation history
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/HelmChartOperation" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
   /api/v1/helm/operations/{id}:
     get:
       tags: [helm-charts]
@@ -2041,6 +2102,57 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
+  /api/v1/helm/operations/{id}/cancel:
+    post:
+      tags: [helm-charts]
+      summary: Request cancellation of a running Helm chart operation
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, maxLength: 128 } }
+      responses:
+        "202":
+          description: Cancellation requested
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/HelmChartOperation" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
+  /api/v1/helm/cache:
+    get:
+      tags: [helm-charts]
+      summary: Read persisted Helm cache usage and limit
+      responses:
+        "200":
+          description: Helm cache statistics
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/HelmCacheStats" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "501": { $ref: "#/components/responses/NotSupported" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
+  /api/v1/helm/cache/cleanup:
+    post:
+      tags: [helm-charts]
+      summary: Evict the oldest persisted Helm cache entries
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      responses:
+        "200":
+          description: Cache cleanup result
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/HelmCacheCleanupResult" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "501": { $ref: "#/components/responses/NotSupported" }
         "503": { $ref: "#/components/responses/DependencyUnavailable" }
   /api/v1/services/{namespace}/{name}:
     get:
@@ -4951,6 +5063,12 @@ components:
         confirmation:
           type: string
           description: Required for the apply endpoint; must exactly equal the release name.
+        currentRevision:
+          type: integer
+          minimum: 0
+          description: Optional revision reviewed by the caller. The apply endpoint rejects the request when the installed release has moved to another revision.
+        options:
+          $ref: "#/components/schemas/HelmExecutionOptionsInput"
     HelmReleaseUpgradePreview:
       type: object
       required: [namespace, name, currentRevision, nextRevision, valuesDiff, manifestDiff]
@@ -4968,18 +5086,40 @@ components:
         warnings:
           type: array
           items: { type: string }
-    HelmReleaseUpgradeResult:
+    HelmReleaseTestHook:
       type: object
-      required: [namespace, name, previousRevision, revision, appliedObjects]
+      required: [name, kind, status]
+      properties:
+        name: { type: string, description: Hook resource name. }
+        kind: { type: string, description: Kubernetes resource kind. }
+        path: { type: string, description: Source template path when available. }
+        status: { type: string, description: Helm hook execution phase. }
+        message: { type: string }
+        startedAt: { type: string, format: date-time }
+        completedAt: { type: string, format: date-time }
+    HelmReleaseTestResult:
+      type: object
+      required: [namespace, name, revision, status, hooks, startedAt, finishedAt]
       properties:
         namespace: { type: string }
         name: { type: string }
-        previousRevision: { type: integer, minimum: 1 }
-        revision: { type: integer, minimum: 2 }
-        appliedObjects: { type: integer, minimum: 0 }
+        revision: { type: integer, minimum: 1 }
+        status:
+          type: string
+          enum: [succeeded, failed]
+          description: A failed test hook is a completed test result, not an API failure.
+        message: { type: string }
+        hooks:
+          type: array
+          items: { $ref: "#/components/schemas/HelmReleaseTestHook" }
+        logs:
+          type: string
+          description: Combined test Pod logs, truncated to 128 KiB.
         warnings:
           type: array
           items: { type: string }
+        startedAt: { type: string, format: date-time }
+        finishedAt: { type: string, format: date-time }
     HelmRepository:
       type: object
       description: An administrator-managed Helm repository. HTTP/HTTPS repositories expose index.yaml; OCI repositories point at one Chart repository path.
@@ -4994,11 +5134,19 @@ components:
         description: { type: string }
         default: { type: boolean }
         enabled: { type: boolean }
+        syncEnabled: { type: boolean, description: Whether periodic repository synchronization is enabled. }
+        syncIntervalSeconds: { type: integer, minimum: 300, maximum: 604800, description: Synchronization interval in seconds. Defaults to 10800 (3 hours). }
+        syncFailureCount: { type: integer, minimum: 0, description: Consecutive failed synchronization attempts. Used to apply retry backoff and reset to zero after success. }
         insecureSkipTLSVerify: { type: boolean }
         authType: { type: string, enum: [anonymous, basic, bearer] }
         hasCredentials: { type: boolean }
         hasCustomCA: { type: boolean }
         lastSync: { $ref: "#/components/schemas/HelmRepositorySync" }
+        syncHistory:
+          type: array
+          maxItems: 20
+          items: { $ref: "#/components/schemas/HelmRepositorySync" }
+        nextSyncAt: { type: string, format: date-time, description: Next scheduled synchronization or retry time. Failures use bounded exponential backoff instead of the normal interval. }
         chartCount: { type: integer, minimum: 0 }
         revision: { type: string }
         createdAt: { type: string, format: date-time }
@@ -5010,6 +5158,9 @@ components:
         ok: { type: boolean }
         message: { type: string }
         chartCount: { type: integer, minimum: 0 }
+        trigger: { type: string, enum: [create, update, manual, scheduled] }
+        attempt: { type: integer, minimum: 0 }
+        durationMs: { type: integer, minimum: 0 }
         syncedAt: { type: string, format: date-time }
     HelmRepositoryUpsert:
       type: object
@@ -5027,6 +5178,8 @@ components:
         description: { type: string }
         default: { type: boolean }
         enabled: { type: boolean }
+        syncEnabled: { type: boolean }
+        syncIntervalSeconds: { type: integer, minimum: 300, maximum: 604800 }
         insecureSkipTLSVerify: { type: boolean }
         authType: { type: string, enum: [anonymous, basic, bearer] }
         username: { type: string }
@@ -5035,6 +5188,26 @@ components:
         caPEM: { type: string }
         clearCredentials: { type: boolean }
         revision: { type: string }
+    HelmCacheStats:
+      type: object
+      required: [root, limitBytes, totalBytes, indexBytes, packageBytes, indexCount, packageCount]
+      properties:
+        root: { type: string }
+        limitBytes: { type: integer, format: int64 }
+        totalBytes: { type: integer, format: int64 }
+        indexBytes: { type: integer, format: int64 }
+        packageBytes: { type: integer, format: int64 }
+        indexCount: { type: integer, minimum: 0 }
+        packageCount: { type: integer, minimum: 0 }
+        oldestAt: { type: string, format: date-time }
+        newestAt: { type: string, format: date-time }
+    HelmCacheCleanupResult:
+      type: object
+      required: [deletedFiles, freedBytes, stats]
+      properties:
+        deletedFiles: { type: integer, minimum: 0 }
+        freedBytes: { type: integer, format: int64, minimum: 0 }
+        stats: { $ref: "#/components/schemas/HelmCacheStats" }
     HelmChartSummary:
       type: object
       required: [repositoryId, repositoryName, name, version, deprecated]
@@ -5120,7 +5293,37 @@ components:
         mode: { type: string, enum: [install, upgrade] }
         namespace: { type: string, maxLength: 63 }
         releaseName: { type: string, maxLength: 53 }
-        values: { type: string, maxLength: 1048576 }
+        values: { type: string, maxLength: 1048576, description: Install values, or an upgrade override merged over the Release's server-side current values. Empty upgrade values preserve the deployed configuration. }
+        options:
+          $ref: "#/components/schemas/HelmExecutionOptionsInput"
+    HelmExecutionOptionsInput:
+      type: object
+      description: Optional Helm execution policy. Omitted fields use conservative product defaults; false is distinct from omission.
+      properties:
+        timeoutSeconds: { type: integer, minimum: 30, maximum: 3600, default: 600 }
+        wait: { type: boolean, default: true }
+        waitForJobs: { type: boolean, default: true }
+        atomic: { type: boolean, default: true, description: Atomic execution requires wait=true. }
+        cleanupOnFail: { type: boolean, default: true, description: CleanupOnFail requires wait=true. }
+        maxHistory: { type: integer, minimum: 1, maximum: 100, default: 10 }
+        createNamespace: { type: boolean, default: false }
+        disableHooks: { type: boolean, default: false }
+        skipCRDs: { type: boolean, default: false }
+        keepHistory: { type: boolean, default: false, description: Applies to uninstall; preserves Helm history so an uninstalled release remains auditable and recoverable. }
+    HelmExecutionOptions:
+      type: object
+      required: [timeoutSeconds, wait, waitForJobs, atomic, cleanupOnFail, maxHistory, createNamespace, disableHooks, skipCRDs, keepHistory]
+      properties:
+        timeoutSeconds: { type: integer, minimum: 30, maximum: 3600 }
+        wait: { type: boolean }
+        waitForJobs: { type: boolean }
+        atomic: { type: boolean }
+        cleanupOnFail: { type: boolean }
+        maxHistory: { type: integer, minimum: 1, maximum: 100 }
+        createNamespace: { type: boolean }
+        disableHooks: { type: boolean }
+        skipCRDs: { type: boolean }
+        keepHistory: { type: boolean }
     HelmChartPlanResource:
       type: object
       required: [apiVersion, kind, name, hook, crd, action, resource, exists]
@@ -5131,13 +5334,13 @@ components:
         name: { type: string }
         hook: { type: boolean }
         crd: { type: boolean }
-        action: { type: string, enum: [create, update] }
+        action: { type: string, enum: [create, update, delete] }
         apiGroup: { type: string }
         resource: { type: string }
         exists: { type: boolean }
     HelmChartPlan:
       type: object
-      required: [action, repositoryId, repositoryName, chartName, chartVersion, digest, namespace, releaseName, values, resources, hookCount, crdCount, planDigest]
+      required: [action, repositoryId, repositoryName, chartName, chartVersion, digest, namespace, releaseName, values, resources, hookCount, crdCount, planDigest, options]
       properties:
         action: { type: string, enum: [install, upgrade] }
         repositoryId: { type: string }
@@ -5160,6 +5363,7 @@ components:
           type: array
           items: { type: string }
         planDigest: { type: string }
+        options: { $ref: "#/components/schemas/HelmExecutionOptions" }
     HelmChartOperationRequest:
       allOf:
         - { $ref: "#/components/schemas/HelmChartPlanRequest" }
@@ -5175,6 +5379,8 @@ components:
         namespace: { type: string, maxLength: 63 }
         releaseName: { type: string, maxLength: 53 }
         confirmation: { type: string }
+        options:
+          $ref: "#/components/schemas/HelmExecutionOptionsInput"
     HelmChartRollbackRequest:
       type: object
       required: [namespace, releaseName, targetRevision, confirmation]
@@ -5183,13 +5389,15 @@ components:
         releaseName: { type: string, maxLength: 53 }
         targetRevision: { type: integer, minimum: 1 }
         confirmation: { type: string }
+        options:
+          $ref: "#/components/schemas/HelmExecutionOptionsInput"
     HelmChartOperation:
       type: object
       required: [id, type, status, namespace, releaseName, startedAt]
       properties:
         id: { type: string }
         type: { type: string, enum: [install, upgrade, uninstall, rollback] }
-        status: { type: string, enum: [pending, running, success, failed] }
+        status: { type: string, enum: [pending, running, success, failed, cancelled] }
         message: { type: string }
         repositoryId: { type: string }
         chartName: { type: string }
@@ -5207,6 +5415,9 @@ components:
           items: { type: string }
         startedAt: { type: string, format: date-time }
         finishedAt: { type: string, format: date-time }
+        heartbeatAt: { type: string, format: date-time, description: Last execution heartbeat. Missing heartbeats cause the operation to be reconciled as failed after a restart or executor crash. }
+        cancelRequested: { type: boolean, description: A cancellation was accepted. The owning replica observes this flag through its heartbeat loop and cancels the execution context. }
+        options: { $ref: "#/components/schemas/HelmExecutionOptions" }
     HelmOperationResource:
       type: object
       required: [apiVersion, kind, name, hook, crd, action, resource, status]
@@ -5217,7 +5428,7 @@ components:
         name: { type: string }
         hook: { type: boolean }
         crd: { type: boolean }
-        action: { type: string, enum: [create, update] }
+        action: { type: string, enum: [create, update, delete] }
         apiGroup: { type: string }
         resource: { type: string }
         status: { type: string, enum: [pending, waiting, ready, failed, created, unknown] }

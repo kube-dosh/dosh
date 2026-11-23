@@ -41,6 +41,7 @@ export function HelmChartDetailPage() {
   if (detail.isLoading) return <LoadingState label="正在读取 Chart 详情" />;
   if (detail.isError) return <ErrorState error={detail.error} onRetry={() => void detail.refetch()} />;
   const chart = detail.data;
+  const canSyncChart = Boolean(capabilities.helmChartWrite);
   if (!chart) return <EmptyState title="Chart 不存在" description="该 Chart 可能已被仓库移除或停用。" />;
 
   return (
@@ -50,7 +51,7 @@ export function HelmChartDetailPage() {
         breadcrumb={<Link to="/helm/charts" className="inline-flex items-center gap-1 text-primary hover:underline"><ArrowLeft className="h-3.5 w-3.5" />返回 Chart 目录</Link>}
         description={<span className="break-words">来自 {chart.repositoryName} · 最新版本 v{chart.version}{chart.appVersion ? ` · app ${chart.appVersion}` : ""}</span>}
         actions={<>
-          <Button variant="outline" onClick={() => sync.mutate()} disabled={sync.isPending}><RefreshCw className={`h-4 w-4 ${sync.isPending ? "animate-spin" : ""}`} />{sync.isPending ? "同步中" : "同步 Chart 包"}</Button>
+          <Button variant="outline" onClick={() => sync.mutate()} disabled={sync.isPending || !canSyncChart} title={canSyncChart ? undefined : "需要 Chart 仓库更新权限"}><RefreshCw className={`h-4 w-4 ${sync.isPending ? "animate-spin" : ""}`} />{sync.isPending ? "同步中" : "同步 Chart 包"}</Button>
           <Button onClick={() => setInstallOpen(true)}><PackageCheck className="h-4 w-4" />安装 / 升级</Button>
         </>}
       />

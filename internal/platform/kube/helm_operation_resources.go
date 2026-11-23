@@ -37,6 +37,8 @@ func (c *Client) ObserveHelmOperationResources(ctx context.Context, resources []
 			item.Message = "等待 Helm 执行 Hook"
 		} else if resource.Action == "update" {
 			item.Message = "等待 Helm 更新资源"
+		} else if resource.Action == "delete" {
+			item.Message = "等待 Helm 删除资源"
 		} else {
 			item.Message = "等待 Helm 创建资源"
 		}
@@ -44,7 +46,11 @@ func (c *Client) ObserveHelmOperationResources(ctx context.Context, resources []
 		object, err := c.GetGenericResource(ctx, helmPlanDescriptor(resource), resource.Namespace, resource.Name)
 		switch {
 		case errors.Is(err, domain.ErrNotFound):
-			// Helm has not created this object yet.
+			if resource.Action == "delete" {
+				item.Status = "ready"
+				item.Message = "资源已删除"
+			}
+			// For create/update, Helm has not created this object yet.
 		case err != nil:
 			item.Status = "unknown"
 			item.Message = "读取资源状态失败：" + truncateHelmMessage(err.Error())
@@ -189,6 +195,9 @@ func helmResourceEventKey(kind, namespace, name string) string {
 }
 
 func helmResourceObjectStatus(resource domain.HelmChartPlanResource, object map[string]any) (string, string) {
+	if resource.Action == "delete" {
+		return "waiting", "等待 Helm 删除资源"
+	}
 	statusObject := objectMapLike(object, "status")
 	phase, _ := statusObject["phase"].(string)
 	kind := strings.ToLower(resource.Kind)

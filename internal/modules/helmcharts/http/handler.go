@@ -2,6 +2,7 @@ package http
 
 import (
 	stdhttp "net/http"
+	"strconv"
 
 	"dosh/internal/domain"
 	helmchartsapp "dosh/internal/modules/helmcharts/app"
@@ -18,6 +19,10 @@ func New(service *helmchartsapp.Service) *Handler { return &Handler{service: ser
 
 type repositoryListResponse struct {
 	Items []domain.HelmRepository `json:"items"`
+}
+
+type operationListResponse struct {
+	Items []domain.HelmChartOperation `json:"items"`
 }
 
 func (h *Handler) ListRepositories(w stdhttp.ResponseWriter, r *stdhttp.Request) {
@@ -113,6 +118,26 @@ func (h *Handler) SyncChart(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	httpx.JSON(w, stdhttp.StatusOK, item)
 }
 
+func (h *Handler) CacheStats(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	actor, _ := domain.ActorFromContext(r.Context())
+	item, err := h.service.CacheStats(r.Context(), actor)
+	if err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	httpx.JSON(w, stdhttp.StatusOK, item)
+}
+
+func (h *Handler) CleanupCache(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	actor, _ := domain.ActorFromContext(r.Context())
+	item, err := h.service.CleanupCache(r.Context(), actor)
+	if err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	httpx.JSON(w, stdhttp.StatusOK, item)
+}
+
 func (h *Handler) Plan(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	var input domain.HelmChartPlanRequest
 	if !httpx.DecodeJSON(w, r, &input) {
@@ -193,6 +218,33 @@ func (h *Handler) Operation(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	httpx.JSON(w, stdhttp.StatusOK, item)
 }
 
+func (h *Handler) ListOperations(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	actor, _ := domain.ActorFromContext(r.Context())
+	limit, _ := strconv.Atoi(httpx.Query(r, "limit"))
+	items, err := h.service.ListOperations(r.Context(), actor, domain.HelmOperationFilter{
+		Limit: limit, Status: httpx.Query(r, "status"), Namespace: httpx.Query(r, "namespace"),
+		ReleaseName: httpx.Query(r, "releaseName"),
+	})
+	if err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	if items == nil {
+		items = []domain.HelmChartOperation{}
+	}
+	httpx.JSON(w, stdhttp.StatusOK, operationListResponse{Items: items})
+}
+
+func (h *Handler) CancelOperation(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	actor, _ := domain.ActorFromContext(r.Context())
+	item, err := h.service.CancelOperation(r.Context(), actor, chi.URLParam(r, "id"))
+	if err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	httpx.JSON(w, stdhttp.StatusAccepted, item)
+}
+
 func (h *Handler) Mount(r chi.Router) {
 	r.Get("/helm/repositories", h.ListRepositories)
 	r.Post("/helm/repositories", h.CreateRepository)
@@ -207,5 +259,9 @@ func (h *Handler) Mount(r chi.Router) {
 	r.Post("/helm/charts/rollback", h.Rollback)
 	r.Get("/helm/charts/{repositoryId}/{chartName}", h.GetChart)
 	r.Post("/helm/charts/{repositoryId}/{chartName}/sync", h.SyncChart)
+	r.Get("/helm/operations", h.ListOperations)
 	r.Get("/helm/operations/{id}", h.Operation)
+	r.Post("/helm/operations/{id}/cancel", h.CancelOperation)
+	r.Get("/helm/cache", h.CacheStats)
+	r.Post("/helm/cache/cleanup", h.CleanupCache)
 }

@@ -14,6 +14,7 @@ import (
 
 	"dosh/internal/domain"
 
+	helmrelease "helm.sh/helm/v3/pkg/release"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -40,7 +41,7 @@ func helmSecret(name string, revision int, chart, appVersion, manifest string) *
 	_, _ = writer.Write(encoded)
 	_ = writer.Close()
 	return &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{Name: fmt.Sprintf("sh.helm.release.v1.%s.v%d", name, revision), Namespace: "apps", Labels: map[string]string{"owner": "helm"}},
+		ObjectMeta: metav1.ObjectMeta{Name: fmt.Sprintf("sh.helm.release.v1.%s.v%d", name, revision), Namespace: "apps", Labels: map[string]string{"owner": "helm", "name": name}},
 		Type:       corev1.SecretType(helmReleaseSecretType),
 		Data:       map[string][]byte{"release": []byte(base64.StdEncoding.EncodeToString(compressed.Bytes()))},
 	}
@@ -75,6 +76,26 @@ func TestHelmReleaseRejectsMalformedSecretWithWarning(t *testing.T) {
 	}
 	if len(items) != 0 || len(warnings) != 1 {
 		t.Fatalf("items=%#v warnings=%#v", items, warnings)
+	}
+}
+
+func TestGetHelmReleaseFiltersSecretsByReleaseName(t *testing.T) {
+	web := helmSecret("web", 1, "web", "1.0", "apiVersion: v1\nkind: ConfigMap\n")
+	worker := helmSecret("worker", 1, "worker", "1.0", "apiVersion: v1\nkind: ConfigMap\n")
+	client, clientset := newFakeKubeClient(web, worker)
+	if _, err := client.GetHelmRelease(context.Background(), "apps", "web"); err != nil {
+		t.Fatalf("GetHelmRelease() error = %v", err)
+	}
+	actions := clientset.Actions()
+	var selector string
+	for _, action := range actions {
+		if action.GetVerb() == "list" && action.GetResource().Resource == "secrets" {
+			selector = action.(k8stesting.ListAction).GetListRestrictions().Labels.String()
+			break
+		}
+	}
+	if !strings.Contains(selector, "name=web") || !strings.Contains(selector, "owner=helm") {
+		t.Fatalf("release history selector = %q", selector)
 	}
 }
 
@@ -190,6 +211,32 @@ func TestHelmUpgradeValuesMergeHandlesNilBase(t *testing.T) {
 	}
 }
 
+func TestMergeHelmUpgradeValuesPreservesCurrentConfig(t *testing.T) {
+	current := &helmrelease.Release{Config: map[string]any{
+		"replicaCount": 2,
+		"image":        map[string]any{"repository": "nginx", "tag": "1.0.0"},
+		"service":      map[string]any{"type": "ClusterIP"},
+	}}
+	merged := mergeHelmUpgradeValues(current, map[string]any{
+		"replicaCount": 4,
+		"image":        map[string]any{"tag": "2.0.0"},
+	})
+	if merged["replicaCount"] != 4 {
+		t.Fatalf("replicaCount = %#v", merged["replicaCount"])
+	}
+	image, ok := merged["image"].(map[string]any)
+	if !ok || image["repository"] != "nginx" || image["tag"] != "2.0.0" {
+		t.Fatalf("image = %#v", merged["image"])
+	}
+	service, ok := merged["service"].(map[string]any)
+	if !ok || service["type"] != "ClusterIP" {
+		t.Fatalf("service = %#v", merged["service"])
+	}
+	if current.Config["replicaCount"] != 2 {
+		t.Fatalf("current config was mutated: %#v", current.Config)
+	}
+}
+
 func TestHelmUpgradePreviewRendersStoredChart(t *testing.T) {
 	secret := helmSecretWithChart("web", 1, map[string]any{
 		"metadata": map[string]any{"name": "web", "version": "1.2.3", "apiVersion": "v2"},
@@ -243,7 +290,7 @@ func helmSecretWithChart(name string, revision int, chart map[string]any, manife
 	_, _ = writer.Write(encoded)
 	_ = writer.Close()
 	return &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{Name: fmt.Sprintf("sh.helm.release.v1.%s.v%d", name, revision), Namespace: "apps", Labels: map[string]string{"owner": "helm"}},
+		ObjectMeta: metav1.ObjectMeta{Name: fmt.Sprintf("sh.helm.release.v1.%s.v%d", name, revision), Namespace: "apps", Labels: map[string]string{"owner": "helm", "name": name}},
 		Type:       corev1.SecretType(helmReleaseSecretType),
 		Data:       map[string][]byte{"release": []byte(base64.StdEncoding.EncodeToString(compressed.Bytes()))},
 	}

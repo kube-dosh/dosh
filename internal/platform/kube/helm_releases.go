@@ -18,6 +18,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	utilyaml "k8s.io/apimachinery/pkg/util/yaml"
@@ -77,7 +78,7 @@ func (c *Client) GetHelmRelease(ctx context.Context, namespace, name string) (do
 	if strings.TrimSpace(namespace) == "" || strings.TrimSpace(name) == "" {
 		return domain.HelmReleaseDetail{}, fmt.Errorf("%w: namespace and helm release name are required", domain.ErrInvalid)
 	}
-	releases, warnings, err := c.readHelmReleases(ctx, namespace)
+	releases, warnings, err := c.readHelmReleaseHistory(ctx, namespace, name)
 	if err != nil {
 		return domain.HelmReleaseDetail{}, err
 	}
@@ -155,12 +156,27 @@ type decodedHelmRelease struct {
 }
 
 func (c *Client) readHelmReleases(ctx context.Context, namespace string) ([]decodedHelmRelease, []string, error) {
+	return c.readHelmReleasesMatching(ctx, namespace, "")
+}
+
+func (c *Client) readHelmReleaseHistory(ctx context.Context, namespace, name string) ([]decodedHelmRelease, []string, error) {
+	if strings.TrimSpace(name) == "" {
+		return nil, nil, fmt.Errorf("%w: Helm release name is required", domain.ErrInvalid)
+	}
+	return c.readHelmReleasesMatching(ctx, namespace, name)
+}
+
+func (c *Client) readHelmReleasesMatching(ctx context.Context, namespace, name string) ([]decodedHelmRelease, []string, error) {
 	if strings.TrimSpace(namespace) == "" {
 		return nil, nil, fmt.Errorf("%w: namespace is required for helm releases", domain.ErrInvalid)
 	}
 	ctx, cancel := c.withTimeout(ctx)
 	defer cancel()
-	secrets, err := c.clientset.CoreV1().Secrets(namespace).List(ctx, metav1.ListOptions{LabelSelector: "owner=helm"})
+	selector := labels.SelectorFromSet(labels.Set{"owner": "helm"})
+	if name != "" {
+		selector = labels.SelectorFromSet(labels.Set{"owner": "helm", "name": name})
+	}
+	secrets, err := c.clientset.CoreV1().Secrets(namespace).List(ctx, metav1.ListOptions{LabelSelector: selector.String()})
 	if err != nil {
 		return nil, nil, mapKubeError(err)
 	}

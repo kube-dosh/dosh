@@ -79,8 +79,10 @@ func (h *Handler) Rollback(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 }
 
 type upgradeRequest struct {
-	Values       string `json:"values"`
-	Confirmation string `json:"confirmation"`
+	Values          string                            `json:"values"`
+	Confirmation    string                            `json:"confirmation"`
+	CurrentRevision int                               `json:"currentRevision"`
+	Options         *domain.HelmExecutionOptionsInput `json:"options,omitempty"`
 }
 
 func (h *Handler) PreviewUpgrade(w stdhttp.ResponseWriter, r *stdhttp.Request) {
@@ -103,12 +105,22 @@ func (h *Handler) Upgrade(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		return
 	}
 	actor, _ := domain.ActorFromContext(r.Context())
-	result, err := h.service.Upgrade(r.Context(), actor, chi.URLParam(r, "namespace"), chi.URLParam(r, "name"), request.Values, request.Confirmation)
+	result, err := h.service.Upgrade(r.Context(), actor, chi.URLParam(r, "namespace"), chi.URLParam(r, "name"), request.Values, request.Confirmation, request.CurrentRevision, request.Options)
 	if err != nil {
 		httpx.Error(w, r, err)
 		return
 	}
 	httpx.JSON(w, stdhttp.StatusAccepted, result)
+}
+
+func (h *Handler) Test(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	actor, _ := domain.ActorFromContext(r.Context())
+	result, err := h.service.Test(r.Context(), actor, chi.URLParam(r, "namespace"), chi.URLParam(r, "name"))
+	if err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	httpx.JSON(w, stdhttp.StatusOK, result)
 }
 
 func (h *Handler) Mount(r chi.Router) {
@@ -118,4 +130,5 @@ func (h *Handler) Mount(r chi.Router) {
 	r.Post("/helm/releases/{namespace}/{name}/rollback", h.Rollback)
 	r.Post("/helm/releases/{namespace}/{name}/upgrade/preview", h.PreviewUpgrade)
 	r.Post("/helm/releases/{namespace}/{name}/upgrade", h.Upgrade)
+	r.Post("/helm/releases/{namespace}/{name}/test", h.Test)
 }

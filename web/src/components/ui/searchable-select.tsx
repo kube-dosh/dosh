@@ -8,7 +8,7 @@ export interface SearchableSelectOption {
   label: string;
 }
 
-export function SearchableSelect({ id, label, value, options, onChange, onManualSelect, placeholder, searchPlaceholder = "输入关键字搜索…", disabled = false }: {
+export function SearchableSelect({ id, label, value, options, onChange, onManualSelect, placeholder, searchPlaceholder = "输入关键字搜索…", allowManual = true, disabled = false }: {
   id: string;
   label: string;
   value: string;
@@ -17,6 +17,7 @@ export function SearchableSelect({ id, label, value, options, onChange, onManual
   onManualSelect: () => void;
   placeholder: string;
   searchPlaceholder?: string;
+  allowManual?: boolean;
   disabled?: boolean;
 }) {
   const [open, setOpen] = useState(false);
@@ -48,7 +49,7 @@ export function SearchableSelect({ id, label, value, options, onChange, onManual
       .sort((left, right) => left.rank - right.rank || left.index - right.index)
       .map((item) => item.option);
   }, [normalizedQuery, options]);
-  const itemCount = filteredOptions.length + 1;
+  const itemCount = filteredOptions.length + (allowManual ? 1 : 0);
 
   const updatePosition = () => {
     const trigger = triggerRef.current;
@@ -77,7 +78,7 @@ export function SearchableSelect({ id, label, value, options, onChange, onManual
   };
 
   const selectOption = (index: number) => {
-    if (index === filteredOptions.length) {
+    if (allowManual && index === filteredOptions.length) {
       close(true);
       onManualSelect();
       return;
@@ -220,18 +221,20 @@ export function SearchableSelect({ id, label, value, options, onChange, onManual
               );
             })}
             {filteredOptions.length === 0 ? <p className="px-3 py-2 text-sm text-muted-foreground">没有匹配项</p> : null}
-            <button
-              id={`${listboxId}-option-${filteredOptions.length}`}
-              type="button"
-              role="option"
-              aria-selected={false}
-              className={cn("flex w-full items-center rounded-sm py-1.5 pl-8 pr-2 text-left text-sm outline-none", activeIndex === filteredOptions.length ? "bg-accent text-accent-foreground" : "hover:bg-accent/70")}
-              onMouseDown={(event) => event.preventDefault()}
-              onMouseEnter={() => setActiveIndex(filteredOptions.length)}
-              onClick={() => selectOption(filteredOptions.length)}
-            >
-              手动输入
-            </button>
+            {allowManual ? (
+              <button
+                id={`${listboxId}-option-${filteredOptions.length}`}
+                type="button"
+                role="option"
+                aria-selected={false}
+                className={cn("flex w-full items-center rounded-sm py-1.5 pl-8 pr-2 text-left text-sm outline-none", activeIndex === filteredOptions.length ? "bg-accent text-accent-foreground" : "hover:bg-accent/70")}
+                onMouseDown={(event) => event.preventDefault()}
+                onMouseEnter={() => setActiveIndex(filteredOptions.length)}
+                onClick={() => selectOption(filteredOptions.length)}
+              >
+                手动输入
+              </button>
+            ) : null}
           </div>
         </div>,
         document.body,

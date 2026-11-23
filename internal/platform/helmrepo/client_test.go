@@ -141,6 +141,81 @@ generated: "2026-11-01T00:00:00Z"
 	}
 }
 
+func TestRefreshUsesConditionalIndexRequest(t *testing.T) {
+	t.Parallel()
+	var requests atomic.Int32
+	var conditional atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/index.yaml" {
+			http.NotFound(w, r)
+			return
+		}
+		if r.Header.Get("If-None-Match") == `"index-v1"` {
+			conditional.Add(1)
+			w.WriteHeader(http.StatusNotModified)
+			return
+		}
+		requests.Add(1)
+		w.Header().Set("ETag", `"index-v1"`)
+		w.Header().Set("Last-Modified", "Wed, 19 Nov 2026 08:00:00 GMT")
+		_, _ = fmt.Fprint(w, `apiVersion: v1
+entries:
+  demo:
+    - apiVersion: v2
+      name: demo
+      version: 1.0.0
+      description: Demo chart
+      urls:
+        - /demo-1.0.0.tgz
+generated: "2026-11-19T08:00:00Z"
+`)
+	}))
+	defer server.Close()
+
+	client := New(5 * time.Second)
+	client.SetCacheDir(t.TempDir())
+	repository := domain.HelmRepository{ID: "repo-1", Name: "Demo", URL: server.URL, Enabled: true, AuthType: domain.HelmRepositoryAuthAnonymous}
+	first, err := client.Refresh(context.Background(), repository)
+	if err != nil || len(first) != 1 {
+		t.Fatalf("first Refresh() = (%#v, %v)", first, err)
+	}
+	second, err := client.Refresh(context.Background(), repository)
+	if err != nil || len(second) != 1 {
+		t.Fatalf("second Refresh() = (%#v, %v)", second, err)
+	}
+	if requests.Load() != 1 || conditional.Load() != 1 {
+		t.Fatalf("conditional requests = full %d, 304 %d", requests.Load(), conditional.Load())
+	}
+}
+
+func TestCacheCleanupAndRepositoryRemoval(t *testing.T) {
+	t.Parallel()
+	client := New(5 * time.Second)
+	client.SetCacheDir(t.TempDir())
+	repository := domain.HelmRepository{ID: "repo-1", Name: "Demo", URL: "https://charts.example.com", Enabled: true}
+	if err := client.storeChartPackage(repository, "demo", "1.0.0", bytes.Repeat([]byte("a"), 1024)); err != nil {
+		t.Fatalf("storeChartPackage() error = %v", err)
+	}
+	if err := client.storeChartPackage(repository, "demo", "2.0.0", bytes.Repeat([]byte("b"), 1024)); err != nil {
+		t.Fatalf("storeChartPackage(second) error = %v", err)
+	}
+	stats, err := client.CacheStats()
+	if err != nil || stats.PackageCount != 2 {
+		t.Fatalf("CacheStats() = (%#v, %v)", stats, err)
+	}
+	result, err := client.CleanupCache(1024)
+	if err != nil || result.DeletedFiles == 0 || result.Stats.TotalBytes > 1024 {
+		t.Fatalf("CleanupCache() = (%#v, %v)", result, err)
+	}
+	if err := client.RemoveRepositoryCache(repository); err != nil {
+		t.Fatalf("RemoveRepositoryCache() error = %v", err)
+	}
+	stats, err = client.CacheStats()
+	if err != nil || stats.PackageCount != 0 {
+		t.Fatalf("CacheStats() after removal = (%#v, %v)", stats, err)
+	}
+}
+
 func TestIndexCacheSurvivesClientRestartAndRefreshesAfterInvalidate(t *testing.T) {
 	t.Parallel()
 	var indexRequests atomic.Int32

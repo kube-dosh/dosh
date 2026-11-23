@@ -27,6 +27,7 @@ type Config struct {
 	LoginRateLimitNamespace string
 	PreferencesNamespace    string
 	DataDir                 string
+	HelmCacheMaxBytes       int64
 	CookieSecure            bool
 	ReadOnly                bool
 	KubeQPS                 float32
@@ -102,6 +103,7 @@ func Load() (Config, error) {
 		LoginRateLimitNamespace: strings.TrimSpace(env("DOSH_LOGIN_RATE_LIMIT_NAMESPACE", "")),
 		PreferencesNamespace:    strings.TrimSpace(env("DOSH_PREFERENCES_NAMESPACE", "")),
 		DataDir:                 strings.TrimSpace(env("DOSH_DATA_DIR", "/var/lib/dosh")),
+		HelmCacheMaxBytes:       int64(intEnv("DOSH_HELM_CACHE_MAX_BYTES", 2*1024*1024*1024, &loadErrs)),
 		ReadOnly:                boolEnv("DOSH_READ_ONLY", false, &loadErrs),
 		KubeQPS:                 floatEnv("DOSH_KUBE_QPS", 50, &loadErrs),
 		KubeBurst:               intEnv("DOSH_KUBE_BURST", 100, &loadErrs),
@@ -301,6 +303,9 @@ func (c Config) Validate() error {
 		if !filepath.IsAbs(c.DataDir) || len(c.DataDir) > 4096 || strings.ContainsAny(c.DataDir, "\r\n\x00") {
 			errs = append(errs, errors.New("DOSH_DATA_DIR must be an absolute path of at most 4096 characters"))
 		}
+	}
+	if c.HelmCacheMaxBytes < 0 {
+		errs = append(errs, errors.New("DOSH_HELM_CACHE_MAX_BYTES must not be negative"))
 	}
 	switch c.LoginRateLimitMode {
 	case "", "memory":

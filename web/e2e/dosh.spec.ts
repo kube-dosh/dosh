@@ -13,6 +13,7 @@ import type {
   HelmChartDetail,
   HelmChartOperation,
   HelmChartPlan,
+  HelmChartPlanInput,
   HelmChartSummary,
   HelmRepository,
   HelmRepositoryUpsertInput,
@@ -20,8 +21,8 @@ import type {
   HelmReleaseDiff,
   HelmReleaseRollbackResult,
   HelmReleaseSummary,
+  HelmReleaseTestResult,
   HelmReleaseUpgradePreview,
-  HelmReleaseUpgradeResult,
   ListResponse,
   ClusterConfiguration,
   IngressDetail,
@@ -476,13 +477,19 @@ const helmUpgradePreview: HelmReleaseUpgradePreview = {
   warnings: [],
 };
 
-const helmUpgradeResult: HelmReleaseUpgradeResult = {
+const helmReleaseTestResult: HelmReleaseTestResult = {
   namespace: "default",
   name: "web",
-  previousRevision: 2,
-  revision: 3,
-  appliedObjects: 3,
+  revision: 2,
+  status: "succeeded",
+  message: "Helm test 通过",
+  hooks: [
+    { name: "web-test-connection", kind: "Pod", path: "templates/tests/test-connection.yaml", status: "Succeeded", startedAt: "2026-11-20T08:01:00Z", completedAt: "2026-11-20T08:01:04Z" },
+  ],
+  logs: "POD_NAME: web-test-connection\nConnection to web succeeded\n",
   warnings: [],
+  startedAt: "2026-11-20T08:01:00Z",
+  finishedAt: "2026-11-20T08:01:05Z",
 };
 
 const helmRepository: HelmRepository = {
@@ -492,12 +499,16 @@ const helmRepository: HelmRepository = {
   description: "受控的公共 Chart 仓库镜像",
   default: true,
   enabled: true,
+  syncEnabled: true,
+  syncIntervalSeconds: 10800,
   insecureSkipTLSVerify: false,
   authType: "basic",
   hasCredentials: true,
   hasCustomCA: true,
   chartCount: 2,
-  lastSync: { ok: true, message: "同步成功", chartCount: 2, syncedAt: "2026-11-20T08:00:00Z" },
+  lastSync: { ok: true, message: "同步成功", chartCount: 2, trigger: "scheduled", durationMs: 420, syncedAt: "2026-11-20T08:00:00Z" },
+  syncHistory: [{ ok: true, message: "同步成功", chartCount: 2, trigger: "scheduled", durationMs: 420, syncedAt: "2026-11-20T08:00:00Z" }],
+  nextSyncAt: "2026-11-20T11:00:00Z",
   revision: "repo-revision-1",
   createdAt: "2026-11-18T08:00:00Z",
   updatedAt: "2026-11-20T08:00:00Z",
@@ -536,11 +547,10 @@ const helmChartPlan: HelmChartPlan = {
   repositoryId: helmRepository.id,
   repositoryName: helmRepository.name,
   chartName: helmChartSummary.name,
-  version: helmChartSummary.version,
+  action: "install",
   chartVersion: helmChartSummary.version,
   appVersion: helmChartSummary.appVersion,
   digest: helmChartSummary.digest!,
-  mode: "install",
   namespace: "default",
   releaseName: "nginx",
   currentRevision: 0,
@@ -554,6 +564,18 @@ const helmChartPlan: HelmChartPlan = {
   crdCount: 0,
   warnings: [],
   planDigest: "sha256:reviewed-plan-e2e",
+  options: {
+    timeoutSeconds: 600,
+    wait: true,
+    waitForJobs: true,
+    atomic: true,
+    cleanupOnFail: true,
+    maxHistory: 10,
+    createNamespace: false,
+    disableHooks: false,
+    skipCRDs: false,
+    keepHistory: false,
+  },
 };
 
 const helmChartOperation: HelmChartOperation = {
@@ -571,6 +593,18 @@ const helmChartOperation: HelmChartOperation = {
   warnings: [],
   startedAt: "2026-11-20T08:00:00Z",
   finishedAt: "2026-11-20T08:00:05Z",
+};
+
+const helmUpgradeResult: HelmChartOperation = {
+  ...helmChartOperation,
+  id: "helm-upgrade-e2e",
+  type: "upgrade",
+  status: "success",
+  message: "操作成功",
+  namespace: "default",
+  releaseName: "web",
+  revision: 3,
+  warnings: [],
 };
 
 const resourceRelations: ResourceRelations = {
@@ -1617,7 +1651,17 @@ async function installApiMocks(page: Page, options: { authenticated?: boolean; a
     if (path === "/api/v1/helm/releases/default/web/upgrade/preview" && method === "POST") return json(route, helmUpgradePreview);
     if (path === "/api/v1/helm/releases/default/web/upgrade" && method === "POST") return json(route, helmUpgradeResult, 202);
     if (path === "/api/v1/helm/releases/default/web/rollback" && method === "POST") return json(route, helmRollbackResult, 202);
+    if (path === "/api/v1/helm/releases/default/web/test" && method === "POST") return json(route, helmReleaseTestResult);
     if (path === "/api/v1/helm/releases/default/web" && method === "GET") return json(route, helmReleaseDetail);
+    if (path === "/api/v1/helm/cache" && method === "GET") return json(route, {
+      root: "/var/lib/dosh", limitBytes: 2147483648, totalBytes: 15728640, indexBytes: 5242880,
+      packageBytes: 10485760, indexCount: 2, packageCount: 4,
+      oldestAt: "2026-11-18T08:00:00Z", newestAt: "2026-11-20T08:00:00Z",
+    });
+    if (path === "/api/v1/helm/cache/cleanup" && method === "POST") return json(route, {
+      deletedFiles: 1, freedBytes: 1048576,
+      stats: { root: "/var/lib/dosh", limitBytes: 2147483648, totalBytes: 14680064, indexBytes: 5242880, packageBytes: 9437184, indexCount: 2, packageCount: 3 },
+    });
     if (path === "/api/v1/helm/repositories" && method === "GET") return json(route, { items: helmRepositories });
     if (path === "/api/v1/helm/repositories" && method === "POST") {
       const body = request.postDataJSON() as HelmRepositoryUpsertInput;
@@ -1628,6 +1672,8 @@ async function installApiMocks(page: Page, options: { authenticated?: boolean; a
         description: body.description,
         default: Boolean(body.default),
         enabled: body.enabled ?? true,
+        syncEnabled: Boolean(body.syncEnabled),
+        syncIntervalSeconds: body.syncIntervalSeconds ?? 10800,
         insecureSkipTLSVerify: Boolean(body.insecureSkipTLSVerify),
         authType: body.authType ?? "anonymous",
         hasCredentials: Boolean(body.username || body.password || body.token),
@@ -1692,7 +1738,7 @@ async function installApiMocks(page: Page, options: { authenticated?: boolean; a
       return json(route, { items, warnings: [] });
     }
     if (path === "/api/v1/helm/charts/plan" && method === "POST") {
-      const body = request.postDataJSON() as HelmChartPlan;
+      const body = request.postDataJSON() as HelmChartPlanInput;
       return json(route, { ...helmChartPlan, ...body, chartVersion: body.version, planDigest: helmChartPlan.planDigest });
     }
     if (path === "/api/v1/helm/charts/install" && method === "POST") {
@@ -1711,7 +1757,9 @@ async function installApiMocks(page: Page, options: { authenticated?: boolean; a
       const body = request.postDataJSON() as { namespace: string; releaseName: string };
       return json(route, { ...helmChartOperation, type: "rollback", namespace: body.namespace, releaseName: body.releaseName, revision: 3 });
     }
+    if (path === "/api/v1/helm/operations" && method === "GET") return json(route, { items: [helmChartOperation, helmUpgradeResult] });
     if (path === "/api/v1/helm/operations/helm-operation-e2e" && method === "GET") return json(route, helmChartOperation);
+    if (path === "/api/v1/helm/operations/helm-upgrade-e2e" && method === "GET") return json(route, helmUpgradeResult);
     const helmChartMatch = path.match(/^\/api\/v1\/helm\/charts\/([^/]+)\/([^/]+)$/);
     if (helmChartMatch && method === "GET") return json(route, { ...helmChartDetail, repositoryId: decodeURIComponent(helmChartMatch[1]), name: decodeURIComponent(helmChartMatch[2]) });
     const helmChartSyncMatch = path.match(/^\/api\/v1\/helm\/charts\/([^/]+)\/([^/]+)\/sync$/);
@@ -2110,11 +2158,152 @@ test("Helm Release 列表、详情和历史版本可读且敏感值已遮蔽", a
   const rollbackDialog = page.getByRole("dialog", { name: "受控回滚 Helm Release" });
   await expect(rollbackDialog).toBeVisible();
   await rollbackDialog.getByLabel(/输入 Release 名称/).fill("web");
-  const rollbackRequest = page.waitForRequest((request) => request.url().endsWith("/api/v1/helm/releases/default/web/rollback") && request.method() === "POST");
+  const rollbackRequest = page.waitForRequest((request) => request.url().endsWith("/api/v1/helm/charts/rollback") && request.method() === "POST");
   await rollbackDialog.getByRole("button", { name: "确认回滚" }).click();
-  expect((await rollbackRequest).postDataJSON()).toEqual({ targetRevision: 1, confirmation: "web" });
-  await expect(page.getByText(/已创建 Helm revision #3/)).toBeVisible();
-  await expectNoPageOverflow(page, "helm release detail");
+  expect((await rollbackRequest).postDataJSON()).toMatchObject({
+    namespace: "default",
+    releaseName: "web",
+    targetRevision: 1,
+    confirmation: "web",
+    options: expect.objectContaining({ timeoutSeconds: 600, wait: true, atomic: true }),
+  });
+  await expect(page.getByText("已提交 web 的回滚操作")).toBeVisible();
+  await expect(page).toHaveURL(/\/helm\/operations/);
+  await expectNoPageOverflow(page, "helm rollback operation center");
+});
+
+test("Helm Release 可运行 test、查看 Hook 日志并受控卸载", async ({ page }) => {
+  test.setTimeout(120_000);
+  await installApiMocks(page);
+  for (const viewport of [{ width: 1280, height: 900 }, { width: 390, height: 844 }, { width: 320, height: 720 }]) {
+    await page.setViewportSize(viewport);
+    await page.goto("/helm/releases/default/web?namespace=default");
+
+    const testRequest = page.waitForRequest((request) => request.url().endsWith("/api/v1/helm/releases/default/web/test") && request.method() === "POST");
+    await page.getByRole("button", { name: "运行 test" }).click();
+    await testRequest;
+
+    const testDialog = page.getByRole("dialog", { name: "Helm test 结果" });
+    await expect(testDialog).toBeVisible();
+    await expect(testDialog.getByText("web-test-connection", { exact: true })).toBeVisible();
+    await expect(testDialog.getByText("Connection to web succeeded")).toBeVisible();
+    await expectElementInsideViewport(page, testDialog, `${viewport.width}px Helm test result`);
+    await expectNoHorizontalOverflowInside(testDialog, `${viewport.width}px Helm test result`);
+    await expectNoPageOverflow(page, `${viewport.width}px Helm test result`);
+    await page.screenshot({ path: `test-results/mobile-interactions/helm-test-result-${viewport.width}.png`, fullPage: true });
+    await testDialog.getByRole("button", { name: "关闭" }).last().click();
+
+    await page.getByRole("button", { name: "卸载" }).click();
+    const uninstallDialog = page.getByRole("dialog", { name: "卸载 Helm Release" });
+    await expect(uninstallDialog).toBeVisible();
+    await expectElementInsideViewport(page, uninstallDialog, `${viewport.width}px Helm uninstall dialog`);
+    await expectNoHorizontalOverflowInside(uninstallDialog, `${viewport.width}px Helm uninstall dialog`);
+    await expectNoPageOverflow(page, `${viewport.width}px Helm uninstall dialog`);
+    await uninstallDialog.getByLabel(/输入 Release 名称/).fill("web");
+    const uninstallRequest = page.waitForRequest((request) => request.url().endsWith("/api/v1/helm/charts/uninstall") && request.method() === "POST");
+    await uninstallDialog.getByRole("button", { name: "确认卸载" }).click();
+    expect((await uninstallRequest).postDataJSON()).toMatchObject({
+      namespace: "default",
+      releaseName: "web",
+      confirmation: "web",
+      options: expect.objectContaining({ timeoutSeconds: 600, wait: true, keepHistory: false }),
+    });
+    await expect(page).toHaveURL(/\/helm\/operations/);
+    await expect(page.getByRole("heading", { name: "Helm 操作中心" })).toBeVisible();
+    await expectNoPageOverflow(page, `${viewport.width}px Helm operations after uninstall`);
+  }
+});
+
+test("Helm 操作中心列表、详情和资源进度在桌面与移动端可用", async ({ page }) => {
+  await installApiMocks(page);
+  const runningOperation = {
+    ...helmChartOperation,
+    status: "running" as const,
+    finishedAt: undefined,
+    resources: [{ apiVersion: "apps/v1", kind: "Deployment", namespace: "default", name: "nginx", hook: false, crd: false, action: "create", apiGroup: "apps", resource: "deployments", status: "waiting", message: "等待 Deployment 就绪" }],
+  };
+  await page.route("**/api/v1/helm/operations", (route) => json(route, { items: [runningOperation] }));
+  await page.route("**/api/v1/helm/operations/helm-operation-e2e", (route) => json(route, runningOperation));
+  for (const viewport of [{ width: 1280, height: 900 }, { width: 390, height: 844 }, { width: 320, height: 720 }]) {
+    await page.setViewportSize(viewport);
+    await page.goto("/helm/operations");
+    await expect(page.getByRole("heading", { name: "Helm 操作中心" })).toBeVisible();
+    await expect(page.getByRole("cell", { name: "nginx" }).first()).toBeVisible();
+    await expectNoPageOverflow(page, `${viewport.width}px Helm operations`);
+    await page.getByRole("cell", { name: "nginx" }).first().click();
+    const detailDialog = page.getByRole("dialog", { name: "操作详情" });
+    await expect(detailDialog).toBeVisible();
+    await expect(detailDialog.getByText("等待 Deployment 就绪")).toBeVisible();
+    await expectElementInsideViewport(page, detailDialog, `${viewport.width}px Helm operation detail`);
+    await expectNoHorizontalOverflowInside(detailDialog, `${viewport.width}px Helm operation detail`);
+    await expectNoPageOverflow(page, `${viewport.width}px Helm operation detail`);
+    await page.screenshot({ path: `test-results/mobile-interactions/helm-operation-detail-${viewport.width}.png`, fullPage: true });
+    await page.keyboard.press("Escape");
+  }
+});
+
+test("Helm 操作中心展示跨副本取消请求并禁用重复取消", async ({ page }) => {
+  await installApiMocks(page);
+  const cancellingOperation = {
+    ...helmChartOperation,
+    status: "running" as const,
+    finishedAt: undefined,
+    cancelRequested: true,
+    message: "已请求取消，等待 Helm 操作安全退出",
+    heartbeatAt: "2026-11-20T08:01:02Z",
+  };
+  await page.route("**/api/v1/helm/operations", (route) => json(route, { items: [cancellingOperation] }));
+  await page.route("**/api/v1/helm/operations/helm-operation-e2e", (route) => json(route, cancellingOperation));
+  for (const viewport of [{ width: 1280, height: 900 }, { width: 390, height: 844 }, { width: 320, height: 720 }]) {
+    await page.setViewportSize(viewport);
+    await page.goto("/helm/operations");
+    await page.getByRole("cell", { name: "nginx" }).first().click();
+    const detailDialog = page.getByRole("dialog", { name: "操作详情" });
+    await expect(detailDialog.getByText("已请求取消，等待 Helm 操作安全退出")).toBeVisible();
+    await expect(detailDialog.getByRole("button", { name: "取消中…" })).toBeDisabled();
+    await expectNoHorizontalOverflowInside(detailDialog, `${viewport.width}px cancel-requested operation`);
+    await expectNoPageOverflow(page, `${viewport.width}px cancel-requested operation`);
+    await page.keyboard.press("Escape");
+  }
+});
+
+test("仅有 Release 权限时仍可进入 Helm 操作中心", async ({ page }) => {
+  await installApiMocks(page);
+  await page.route("**/api/v1/capabilities", (route) => json(route, {
+    ...session.capabilities,
+    helmChartRepositories: false,
+    helmReleases: true,
+  }));
+  for (const viewport of [{ width: 1280, height: 900 }, { width: 390, height: 844 }, { width: 320, height: 720 }]) {
+    await page.setViewportSize(viewport);
+    await page.goto("/helm/operations");
+    await expect(page.getByRole("heading", { name: "Helm 操作中心" })).toBeVisible();
+    await expect(page.getByRole("cell", { name: "nginx" }).first()).toBeVisible();
+    await expectNoPageOverflow(page, `${viewport.width}px release-scoped Helm operations`);
+  }
+});
+
+test("Chart 仓库展示同步失败退避状态并适配移动端", async ({ page }) => {
+  await installApiMocks(page);
+  const failedRepository = {
+    ...helmRepository,
+    syncFailureCount: 3,
+    lastSync: { ok: false, message: "upstream unavailable", chartCount: 2, trigger: "scheduled" as const, attempt: 4, durationMs: 30001, syncedAt: "2026-11-20T08:00:00Z" },
+    syncHistory: [
+      { ok: false, message: "upstream unavailable", chartCount: 2, trigger: "scheduled" as const, attempt: 4, durationMs: 30001, syncedAt: "2026-11-20T08:00:00Z" },
+    ],
+    nextSyncAt: "2026-11-20T08:40:00Z",
+  };
+  await page.route("**/api/v1/helm/repositories", (route) => json(route, { items: [failedRepository] }));
+  for (const viewport of [{ width: 1280, height: 900 }, { width: 390, height: 844 }, { width: 320, height: 720 }]) {
+    await page.setViewportSize(viewport);
+    await page.goto("/helm/repositories");
+    await expect(page.getByRole("alert").filter({ hasText: "1 个仓库最近同步失败" })).toBeVisible();
+    await expect(page.getByText("连续失败 3 次")).toBeVisible();
+    await expect(page.getByText(/下次重试/)).toBeVisible();
+    await expect(page.getByText(/第 4 次尝试/)).toBeVisible();
+    await expectNoPageOverflow(page, `${viewport.width}px Helm repository sync backoff`);
+  }
 });
 
 test("Helm Chart 目录、详情和受控安装计划可完成", async ({ page }) => {
@@ -2292,6 +2481,27 @@ test("Chart 仓库编辑保留凭据语义并支持显式替换", async ({ page 
   await expect(page.getByText("Chart 仓库 Internal 已创建")).toBeVisible();
 });
 
+test("Helm 仓库定时同步默认关闭且可配置间隔", async ({ page }) => {
+  await installApiMocks(page);
+  await page.goto("/helm/repositories");
+  await page.getByRole("button", { name: "添加仓库" }).first().click();
+  const dialog = page.getByRole("dialog", { name: "添加 Chart 仓库" });
+  const syncToggle = dialog.getByLabel("启用定时同步");
+  const interval = dialog.getByLabel("同步间隔（小时）");
+  await expect(syncToggle).not.toBeChecked();
+  await expect(interval).toBeDisabled();
+  await expect(interval).toHaveValue("3");
+
+  await syncToggle.check();
+  await expect(interval).toBeEnabled();
+  await interval.fill("6");
+  await dialog.getByLabel("名称").fill("Scheduled");
+  await dialog.getByLabel("仓库地址").fill("https://charts.example.com/scheduled");
+  const createRequest = page.waitForRequest((request) => new URL(request.url()).pathname === "/api/v1/helm/repositories" && request.method() === "POST");
+  await dialog.getByRole("button", { name: "添加仓库" }).click();
+  expect((await createRequest).postDataJSON()).toMatchObject({ name: "Scheduled", syncEnabled: true, syncIntervalSeconds: 21600 });
+});
+
 test("Chart 仓库支持 OCI 地址并在提交前拒绝带 Tag 的引用", async ({ page }) => {
   await installApiMocks(page);
   const repositoryPosts: string[] = [];
@@ -2354,6 +2564,7 @@ test("Chart 目录可为已有 Release 选择新 Chart 版本升级并展示 Sch
     namespace: "default",
     releaseName: "web",
     version: "18.1.0",
+    values: "",
   });
   await expect(upgradeDialog.getByText("Values Schema：")).toBeVisible();
   await expect(upgradeDialog.getByText("已通过校验")).toBeVisible();
@@ -3599,6 +3810,9 @@ test("Helm 升级预览与执行在桌面和移动端无横向溢出", async ({ 
     await page.setViewportSize(viewport);
     await page.goto("/helm/releases/default/web?namespace=default&tab=upgrade");
     await page.getByLabel("升级 Values（YAML）").fill("replicaCount: 3\n");
+    await page.getByText("高级执行选项").click();
+    await page.getByLabel("超时时间（秒）").fill("900");
+    await expectNoPageOverflow(page, `${viewport.width}px helm upgrade options`);
     await page.getByRole("button", { name: "生成升级预览" }).click();
     await expect(page.getByRole("heading", { name: "升级后 Values Diff" })).toBeVisible();
     await expect(page.getByRole("heading", { name: "升级后 Manifest Diff" })).toBeVisible();
@@ -3608,9 +3822,59 @@ test("Helm 升级预览与执行在桌面和移动端无横向溢出", async ({ 
     const dialog = page.getByRole("dialog", { name: "执行 Helm 升级" });
     await expect(dialog).toBeVisible();
     await dialog.getByLabel(/输入 Release 名称/).fill("web");
+    const upgradeRequest = page.waitForRequest((request) => request.url().endsWith("/api/v1/helm/releases/default/web/upgrade") && request.method() === "POST");
     await dialog.getByRole("button", { name: "确认升级" }).click();
-    await expect(page.getByText(/已创建 Helm revision #3/)).toBeVisible();
+    expect((await upgradeRequest).postDataJSON()).toMatchObject({
+      values: "replicaCount: 3\n",
+      confirmation: "web",
+      currentRevision: 2,
+      options: expect.objectContaining({ timeoutSeconds: 900, wait: true, atomic: true }),
+    });
+    await expect(page).toHaveURL(/\/helm\/operations\?q=web/);
+    await expect(page.getByRole("heading", { name: "Helm 操作中心" })).toBeVisible();
+    await expect(page.getByRole("cell", { name: "web" }).first()).toBeVisible();
+    await expect(page.getByRole("cell", { name: "升级" }).first()).toBeVisible();
     await expectNoPageOverflow(page, `${viewport.width}px helm upgrade result`);
+  }
+});
+
+test("Helm Release 可直接更换 Chart 版本并在桌面和移动端无横向溢出", async ({ page }) => {
+  await installApiMocks(page);
+  for (const viewport of [{ width: 1280, height: 900 }, { width: 390, height: 844 }, { width: 320, height: 720 }]) {
+    await page.setViewportSize(viewport);
+    await page.goto("/helm/releases/default/web?namespace=default");
+    await page.getByRole("button", { name: "更换 Chart" }).first().click();
+
+    const dialog = page.getByRole("dialog", { name: "更换 Helm Chart 版本" });
+    await expect(dialog).toBeVisible();
+    await expect(dialog.getByText("nginx · Bitnami · v18.2.0")).toBeVisible();
+    await expectElementInsideViewport(page, dialog, `${viewport.width}px Helm chart switch dialog`);
+    await expectNoHorizontalOverflowInside(dialog, `${viewport.width}px Helm chart switch dialog`);
+    await expectNoPageOverflow(page, `${viewport.width}px Helm chart switch dialog`);
+
+    await dialog.getByRole("button", { name: "生成升级计划" }).click();
+    await expect(dialog.getByText("目标 Chart：", { exact: true })).toBeVisible();
+    await expect(dialog.getByText("nginx v18.2.0", { exact: true })).toBeVisible();
+    await expectNoHorizontalOverflowInside(dialog, `${viewport.width}px Helm chart switch plan`);
+    await expectNoPageOverflow(page, `${viewport.width}px Helm chart switch plan`);
+
+    await dialog.getByLabel(/输入 Release 名称/).fill("web");
+    const upgradeRequest = page.waitForRequest((request) => new URL(request.url()).pathname === "/api/v1/helm/charts/upgrade" && request.method() === "POST");
+    await dialog.getByRole("button", { name: "确认升级" }).click();
+    expect((await upgradeRequest).postDataJSON()).toMatchObject({
+      repositoryId: "repo-bitnami",
+      chartName: "nginx",
+      version: "18.2.0",
+      mode: "upgrade",
+      namespace: "default",
+      releaseName: "web",
+      planDigest: "sha256:reviewed-plan-e2e",
+      confirmation: "web",
+      options: expect.objectContaining({ timeoutSeconds: 600, wait: true, atomic: true }),
+    });
+    await expect(page).toHaveURL(/\/helm\/operations\?q=web/);
+    await expect(page.getByRole("heading", { name: "Helm 操作中心" })).toBeVisible();
+    await expectNoPageOverflow(page, `${viewport.width}px Helm chart switch result`);
   }
 });
 
@@ -4055,6 +4319,7 @@ const layoutAuditRoutes = [
     { path: "/helm/releases/default/web?namespace=default&tab=diff", name: "helm-release-diff" },
     { path: "/helm/charts", name: "helm-charts" },
     { path: "/helm/charts/repo-bitnami/nginx", name: "helm-chart-detail" },
+    { path: "/helm/operations", name: "helm-operations" },
     { path: "/helm/repositories", name: "helm-repositories" },
 ];
 
@@ -4187,6 +4452,7 @@ test("320px 窄屏关键页面无横向溢出", async ({ page }) => {
     { path: "/helm/releases/default/web?namespace=default&tab=diff", name: "helm-release-diff" },
     { path: "/helm/charts", name: "helm-charts" },
     { path: "/helm/charts/repo-bitnami/nginx", name: "helm-chart-detail" },
+    { path: "/helm/operations", name: "helm-operations" },
     { path: "/helm/repositories", name: "helm-repositories" },
   ]) {
     await page.goto(route.path);
@@ -5062,7 +5328,7 @@ test("核心运维页面在亮暗主题下无严重可访问性问题", async ({
   test.setTimeout(480_000);
   await installApiMocks(page);
   for (const theme of ["light", "dark"] as const) {
-    for (const path of ["/", "/nodes", "/workloads/deployment/default/web", "/workloads/deployment/default/web?tab=config", "/pods/default/web-abcdef-12345", "/pods/default/web-abcdef-12345?tab=terminal", "/audit", "/access", "/helm/releases?namespace=default", "/helm/releases/default/web?namespace=default", "/helm/charts", "/helm/charts/repo-bitnami/nginx", "/helm/repositories", "/resources", "/resources/example.io/v1/widgets", "/resources/example.io/v1/widgets/sample-widget?namespace=default"]) {
+    for (const path of ["/", "/nodes", "/workloads/deployment/default/web", "/workloads/deployment/default/web?tab=config", "/pods/default/web-abcdef-12345", "/pods/default/web-abcdef-12345?tab=terminal", "/audit", "/access", "/helm/releases?namespace=default", "/helm/releases/default/web?namespace=default", "/helm/charts", "/helm/charts/repo-bitnami/nginx", "/helm/operations", "/helm/repositories", "/resources", "/resources/example.io/v1/widgets", "/resources/example.io/v1/widgets/sample-widget?namespace=default"]) {
       await page.goto(path);
       await page.evaluate((value) => localStorage.setItem("dosh-theme", value), theme);
       await page.reload();
