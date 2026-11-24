@@ -3137,6 +3137,39 @@ test("顶部栏与侧栏读取真实集群上下文", async ({ page }) => {
   await expect(page.getByText("kubedo-lab")).toHaveCount(0);
 });
 
+test("桌面端侧栏在页面滚动时保持固定", async ({ page }) => {
+  await installApiMocks(page);
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await page.goto("/access");
+  await expect(page.getByRole("heading", { name: "权限与检查", exact: true })).toBeVisible();
+
+  const sidebar = page.locator("aside");
+  const main = page.locator("main");
+  await expect(sidebar).toBeVisible();
+  const before = await sidebar.boundingBox();
+  const mainBox = await main.boundingBox();
+  expect(before).not.toBeNull();
+  expect(mainBox).not.toBeNull();
+  expect(mainBox!.x).toBeGreaterThanOrEqual(before!.x + before!.width - 1);
+
+  await main.evaluate((element) => {
+    const spacer = document.createElement("div");
+    spacer.dataset.testid = "sidebar-scroll-spacer";
+    spacer.style.height = "2400px";
+    element.appendChild(spacer);
+  });
+  await page.evaluate(() => window.scrollTo(0, 900));
+  await expect.poll(() => page.evaluate(() => window.scrollY)).toBeGreaterThan(0);
+  await waitForVisualStability(page);
+
+  const after = await sidebar.boundingBox();
+  expect(after).not.toBeNull();
+  expect(Math.abs(after!.x - before!.x)).toBeLessThanOrEqual(1);
+  expect(Math.abs(after!.y - before!.y)).toBeLessThanOrEqual(1);
+  expect(after!.y).toBeGreaterThanOrEqual(0);
+  await expectNoPageOverflow(page, "desktop fixed sidebar while scrolling");
+});
+
 test("其他功能默认折叠并可展开访问低频导航", async ({ page }) => {
   await installApiMocks(page);
   await page.goto("/");

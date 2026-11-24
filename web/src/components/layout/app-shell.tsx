@@ -210,8 +210,8 @@ export function AppShell() {
         </div>
       </header>
 
-      <div className="flex min-h-[calc(100vh-3.5rem)] w-full min-w-0 max-w-full">
-        <aside id="app-navigation" aria-label="主导航" className={cn("fixed inset-y-0 left-0 z-50 flex w-60 flex-col border-r bg-card transition-transform lg:sticky lg:top-14 lg:z-30 lg:h-[calc(100vh-3.5rem)] lg:translate-x-0", mobileOpen ? "visible translate-x-0" : "invisible -translate-x-full lg:visible")}>
+      <div className="flex min-h-[calc(100vh-3.5rem)] w-full min-w-0 max-w-full lg:pl-60">
+        <aside id="app-navigation" aria-label="主导航" className={cn("fixed inset-y-0 left-0 z-50 flex w-60 flex-col border-r bg-card transition-transform lg:top-14 lg:z-30 lg:h-[calc(100vh-3.5rem)] lg:translate-x-0", mobileOpen ? "visible translate-x-0" : "invisible -translate-x-full lg:visible")}>
           <div className="flex h-14 shrink-0 items-center justify-between border-b px-4 lg:hidden">
             <span className="font-semibold">导航</span>
             <Button variant="ghost" size="icon" onClick={() => setMobileOpen(false)} aria-label="关闭导航"><X className="h-4 w-4" /></Button>
