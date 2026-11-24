@@ -108,7 +108,7 @@ func TestModuleRoutesAreScoped(t *testing.T) {
 		{name: "auth", mount: func(r chi.Router) {
 			authhttp.MountPublic(r, deps.auth)
 			authhttp.MountProtected(r, deps.auth)
-		}, prefixes: []string{"/auth", "/session", "/capabilities"}},
+		}, prefixes: []string{"/auth", "/session", "/capabilities", "/access"}},
 		{name: "overview", mount: deps.overview.Mount, prefixes: []string{"/overview"}},
 		{name: "resources", mount: deps.resources.Mount, prefixes: []string{"/resources"}},
 		{name: "cluster-config", mount: deps.clusterConfig.Mount, prefixes: []string{"/cluster"}},

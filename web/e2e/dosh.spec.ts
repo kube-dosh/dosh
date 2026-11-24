@@ -910,7 +910,7 @@ type RegistryRequest = { method: string; path: string; body?: ContainerRegistryU
 type EgressRequest = { method: string; body: EgressSettingsUpdate; csrf: string | null };
 type WorkloadRequestBody = Record<string, unknown>;
 
-async function installApiMocks(page: Page, options: { authenticated?: boolean; authMode?: "local" | "token"; overview?: Overview; overviewStatus?: number; nodeSchedulingRequests?: NodeSchedulingRequest[]; nodeMetadataRequests?: NodeMetadataRequest[]; preferenceRequests?: PreferenceRequest[]; registryRequests?: RegistryRequest[]; containerRegistries?: ContainerRegistry[]; registryFailures?: { repositories?: boolean; tags?: boolean }; expireSessionOnNodes?: boolean; noIngressController?: boolean; podName?: string; podExec?: boolean; podEphemeralDebug?: boolean; emptyDiscovery?: boolean; ephemeralRequests?: Array<{ image: string; targetContainerName?: string; shell?: string }>; diagnosis?: Diagnosis; workloadCreate?: boolean; workloadCreateRequests?: WorkloadRequestBody[]; workloadRolloutRequests?: WorkloadRequestBody[]; cronJobRunRequests?: WorkloadRequestBody[]; systemInfo?: SystemInfo; systemUpdate?: UpdateStatus; checkedSystemUpdate?: UpdateStatus; systemUpdateRequests?: Array<{ method: string; csrf: string | null }>; egressSettings?: EgressSettings; egressRequests?: EgressRequest[]; egressPreflight?: EgressPreflight; egressPreflightRequests?: EgressRequest[] } = {}) {
+async function installApiMocks(page: Page, options: { authenticated?: boolean; authMode?: "local" | "token"; admin?: boolean; overview?: Overview; overviewStatus?: number; nodeSchedulingRequests?: NodeSchedulingRequest[]; nodeMetadataRequests?: NodeMetadataRequest[]; preferenceRequests?: PreferenceRequest[]; registryRequests?: RegistryRequest[]; containerRegistries?: ContainerRegistry[]; registryFailures?: { repositories?: boolean; tags?: boolean }; expireSessionOnNodes?: boolean; noIngressController?: boolean; podName?: string; podExec?: boolean; podEphemeralDebug?: boolean; emptyDiscovery?: boolean; ephemeralRequests?: Array<{ image: string; targetContainerName?: string; shell?: string }>; diagnosis?: Diagnosis; workloadCreate?: boolean; workloadCreateRequests?: WorkloadRequestBody[]; workloadRolloutRequests?: WorkloadRequestBody[]; cronJobRunRequests?: WorkloadRequestBody[]; systemInfo?: SystemInfo; systemUpdate?: UpdateStatus; checkedSystemUpdate?: UpdateStatus; systemUpdateRequests?: Array<{ method: string; csrf: string | null }>; egressSettings?: EgressSettings; egressRequests?: EgressRequest[]; egressPreflight?: EgressPreflight; egressPreflightRequests?: EgressRequest[] } = {}) {
   const authenticated = options.authenticated ?? true;
   const authMode = options.authMode ?? "local";
   const resourceActions = session.capabilities.resourceActions!;
@@ -922,7 +922,12 @@ async function installApiMocks(page: Page, options: { authenticated?: boolean; a
     jobs: { ...resourceActions.jobs, create: true },
     cronjobs: { ...resourceActions.cronjobs, create: true },
   } : resourceActions;
-  const sessionResponse: SessionResponse = { ...session, authMode, capabilities: { ...session.capabilities, podExec: options.podExec ?? session.capabilities.podExec, podEphemeralDebug: options.podEphemeralDebug ?? session.capabilities.podEphemeralDebug, resourceActions: writableResourceActions } };
+  const sessionResponse: SessionResponse = {
+    ...session,
+    user: { ...session.user, admin: options.admin ?? session.user.admin },
+    authMode,
+    capabilities: { ...session.capabilities, podExec: options.podExec ?? session.capabilities.podExec, podEphemeralDebug: options.podEphemeralDebug ?? session.capabilities.podEphemeralDebug, resourceActions: writableResourceActions },
+  };
   const listedPod = options.podName ? { ...podSummary, name: options.podName } : podSummary;
   let signedIn = authenticated;
   let nodeSchedulingDisabled = false;
@@ -1313,6 +1318,42 @@ async function installApiMocks(page: Page, options: { authenticated?: boolean; a
         kubectlCommand: `kubectl auth can-i ${params.get("verb") ?? "get"} ${resource}${params.get("namespace") ? ` --namespace ${params.get("namespace")}` : ""}`,
       };
       return json(route, review);
+    }
+    if (path === "/api/v1/access/tokens/review" && method === "POST") {
+      const body = request.postDataJSON() as { token: string; verb: string; apiGroup?: string; resource: string; subresource?: string; namespace?: string; name?: string };
+      if (body.token.trim() === "invalid-token") {
+        return json(route, { code: "unauthorized", message: "authentication required" }, 401);
+      }
+      const allowed = body.resource !== "secrets";
+      return json(route, {
+        identity: { username: "operator@example.test", groups: ["dosh-operators"], admin: false },
+        review: {
+          verb: body.verb,
+          apiGroup: body.apiGroup ?? "",
+          resource: body.resource,
+          subresource: body.subresource ?? "",
+          namespace: body.namespace ?? "",
+          name: body.name ?? "",
+          allowed,
+          reason: allowed ? "allowed" : "rbac_denied",
+          guidance: allowed ? "Token 身份拥有该操作权限。" : "Token 身份未被 Kubernetes RBAC 授权。",
+          kubectlCommand: `kubectl auth can-i ${body.verb} ${body.resource}${body.subresource ? `/${body.subresource}` : ""}${body.namespace ? ` --namespace ${body.namespace}` : ""}`,
+        } satisfies AccessReview,
+      });
+    }
+    if (path === "/api/v1/access/tokens" && method === "POST") {
+      const body = request.postDataJSON() as { name?: string; namespace: string; ttlSeconds: number; rules: Array<{ verbs: string[]; apiGroups?: string[]; resources: string[]; resourceNames?: string[] }> };
+      return json(route, {
+        token: "e2e-issued-access-token",
+        namespace: body.namespace,
+        serviceAccount: "dosh-access-e2e-1234abcd",
+        createdAt: "2026-11-24T01:00:00Z",
+        expiresAt: "2026-11-24T02:00:00Z",
+        rules: body.rules,
+      }, 201);
+    }
+    if (path === "/api/v1/access/tokens/cleanup" && method === "POST") {
+      return json(route, { deleted: 2 });
     }
     if (path === "/api/v1/nodes") return json(route, list([{ ...nodeSummary, unschedulable: nodeSchedulingDisabled }]));
     if (path === "/api/v1/nodes/worker-0001") return json(route, currentNodeDetail());
@@ -1963,6 +2004,8 @@ test("审计日志保留过滤条件并展示请求详情", async ({ page }) => 
   await page.goto("/audit?namespace=production&action=scale&result=success&q=web");
 
   await expect(page.getByRole("heading", { name: "审计日志" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "其他功能", exact: true })).toHaveAttribute("aria-expanded", "true");
+  await expect(page.getByRole("link", { name: "审计日志", exact: true })).toBeVisible();
   await expect(page.getByText("仅展示当前实例最近 1000 条记录", { exact: false })).toBeVisible();
   await expect(page.getByRole("cell", { name: "alice@example.test" })).toBeVisible();
   await expect(page.getByRole("cell", { name: /web-api/ })).toBeVisible();
@@ -2570,7 +2613,7 @@ test("Chart 目录可为已有 Release 选择新 Chart 版本升级并展示 Sch
   await expect(upgradeDialog.getByText("已通过校验")).toBeVisible();
 });
 
-test("权限检查联动选择资源、子资源和对象，并保留手动输入回退", async ({ page }) => {
+test("权限与检查联动选择资源、子资源和对象，并保留手动输入回退", async ({ page }) => {
   await installApiMocks(page);
   await page.goto("/access");
   const resource = page.getByRole("combobox", { name: "Resource", exact: true });
@@ -2653,14 +2696,63 @@ test("权限检查联动选择资源、子资源和对象，并保留手动输�
   await expectNoPageOverflow(page, "access review");
 });
 
-test("权限检查联动选择器在 320px 与 390px 视口内完整可用", async ({ page }) => {
+test("权限与检查支持 Token 检查、管理员签发 Token 与过期授权清理", async ({ page }) => {
+  await installApiMocks(page);
+  await page.goto("/access");
+  await expect(page.getByRole("heading", { name: "权限与检查", exact: true })).toBeVisible();
+  await expect(page.getByRole("tab", { name: "当前身份", exact: true })).toBeVisible();
+  await expect(page.getByRole("tab", { name: "Token 检查", exact: true })).toBeVisible();
+  await expect(page.getByRole("tab", { name: "签发 Token", exact: true })).toBeVisible();
+
+  await page.getByRole("tab", { name: "Token 检查", exact: true }).click();
+  const tokenInput = page.getByRole("textbox", { name: "Kubernetes Token", exact: true });
+  await tokenInput.fill("e2e-user-token");
+  await page.getByRole("button", { name: "打开终端", exact: true }).click();
+  await page.getByRole("button", { name: "验证 Token 并检查权限", exact: true }).click();
+
+  await expect(page.getByText("operator@example.test", { exact: true })).toBeVisible();
+  await expect(page.getByText("dosh-operators", { exact: true })).toBeVisible();
+  await expect(page.getByText("允许执行", { exact: true })).toBeVisible();
+  await expect(page.getByText(/kubectl auth can-i create pods\/exec --namespace default/)).toBeVisible();
+  const browserStorage = await page.evaluate(() => `${JSON.stringify(localStorage)}${JSON.stringify(sessionStorage)}`);
+  expect(browserStorage).not.toContain("e2e-user-token");
+
+  await page.getByRole("tab", { name: "签发 Token", exact: true }).click();
+  await expect(page.getByText("签发临时 Token", { exact: true })).toBeVisible();
+  await page.getByLabel("用途名称").fill("oncall");
+  await page.getByRole("button", { name: "命名空间只读", exact: true }).click();
+  await page.getByRole("button", { name: "签发 Token", exact: true }).click();
+
+  await expect(page.getByText("Token 已签发", { exact: true })).toBeVisible();
+  await expect(page.getByRole("textbox", { name: "签发结果 Token", exact: true })).toHaveValue("e2e-issued-access-token");
+  await expect(page.getByText("dosh-access-e2e-1234abcd", { exact: false })).toBeVisible();
+  const issuedStorage = await page.evaluate(() => `${JSON.stringify(localStorage)}${JSON.stringify(sessionStorage)}`);
+  expect(issuedStorage).not.toContain("e2e-issued-access-token");
+
+  await page.getByRole("button", { name: "清理 default 的过期授权", exact: true }).click();
+  await expect(page.getByText("已清理 2 个过期授权", { exact: true })).toBeVisible();
+  await expectNoPageOverflow(page, "access token issuance");
+});
+
+test("非管理员可以检查当前身份与 Token，但不能签发 Token", async ({ page }) => {
+  await installApiMocks(page, { admin: false });
+  await page.goto("/access");
+
+  await expect(page.getByRole("heading", { name: "权限与检查", exact: true })).toBeVisible();
+  await expect(page.getByRole("tab", { name: "当前身份", exact: true })).toBeVisible();
+  await expect(page.getByRole("tab", { name: "Token 检查", exact: true })).toBeVisible();
+  await expect(page.getByRole("tab", { name: "签发 Token", exact: true })).toHaveCount(0);
+  await expectNoPageOverflow(page, "non-admin access review");
+});
+
+test("权限与检查联动选择器在 320px 与 390px 视口内完整可用", async ({ page }) => {
   test.setTimeout(90_000);
   await installApiMocks(page);
 
   for (const viewport of [{ width: 320, height: 720 }, { width: 390, height: 844 }]) {
     await page.setViewportSize(viewport);
     await page.goto("/access");
-    await expect(page.getByRole("heading", { name: "权限检查" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "权限与检查" })).toBeVisible();
     await expectNoPageOverflow(page, `${viewport.width}px access review`);
 
     for (const label of ["Resource", "API Group", "Subresource", "Namespace", "资源名称"]) {
@@ -2681,10 +2773,18 @@ test("权限检查联动选择器在 320px 与 390px 视口内完整可用", asy
     await expect(page.getByRole("option").last()).toHaveText("手动输入");
     await expectNoPageOverflow(page, `${viewport.width}px access resource menu`);
     await page.screenshot({ path: `test-results/mobile-interactions/access-review-${viewport.width}.png`, fullPage: true });
+
+    await page.keyboard.press("Escape");
+    await page.getByRole("tab", { name: "Token 检查", exact: true }).click();
+    await expect(page.getByRole("textbox", { name: "Kubernetes Token", exact: true })).toBeVisible();
+    await expectNoPageOverflow(page, `${viewport.width}px token access review`);
+    await page.getByRole("tab", { name: "签发 Token", exact: true }).click();
+    await expect(page.getByText("签发临时 Token", { exact: true })).toBeVisible();
+    await expectNoPageOverflow(page, `${viewport.width}px access token issuance`);
   }
 });
 
-test("Discovery 无可用资源时权限检查自动退回手动输入", async ({ page }) => {
+test("Discovery 无可用资源时权限与检查自动退回手动输入", async ({ page }) => {
   await installApiMocks(page, { emptyDiscovery: true });
   await page.goto("/access");
   await expect(page.getByRole("textbox", { name: "Resource", exact: true })).toHaveValue("pods");
@@ -2835,7 +2935,7 @@ test("Pod 终端在无 pods/exec 权限时保留入口并解释原因", async ({
   await expect(page.getByRole("tab", { name: /终端/ })).toHaveAttribute("aria-selected", "true");
   await expect(page.getByRole("heading", { name: "当前身份不能进入容器终端" })).toBeVisible();
   await expect(page.getByText(/create pods\/exec/).first()).toBeVisible();
-  await expect(page.getByRole("link", { name: "前往权限检查" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "前往权限与检查" })).toBeVisible();
   await expect(page.getByRole("application", { name: "Pod 容器终端" })).toHaveCount(0);
   await expectNoPageOverflow(page, "pod terminal permission state");
 });
@@ -2980,25 +3080,27 @@ test("其他功能默认折叠并可展开访问低频导航", async ({ page }) 
   const other = page.getByRole("button", { name: "其他功能", exact: true });
   await expect(other).toHaveAttribute("aria-expanded", "false");
   await expect(page.getByRole("link", { name: "治理与策略", exact: true })).toHaveCount(0);
-  await expect(page.getByRole("link", { name: "权限检查", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("link", { name: "权限与检查", exact: true })).toHaveCount(0);
   await expect(page.getByRole("link", { name: "镜像仓库", exact: true })).toHaveCount(0);
   await expect(page.getByRole("link", { name: "系统信息", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("link", { name: "审计日志", exact: true })).toHaveCount(0);
 
   await other.click();
   await expect(other).toHaveAttribute("aria-expanded", "true");
   await expect(page.getByRole("link", { name: "镜像仓库", exact: true })).toBeVisible();
   await expect(page.getByRole("link", { name: "系统信息", exact: true })).toBeVisible();
+  await expect(page.getByRole("link", { name: "审计日志", exact: true })).toBeVisible();
   await page.getByRole("link", { name: "治理与策略", exact: true }).click();
   await expect(page).toHaveURL(/\/governance$/);
   await expect(page.getByRole("heading", { name: "治理与策略", exact: true })).toBeVisible();
   await expect(other).toHaveAttribute("aria-expanded", "true");
 
   await page.goto("/access");
-  await expect(page.getByRole("heading", { name: "权限检查", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "权限与检查", exact: true })).toBeVisible();
   await expect(other).toHaveAttribute("aria-expanded", "true");
   await other.click();
   await expect(other).toHaveAttribute("aria-expanded", "false");
-  await expect(page.getByRole("link", { name: "权限检查", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("link", { name: "权限与检查", exact: true })).toHaveCount(0);
   await expectNoPageOverflow(page, "other navigation");
 });
 
@@ -4135,7 +4237,7 @@ test("移动端可通过导航抽屉访问节点", async ({ page }) => {
   expect(await page.getByRole("row").nth(1).evaluate((element) => element.getBoundingClientRect().height)).toBeLessThan(64);
 });
 
-test("移动端其他功能默认折叠且可从抽屉进入权限检查", async ({ page }) => {
+test("移动端其他功能默认折叠且可从抽屉进入权限与检查", async ({ page }) => {
   test.setTimeout(60_000);
   await installApiMocks(page);
 
@@ -4152,15 +4254,16 @@ test("移动端其他功能默认折叠且可从抽屉进入权限检查", async
     await other.click();
     await expect(other).toHaveAttribute("aria-expanded", "true");
     await expect(drawer.getByRole("link", { name: "治理与策略", exact: true })).toBeVisible();
-    await expect(drawer.getByRole("link", { name: "权限检查", exact: true })).toBeVisible();
+    await expect(drawer.getByRole("link", { name: "权限与检查", exact: true })).toBeVisible();
     await expect(drawer.getByRole("link", { name: "镜像仓库", exact: true })).toBeVisible();
+    await expect(drawer.getByRole("link", { name: "审计日志", exact: true })).toBeVisible();
     await expectElementInsideViewport(page, drawer, `${viewport.width}px expanded other navigation`);
-    await expectElementInsideViewport(page, drawer.getByRole("link", { name: "权限检查", exact: true }), `${viewport.width}px other navigation access link`);
+    await expectElementInsideViewport(page, drawer.getByRole("link", { name: "权限与检查", exact: true }), `${viewport.width}px other navigation access link`);
     await expectNoPageOverflow(page, `${viewport.width}px expanded other navigation`);
     await page.screenshot({ path: `test-results/mobile-interactions/other-navigation-${viewport.width}.png`, fullPage: false });
-    await drawer.getByRole("link", { name: "权限检查", exact: true }).click();
+    await drawer.getByRole("link", { name: "权限与检查", exact: true }).click();
     await expect(page).toHaveURL(/\/access$/);
-    await expect(page.getByRole("heading", { name: "权限检查", exact: true })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "权限与检查", exact: true })).toBeVisible();
   }
 });
 

@@ -31,16 +31,16 @@ const nav: Array<{ href: string; label: string; icon: LucideIcon; adminOnly?: bo
   { href: "/storage", label: "存储", icon: Database, match: (path: string) => path.startsWith("/storage") },
   { href: "/namespaces", label: "命名空间", icon: FolderTree, match: (path: string) => path.startsWith("/namespaces") },
   { href: "/events", label: "事件", icon: Activity, match: (path: string) => path.startsWith("/events") },
-  { href: "/audit", label: "审计日志", icon: ScrollText, adminOnly: true, match: (path: string) => path.startsWith("/audit") },
   { href: "/helm/charts", label: "Helm", icon: PackageSearch, match: (path: string) => path.startsWith("/helm") },
   { href: "/resources", label: "资源浏览器", icon: Layers3, match: (path: string) => path.startsWith("/resources") },
 ];
 
-const secondaryNav: Array<{ href: string; label: string; icon: LucideIcon; match: (path: string) => boolean }> = [
+const secondaryNav: Array<{ href: string; label: string; icon: LucideIcon; adminOnly?: boolean; match: (path: string) => boolean }> = [
   { href: "/registries", label: "镜像仓库", icon: Boxes, match: (path: string) => path.startsWith("/registries") },
   { href: "/system", label: "系统信息", icon: Info, match: (path: string) => path.startsWith("/system") },
+  { href: "/audit", label: "审计日志", icon: ScrollText, adminOnly: true, match: (path: string) => path.startsWith("/audit") },
   { href: "/governance", label: "治理与策略", icon: ShieldCheck, match: (path: string) => path.startsWith("/governance") },
-  { href: "/access", label: "权限检查", icon: KeyRound, match: (path: string) => path.startsWith("/access") },
+  { href: "/access", label: "权限与检查", icon: KeyRound, match: (path: string) => path.startsWith("/access") },
 ];
 
 type ClusterPresentation = {
@@ -240,7 +240,7 @@ export function AppShell() {
             </button>
             {otherOpen ? (
               <div id="other-navigation" className="ml-3 space-y-1 border-l pl-2">
-                {secondaryNav.map((item) => {
+                {secondaryNav.filter((item) => !item.adminOnly || session.data?.user.admin).map((item) => {
                   const active = item.match(pathname);
                   const Icon = item.icon;
                   return (

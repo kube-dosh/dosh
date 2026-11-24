@@ -561,6 +561,143 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/access/tokens": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Issue a short-lived namespace-scoped Kubernetes token
+         * @description Requires a Dosh administrator and sufficient Kubernetes RBAC to create ServiceAccounts, Roles, RoleBindings and ServiceAccount tokens. The raw token is returned once and is never stored by Dosh.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["AccessTokenIssueInput"];
+                };
+            };
+            responses: {
+                /** @description Temporary identity and token */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["IssuedAccessToken"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+                503: components["responses"]["DependencyUnavailable"];
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/access/tokens/review": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Authenticate a Kubernetes token and explain one authorization decision
+         * @description Validates the supplied bearer token with TokenReview, then evaluates the requested access with SubjectAccessReview. The token is not retained.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["TokenAccessReviewInput"];
+                };
+            };
+            responses: {
+                /** @description Token identity and authorization decision */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["TokenAccessReview"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                401: components["responses"]["Unauthorized"];
+                503: components["responses"]["DependencyUnavailable"];
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/access/tokens/cleanup": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Remove expired access-token grants from one namespace */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["AccessGrantCleanupRequest"];
+                };
+            };
+            responses: {
+                /** @description Number of expired grants removed */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["AccessGrantCleanupResult"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+                503: components["responses"]["DependencyUnavailable"];
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/auth/config": {
         parameters: {
             query?: never;
@@ -6991,6 +7128,48 @@ export interface components {
             reason: "allowed" | "read_only" | "rbac_denied" | "authorization_unavailable";
             guidance: string;
             kubectlCommand: string;
+        };
+        AccessTokenRule: {
+            verbs: ("get" | "list" | "watch" | "create" | "update" | "patch" | "delete" | "deletecollection")[];
+            apiGroups?: string[];
+            resources: string[];
+            resourceNames?: string[];
+        };
+        AccessTokenIssueInput: {
+            name?: string;
+            namespace: string;
+            ttlSeconds: number;
+            rules: components["schemas"]["AccessTokenRule"][];
+        };
+        IssuedAccessToken: {
+            token: string;
+            namespace: string;
+            serviceAccount: string;
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: date-time */
+            expiresAt: string;
+            rules: components["schemas"]["AccessTokenRule"][];
+            warning?: string;
+        };
+        TokenAccessReviewInput: {
+            token: string;
+            verb: string;
+            apiGroup?: string;
+            resource: string;
+            subresource?: string;
+            namespace?: string;
+            name?: string;
+        };
+        TokenAccessReview: {
+            identity: components["schemas"]["Actor"];
+            review: components["schemas"]["AccessReview"];
+        };
+        AccessGrantCleanupRequest: {
+            namespace: string;
+        };
+        AccessGrantCleanupResult: {
+            deleted: number;
         };
         ResourceCapabilities: {
             create: boolean;

@@ -54,6 +54,39 @@ export interface AccessReview {
   kubectlCommand: string;
 }
 
+export interface AccessTokenRule {
+  verbs: string[];
+  apiGroups?: string[];
+  resources: string[];
+  resourceNames?: string[];
+}
+
+export interface AccessTokenIssueInput {
+  name?: string;
+  namespace: string;
+  ttlSeconds: number;
+  rules: AccessTokenRule[];
+}
+
+export interface IssuedAccessToken {
+  token: string;
+  namespace: string;
+  serviceAccount: string;
+  createdAt: string;
+  expiresAt: string;
+  rules: AccessTokenRule[];
+  warning?: string;
+}
+
+export interface TokenAccessReview {
+  identity: User;
+  review: AccessReview;
+}
+
+export interface AccessGrantCleanupResult {
+  deleted: number;
+}
+
 export interface ServerCertificate {
   mode: "https" | "http";
   enabled: boolean;

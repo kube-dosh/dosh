@@ -211,7 +211,7 @@ Chart、Values、目标资源或 Release revision 已变化。重新生成计划
 
 ### `forbidden` 或权限预检失败
 
-确认当前身份具备目标命名空间中的 Secret 与所有渲染资源权限。可使用“权限检查”页面生成对应的 `kubectl auth can-i` 命令。
+确认当前身份具备目标命名空间中的 Secret 与所有渲染资源权限。可使用“权限与检查”页面生成对应的 `kubectl auth can-i` 命令。
 
 ### 仓库主机变更被拒绝
 

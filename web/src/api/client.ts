@@ -1,5 +1,6 @@
 import type {
   AccessReview,
+  AccessTokenIssueInput,
   AutoscalerInput,
   AutoscalerSummary,
   AuditExportParams,
@@ -34,6 +35,7 @@ import type {
   IngressClassSummary,
   IngressSummary,
   IngressUpdateInput,
+  IssuedAccessToken,
   ImageReferenceResolution,
   HelmChartDetail,
   HelmChartOperation,
@@ -100,6 +102,7 @@ import type {
   StorageClassDetail,
   StorageClassWriteInput,
   SystemInfo,
+  TokenAccessReview,
   UpdateStatus,
   VolumeSnapshot,
   VolumeSnapshotCreateInput,
@@ -434,6 +437,12 @@ export const api = {
   capabilities: (namespace?: string) => request<Capabilities>(`/api/v1/capabilities${query({ namespace })}`),
   accessReview: (input: { verb: string; resource: string; apiGroup?: string; subresource?: string; namespace?: string; name?: string }) =>
     request<AccessReview>(`/api/v1/capabilities/review?${new URLSearchParams(Object.entries(input).filter((entry): entry is [string, string] => typeof entry[1] === "string" && Boolean(entry[1])).map(([key, value]) => [key, value])).toString()}`),
+  reviewAccessToken: (input: { token: string; verb: string; resource: string; apiGroup?: string; subresource?: string; namespace?: string; name?: string }) =>
+    request<TokenAccessReview>("/api/v1/access/tokens/review", { method: "POST", body: JSON.stringify(input) }),
+  issueAccessToken: (input: AccessTokenIssueInput) =>
+    request<IssuedAccessToken>("/api/v1/access/tokens", { method: "POST", body: JSON.stringify(input) }),
+  cleanupAccessTokens: (namespace: string) =>
+    request<{ deleted: number }>("/api/v1/access/tokens/cleanup", { method: "POST", body: JSON.stringify({ namespace }) }),
   overview: async () => normalizeOverview(await request<Overview>("/api/v1/overview")),
   systemInfo: () => request<SystemInfo>("/api/v1/system/info"),
   systemUpdate: () => request<UpdateStatus>("/api/v1/system/update"),

@@ -351,7 +351,7 @@ kubectl auth can-i create pods/exec -n <namespace>
 kubectl auth can-i create pods/exec -n <namespace> --subresource=exec
 ```
 
-若页面显示 403，请使用下方权限检查页面确认是 RBAC 拒绝、只读模式还是授权服务不可用。
+若页面显示 403，请使用下方“权限与检查”页面确认是 RBAC 拒绝、只读模式还是授权服务不可用。
 
 ### 2.1.10 Helm Chart 与 Release 生命周期
 
@@ -380,11 +380,20 @@ kubectl auth can-i list secrets -n <namespace>
   供应链验证仍应在仓库发布流水线或集群策略层完成。
 - 解压后的 Release 内容有大小上限；超出上限或格式异常时返回可理解的错误，不加载到浏览器。
 
-### 2.1.11 当前身份权限检查
+### 2.1.11 权限与检查（当前身份、Token 检查与临时 Token 签发）
 
-`/access` 页面调用 `GET /api/v1/capabilities/review`，使用当前会话身份执行一次
-SubjectAccessReview，返回 `allowed`、`reason`、`guidance` 和可复现的 `kubectl auth can-i`
-命令。页面支持 verb、apiGroup、resource、subresource、namespace 和资源名。
+`/access` 页面提供三个模式：
+
+- **当前身份**：调用 `GET /api/v1/capabilities/review`，使用当前会话身份执行一次
+  SubjectAccessReview，返回 `allowed`、`reason`、`guidance` 和可复现的
+  `kubectl auth can-i` 命令。页面支持 verb、apiGroup、resource、subresource、namespace
+  和资源名。
+- **Token 检查**：调用 `POST /api/v1/access/tokens/review`。Dosh 先使用 TokenReview 验证
+  输入 Token 的 Kubernetes 身份，再以该身份执行 SubjectAccessReview。原始 Token 只用于本次
+  请求，不写入浏览器存储、审计详情、服务端状态或日志。
+- **签发 Token**：仅 Dosh 管理员可见，调用 `POST /api/v1/access/tokens`。Dosh 在目标
+  Namespace 创建独立 ServiceAccount、Role 和 RoleBinding，并通过 TokenRequest 签发
+  5 分钟至 24 小时的 Token。原始 Token 仅在响应中出现一次。
 
 ```http
 GET /api/v1/capabilities/review?verb=create&resource=pods&subresource=exec&namespace=team-a&name=api-0
@@ -400,6 +409,22 @@ GET /api/v1/capabilities/review?verb=create&resource=pods&subresource=exec&names
 | `authorization_unavailable` | 无法完成 SubjectAccessReview | 检查 API Server 连通性和授权相关权限 |
 
 权限检查只代表当前身份的 Kubernetes 授权结果，不代替 Session、CSRF、资源版本和业务校验。
+
+临时 Token 的安全边界：
+
+- 权限规则必须显式指定 Namespace 级 resource 和 verb；拒绝 `*` 通配 verb、API Group、
+  resource 和 resourceName，避免签发不可审计的集群级通配权限。
+- Token 到期后由 Kubernetes 自动失效，但临时 ServiceAccount/Role/RoleBinding 仍会保留。
+  管理员可在页面调用 `POST /api/v1/access/tokens/cleanup` 清理指定 Namespace 内已过期的
+  Dosh 授权对象。
+- 本地认证模式下，Dosh ServiceAccount 需要创建/删除 ServiceAccount、Role、RoleBinding 和
+  `serviceaccounts/token` 的 RBAC；OIDC/Token 模式通过当前用户 impersonation 执行，最终由
+  用户自身 Kubernetes RBAC 决定能否签发。
+- Dosh 处于只读模式时，Token 检查仍可用，但签发 Token 和清理过期授权都会被拒绝，避免绕过
+  Dashboard 的只读写保护。
+- 所有模式都需要 Dosh 控制面具备 `create tokenreviews` 和
+  `create subjectaccessreviews` 权限。缺少 TokenReview 时，Token 检查应失败关闭，而不是
+  把未验证 Token 当作有效身份。
 
 ### 2.1.12 本地收藏、视图、列偏好、模板和草稿
 

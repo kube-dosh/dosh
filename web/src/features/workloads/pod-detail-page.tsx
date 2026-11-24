@@ -44,7 +44,7 @@ function TerminalPermissionState({ namespace }: { namespace: string }) {
       <CardContent className="space-y-4 text-sm text-muted-foreground">
         <p>Pod 终端需要 Kubernetes <code className="rounded bg-muted px-1 py-0.5 font-mono text-xs">create pods/exec</code> 权限，并且目标容器必须处于 Running 状态、容器内存在可用于登录的 Shell。</p>
         <p>当前检查的命名空间是 <code className="rounded bg-muted px-1 py-0.5 font-mono text-xs">{namespace}</code>。管理员需要在该命名空间授予对应 RoleBinding 或 ClusterRoleBinding，前端隐藏或禁用按钮不是最终权限边界。</p>
-        <Button variant="outline" asChild><Link to="/access"><TerminalSquare className="h-4 w-4" />前往权限检查</Link></Button>
+        <Button variant="outline" asChild><Link to="/access"><TerminalSquare className="h-4 w-4" />前往权限与检查</Link></Button>
       </CardContent>
     </Card>
   );

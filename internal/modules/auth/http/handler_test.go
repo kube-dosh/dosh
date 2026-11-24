@@ -40,6 +40,11 @@ func newAuthTestServer(t *testing.T, readOnly bool) authTestServer {
 
 func newAuthTestServerWithAuthorizer(t *testing.T, authorizer domain.Authorizer) authTestServer {
 	t.Helper()
+	return newAuthTestServerWithAccessTokenService(t, authorizer, nil)
+}
+
+func newAuthTestServerWithAccessTokenService(t *testing.T, authorizer domain.Authorizer, accessTokens *authapp.AccessTokenService) authTestServer {
+	t.Helper()
 	hash, err := authapp.HashPassword(testPassword)
 	if err != nil {
 		t.Fatalf("HashPassword() error = %v", err)
@@ -52,7 +57,7 @@ func newAuthTestServerWithAuthorizer(t *testing.T, authorizer domain.Authorizer)
 	service := authapp.NewService(authapp.Config{Username: "admin", PasswordHash: hash}, sessions)
 	var logs bytes.Buffer
 	logger := slog.New(slog.NewJSONHandler(&logs, nil))
-	handler := New(Options{Mode: "local", Local: service, Sessions: sessions, Audit: audit.New(logger), Logger: logger, CookieSecure: true})
+	handler := New(Options{Mode: "local", Local: service, Sessions: sessions, AccessTokens: accessTokens, Audit: audit.New(logger), Logger: logger, CookieSecure: true})
 	router := chi.NewRouter()
 	router.Use(httpx.RequestID)
 	router.Use(httpx.RequestIDContext)
@@ -284,5 +289,112 @@ func TestAccessReviewRouteUsesQueryConditions(t *testing.T) {
 	missing := performJSON(server.router, http.MethodGet, "/api/v1/capabilities/review?verb=create", "", headers)
 	if missing.Code != http.StatusBadRequest {
 		t.Fatalf("missing resource status = %d, body = %s", missing.Code, missing.Body.String())
+	}
+}
+
+type accessTokenHTTPAuthenticator func(context.Context, string) (domain.Actor, error)
+
+func (f accessTokenHTTPAuthenticator) AuthenticateToken(ctx context.Context, token string) (domain.Actor, error) {
+	return f(ctx, token)
+}
+
+type accessTokenHTTPReviewer func(context.Context, domain.Actor, domain.Access) (bool, error)
+
+func (f accessTokenHTTPReviewer) ReviewAccess(ctx context.Context, actor domain.Actor, access domain.Access) (bool, error) {
+	return f(ctx, actor, access)
+}
+
+type accessTokenHTTPIssuer struct {
+	result domain.IssuedAccessToken
+	calls  int
+}
+
+func (i *accessTokenHTTPIssuer) IssueAccessToken(context.Context, domain.AccessTokenIssueRequest) (domain.IssuedAccessToken, error) {
+	i.calls++
+	return i.result, nil
+}
+
+func (i *accessTokenHTTPIssuer) CleanupExpiredAccessGrants(context.Context, string) (int, error) {
+	i.calls++
+	return 0, nil
+}
+
+func TestTokenAccessReviewRouteReturnsIdentityAndDoesNotAuditToken(t *testing.T) {
+	const rawToken = "raw-token-that-must-not-be-audited"
+	var reviewed domain.Actor
+	accessTokens := authapp.NewAccessTokenService(
+		accessTokenHTTPAuthenticator(func(_ context.Context, token string) (domain.Actor, error) {
+			if token != rawToken {
+				t.Fatalf("authenticator token = %q", token)
+			}
+			return domain.Actor{Username: "operator@example.test", Groups: []string{"dosh-operators"}}, nil
+		}),
+		accessTokenHTTPReviewer(func(_ context.Context, actor domain.Actor, access domain.Access) (bool, error) {
+			reviewed = actor
+			if access.Verb != "create" || access.Resource != "pods" || access.Subresource != "exec" || access.Namespace != "default" {
+				t.Fatalf("review access = %#v", access)
+			}
+			return true, nil
+		}),
+		nil, false,
+	)
+	server := newAuthTestServerWithAccessTokenService(t, authz.NewLocal(false), accessTokens)
+	cookie, payload := login(t, server)
+	response := performJSON(server.router, http.MethodPost, "/api/v1/access/tokens/review",
+		`{"token":"`+rawToken+`","verb":"create","resource":"pods","subresource":"exec","namespace":"default"}`,
+		map[string]string{"Cookie": cookie.String(), "X-CSRF-Token": payload.CSRFToken})
+	if response.Code != http.StatusOK {
+		t.Fatalf("token review status = %d, body = %s", response.Code, response.Body.String())
+	}
+	var result domain.TokenAccessReview
+	if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil {
+		t.Fatalf("decode token review: %v", err)
+	}
+	if result.Identity.Username != "operator@example.test" || !result.Review.Allowed || reviewed.Username != "operator@example.test" {
+		t.Fatalf("token review = %#v", result)
+	}
+	if strings.Contains(server.logs.String(), rawToken) {
+		t.Fatalf("audit logs contain raw token: %s", server.logs.String())
+	}
+	if !strings.Contains(server.logs.String(), `"action":"review-access-token"`) {
+		t.Fatalf("token review audit missing: %s", server.logs.String())
+	}
+}
+
+func TestIssueAccessTokenRouteReturnsOnceAndDoesNotAuditToken(t *testing.T) {
+	const issuedToken = "issued-token-that-must-not-be-audited"
+	issuer := &accessTokenHTTPIssuer{result: domain.IssuedAccessToken{
+		Token: issuedToken, Namespace: "default", ServiceAccount: "dosh-access-oncall-1234",
+		CreatedAt: time.Now().UTC(), ExpiresAt: time.Now().UTC().Add(time.Hour),
+		Rules: []domain.AccessTokenRule{{Verbs: []string{"get"}, APIGroups: []string{""}, Resources: []string{"pods"}}},
+	}}
+	accessTokens := authapp.NewAccessTokenService(nil, nil, issuer, false)
+	server := newAuthTestServerWithAccessTokenService(t, authz.NewLocal(false), accessTokens)
+	cookie, payload := login(t, server)
+	headers := map[string]string{"Cookie": cookie.String(), "X-CSRF-Token": payload.CSRFToken}
+	response := performJSON(server.router, http.MethodPost, "/api/v1/access/tokens",
+		`{"name":"oncall","namespace":"default","ttlSeconds":900,"rules":[{"verbs":["get"],"apiGroups":[""],"resources":["pods"]}]}`,
+		headers)
+	if response.Code != http.StatusCreated {
+		t.Fatalf("issue token status = %d, body = %s", response.Code, response.Body.String())
+	}
+	if !strings.Contains(response.Body.String(), issuedToken) {
+		t.Fatalf("issue response does not contain token: %s", response.Body.String())
+	}
+	if strings.Contains(server.logs.String(), issuedToken) {
+		t.Fatalf("audit logs contain issued token: %s", server.logs.String())
+	}
+	if !strings.Contains(server.logs.String(), `"action":"issue-access-token"`) || issuer.calls != 1 {
+		t.Fatalf("issue audit missing or issuer calls = %d: %s", issuer.calls, server.logs.String())
+	}
+
+	invalid := performJSON(server.router, http.MethodPost, "/api/v1/access/tokens",
+		`{"namespace":"default","ttlSeconds":900,"rules":[{"verbs":["get"],"resources":["*"]}]}`,
+		headers)
+	if invalid.Code != http.StatusBadRequest {
+		t.Fatalf("wildcard issue status = %d, body = %s", invalid.Code, invalid.Body.String())
+	}
+	if issuer.calls != 1 {
+		t.Fatalf("issuer calls after wildcard request = %d, want 1", issuer.calls)
 	}
 }

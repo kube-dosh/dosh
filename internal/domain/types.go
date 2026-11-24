@@ -163,6 +163,46 @@ type AccessReview struct {
 	KubectlCommand string `json:"kubectlCommand"`
 }
 
+// AccessTokenRule is one namespace-scoped RBAC policy rule attached to a
+// short-lived access token. Rules are deliberately explicit: wildcard verbs
+// and resources are not accepted by the issuance service.
+type AccessTokenRule struct {
+	Verbs         []string `json:"verbs"`
+	APIGroups     []string `json:"apiGroups,omitempty"`
+	Resources     []string `json:"resources"`
+	ResourceNames []string `json:"resourceNames,omitempty"`
+}
+
+type AccessTokenIssueRequest struct {
+	Name       string            `json:"name"`
+	Namespace  string            `json:"namespace"`
+	TTLSeconds int64             `json:"ttlSeconds"`
+	Rules      []AccessTokenRule `json:"rules"`
+}
+
+type IssuedAccessToken struct {
+	Token          string            `json:"token"`
+	Namespace      string            `json:"namespace"`
+	ServiceAccount string            `json:"serviceAccount"`
+	CreatedAt      time.Time         `json:"createdAt"`
+	ExpiresAt      time.Time         `json:"expiresAt"`
+	Rules          []AccessTokenRule `json:"rules"`
+	Warning        string            `json:"warning,omitempty"`
+}
+
+type TokenAccessReview struct {
+	Identity Actor        `json:"identity"`
+	Review   AccessReview `json:"review"`
+}
+
+type AccessGrantCleanupRequest struct {
+	Namespace string `json:"namespace"`
+}
+
+type AccessGrantCleanupResult struct {
+	Deleted int `json:"deleted"`
+}
+
 type Authorizer interface {
 	Require(ctx context.Context, actor Actor, access Access) error
 }
@@ -869,16 +909,16 @@ type HelmReleaseTestHook struct {
 // Jobs, so callers must authorize both Secret history writes and test resource
 // lifecycle operations.
 type HelmReleaseTestResult struct {
-	Namespace  string                 `json:"namespace"`
-	Name       string                 `json:"name"`
-	Revision   int                    `json:"revision"`
-	Status     string                 `json:"status"`
-	Message    string                 `json:"message,omitempty"`
-	Hooks      []HelmReleaseTestHook  `json:"hooks"`
-	Logs       string                 `json:"logs,omitempty"`
-	Warnings   []string               `json:"warnings,omitempty"`
-	StartedAt  time.Time              `json:"startedAt"`
-	FinishedAt time.Time              `json:"finishedAt"`
+	Namespace  string                `json:"namespace"`
+	Name       string                `json:"name"`
+	Revision   int                   `json:"revision"`
+	Status     string                `json:"status"`
+	Message    string                `json:"message,omitempty"`
+	Hooks      []HelmReleaseTestHook `json:"hooks"`
+	Logs       string                `json:"logs,omitempty"`
+	Warnings   []string              `json:"warnings,omitempty"`
+	StartedAt  time.Time             `json:"startedAt"`
+	FinishedAt time.Time             `json:"finishedAt"`
 }
 
 // WorkloadLogStream is one opened pod/container log stream. The HTTP adapter

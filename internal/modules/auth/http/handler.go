@@ -26,6 +26,7 @@ type Options struct {
 	Token        *authapp.KubernetesTokenService
 	OIDC         *authapp.OIDCService
 	Sessions     *authapp.SessionService
+	AccessTokens *authapp.AccessTokenService
 	Audit        *audit.Logger
 	Logger       *slog.Logger
 	CookieSecure bool
@@ -38,6 +39,7 @@ type Handler struct {
 	token        *authapp.KubernetesTokenService
 	oidc         *authapp.OIDCService
 	sessions     *authapp.SessionService
+	accessTokens *authapp.AccessTokenService
 	audit        *audit.Logger
 	logger       *slog.Logger
 	cookieSecure bool
@@ -50,7 +52,7 @@ func New(options Options) *Handler {
 	}
 	return &Handler{
 		mode: mode, providerName: options.ProviderName, local: options.Local, token: options.Token, oidc: options.OIDC,
-		sessions: options.Sessions, audit: options.Audit, logger: options.Logger, cookieSecure: options.CookieSecure,
+		sessions: options.Sessions, accessTokens: options.AccessTokens, audit: options.Audit, logger: options.Logger, cookieSecure: options.CookieSecure,
 	}
 }
 
@@ -160,18 +162,109 @@ func (h *Handler) AccessReview(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		Verb: httpx.Query(r, "verb"), APIGroup: httpx.Query(r, "apiGroup"), Resource: httpx.Query(r, "resource"),
 		Subresource: httpx.Query(r, "subresource"), Namespace: httpx.Query(r, "namespace"), Name: httpx.Query(r, "name"),
 	}
-	if strings.TrimSpace(access.Verb) == "" || strings.TrimSpace(access.Resource) == "" {
-		httpx.Error(w, r, httpx.Validation("verb", "verb and resource are required"))
+	if err := validateAccessReview(access); err != nil {
+		httpx.Error(w, r, err)
 		return
-	}
-	for field, value := range map[string]string{"verb": access.Verb, "apiGroup": access.APIGroup, "resource": access.Resource, "subresource": access.Subresource, "namespace": access.Namespace, "name": access.Name} {
-		if len(value) > 253 || strings.ContainsAny(value, "\r\n\x00") {
-			httpx.Error(w, r, httpx.Validation(field, "access review field is invalid"))
-			return
-		}
 	}
 	actor, _ := domain.ActorFromContext(r.Context())
 	httpx.JSON(w, stdhttp.StatusOK, h.sessions.Review(r.Context(), actor, access))
+}
+
+type tokenAccessReviewRequest struct {
+	Token       string `json:"token"`
+	Verb        string `json:"verb"`
+	APIGroup    string `json:"apiGroup"`
+	Resource    string `json:"resource"`
+	Subresource string `json:"subresource"`
+	Namespace   string `json:"namespace"`
+	Name        string `json:"name"`
+}
+
+func (h *Handler) ReviewAccessToken(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	if h.accessTokens == nil {
+		httpx.Error(w, r, domain.ErrUnsupported)
+		return
+	}
+	var request tokenAccessReviewRequest
+	if !httpx.DecodeJSON(w, r, &request) {
+		return
+	}
+	access := domain.Access{
+		Verb: request.Verb, APIGroup: request.APIGroup, Resource: request.Resource,
+		Subresource: request.Subresource, Namespace: request.Namespace, Name: request.Name,
+	}
+	if err := validateAccessReview(access); err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	result, err := h.accessTokens.ReviewToken(r.Context(), request.Token, access)
+	if err != nil {
+		actor, _ := domain.ActorFromContext(r.Context())
+		h.audit.Record(r.Context(), actor, domain.AuditEvent{Action: "review-access-token", Resource: "subjectaccessreview", Result: "denied", Err: err})
+		httpx.Error(w, r, err)
+		return
+	}
+	actor, _ := domain.ActorFromContext(r.Context())
+	h.audit.Record(r.Context(), actor, domain.AuditEvent{
+		Action: "review-access-token", Resource: "subjectaccessreview", Result: "success",
+		Details: map[string]any{"subject": result.Identity.Username, "allowed": result.Review.Allowed},
+	})
+	httpx.JSON(w, stdhttp.StatusOK, result)
+}
+
+func (h *Handler) IssueAccessToken(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	if h.accessTokens == nil {
+		httpx.Error(w, r, domain.ErrUnsupported)
+		return
+	}
+	var request domain.AccessTokenIssueRequest
+	if !httpx.DecodeJSON(w, r, &request) {
+		return
+	}
+	actor, _ := domain.ActorFromContext(r.Context())
+	result, err := h.accessTokens.Issue(r.Context(), actor, request)
+	if err != nil {
+		h.audit.Record(r.Context(), actor, domain.AuditEvent{Action: "issue-access-token", Resource: "serviceaccount", Namespace: request.Namespace, Result: "denied", Err: err})
+		httpx.Error(w, r, err)
+		return
+	}
+	h.audit.Record(r.Context(), actor, domain.AuditEvent{
+		Action: "issue-access-token", Resource: "serviceaccount", Namespace: result.Namespace, Name: result.ServiceAccount, Result: "success",
+		Details: map[string]any{"expiresAt": result.ExpiresAt, "rules": len(result.Rules)},
+	})
+	httpx.JSON(w, stdhttp.StatusCreated, result)
+}
+
+func (h *Handler) CleanupAccessTokens(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	if h.accessTokens == nil {
+		httpx.Error(w, r, domain.ErrUnsupported)
+		return
+	}
+	var request domain.AccessGrantCleanupRequest
+	if !httpx.DecodeJSON(w, r, &request) {
+		return
+	}
+	actor, _ := domain.ActorFromContext(r.Context())
+	result, err := h.accessTokens.Cleanup(r.Context(), actor, request.Namespace)
+	if err != nil {
+		h.audit.Record(r.Context(), actor, domain.AuditEvent{Action: "cleanup-access-tokens", Resource: "serviceaccount", Namespace: request.Namespace, Result: "denied", Err: err})
+		httpx.Error(w, r, err)
+		return
+	}
+	h.audit.Record(r.Context(), actor, domain.AuditEvent{Action: "cleanup-access-tokens", Resource: "serviceaccount", Namespace: request.Namespace, Result: "success", Details: map[string]any{"deleted": result.Deleted}})
+	httpx.JSON(w, stdhttp.StatusOK, result)
+}
+
+func validateAccessReview(access domain.Access) error {
+	if strings.TrimSpace(access.Verb) == "" || strings.TrimSpace(access.Resource) == "" {
+		return httpx.Validation("verb", "verb and resource are required")
+	}
+	for field, value := range map[string]string{"verb": access.Verb, "apiGroup": access.APIGroup, "resource": access.Resource, "subresource": access.Subresource, "namespace": access.Namespace, "name": access.Name} {
+		if len(value) > 253 || strings.ContainsAny(value, "\r\n\x00") {
+			return httpx.Validation(field, "access review field is invalid")
+		}
+	}
+	return nil
 }
 
 func (h *Handler) OIDCLogin(w stdhttp.ResponseWriter, r *stdhttp.Request) {
@@ -335,6 +428,9 @@ func MountProtected(r chi.Router, handler *Handler) {
 	r.Delete("/session", handler.Logout)
 	r.Get("/capabilities", handler.Capabilities)
 	r.Get("/capabilities/review", handler.AccessReview)
+	r.Post("/access/tokens", handler.IssueAccessToken)
+	r.Post("/access/tokens/review", handler.ReviewAccessToken)
+	r.Post("/access/tokens/cleanup", handler.CleanupAccessTokens)
 	if handler.oidc != nil {
 		r.Get("/auth/oidc/logout", handler.OIDCLogout)
 	}

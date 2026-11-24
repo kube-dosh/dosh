@@ -150,7 +150,7 @@
 
 ### GR-036 新页面移动端验收
 
-当用户在 320px、390px、大字体或 Android 视口访问 Helm、权限检查、资源偏好、终端、Ephemeral Container 弹窗、排空和回滚确认时，页面与弹窗不得横向溢出；新页面必须进入 Chromium、Firefox、明暗主题和 axe 验收矩阵。
+当用户在 320px、390px、大字体或 Android 视口访问 Helm、权限与检查、资源偏好、终端、Ephemeral Container 弹窗、排空和回滚确认时，页面与弹窗不得横向溢出；新页面必须进入 Chromium、Firefox、明暗主题和 axe 验收矩阵。
 
 ### GR-037 工作负载级日志聚合
 
@@ -215,10 +215,10 @@
 | nodes | `internal/modules/nodes/**`、`internal/platform/kube/node_drain.go` | 排空计划、PDB/DaemonSet/mirror/bare Pod 分类、Eviction API 执行和部分失败结果 |
 | workloads | `internal/modules/workloads/**`、`internal/platform/kube/workloads.go`、`pod_exec.go`、`pods.go`、`pod_port_forward.go` | 发布历史/模板快照、回滚 Diff、日志时间范围、Init/Ephemeral Container、SPDY Exec、会话限额、Ephemeral Debug、Pod/Service 端口转发与审计详情 |
 | releases | `internal/modules/releases/**`、`internal/platform/kube/helm_releases.go`、`helm_upgrade.go` | Helm v3 Secret 解码、最新 revision/历史、values/manifest 脱敏、revision Diff、Dry Run 回滚与升级、Hook 跳过和 Helm 兼容 revision 写入 |
-| auth | `internal/modules/auth/**` | 当前身份 SubjectAccessReview 解释、reason/guidance 与 `kubectl auth can-i` 复现命令 |
+| auth | `internal/modules/auth/**`、`internal/platform/kube/access_tokens.go` | 当前身份 SubjectAccessReview 解释、TokenReview 身份检查、管理员临时 ServiceAccount/RBAC/Token 签发与过期授权清理 |
 | bootstrap | `internal/bootstrap/app.go`、`router.go` | 依赖装配和受保护路由挂载 |
-| frontend | `web/src/features/resources/`、`workloads/`、`nodes/`、`helm/`、`access/`、`preferences/`、`web/src/lib/` | 通用资源、排空、终端、端口转发、聚合日志、Helm Diff/回滚/升级、关系拓扑筛选、权限检查、跨设备偏好、推荐模板与草稿 |
-| contract | `api/openapi.yaml`、`web/src/api/schema.d.ts` | Discovery、Schema、通用读写、关系拓扑、用户偏好、排空、Exec、聚合日志、Helm Diff/回滚/升级、端口转发、权限检查和发布历史 REST 契约 |
+| frontend | `web/src/features/resources/`、`workloads/`、`nodes/`、`helm/`、`access/`、`preferences/`、`web/src/lib/` | 通用资源、排空、终端、端口转发、聚合日志、Helm Diff/回滚/升级、关系拓扑筛选、权限与检查、跨设备偏好、推荐模板与草稿 |
+| contract | `api/openapi.yaml`、`web/src/api/schema.d.ts` | Discovery、Schema、通用读写、关系拓扑、用户偏好、排空、Exec、聚合日志、Helm Diff/回滚/升级、端口转发、权限与检查（Token 检查/签发/清理）和发布历史 REST 契约 |
 
 ## 3. 验证矩阵
 
@@ -244,13 +244,13 @@
   - Pod/Service/Ingress/Node/PVC/PV/Workload/CronJob 关系拓扑、查询上限、截断 warning、筛选计数和读取失败降级。
   - 全局搜索 `namespace=all` 上限、逐命名空间规则失败跳过、结果去重和 warning 聚合；用户偏好规范化、用户隔离、服务端 ConfigMap 存储和本地/服务端合并。
   - 资源搜索短 TTL 缓存的身份/授权/查询隔离、并发取消和达到上限 warning；常用工作负载推荐模板与恢复到 Schema 表单。
-  - 权限解释 allowed/read_only/rbac_denied/unavailable、匿名身份提示和 HTTP 参数校验。
+  - 权限解释 allowed/read_only/rbac_denied/unavailable、匿名身份提示和 HTTP 参数校验；TokenReview 身份检查、管理员签发、通配符规则拒绝、TTL 边界、原始 Token 不进入审计和过期授权清理。
   - 本地收藏、保存视图、列偏好、最近资源、模板和草稿的持久化与损坏数据降级。
 - `cd web && npm run api:check && npm run typecheck`
 - `cd web && npm test -- --run`
-- Playwright Chromium/Firefox：多版本切换、动态表单、Diff、风险确认、排空、终端、Ephemeral Container 创建与移动端弹窗、聚合日志、Helm Diff/回滚/升级、端口转发、关系拓扑筛选、跨命名空间搜索、偏好同步、权限检查、本地模板、390px/320px/大字体/Android 和弹窗后代边界。
+- Playwright Chromium/Firefox：多版本切换、动态表单、Diff、风险确认、排空、终端、Ephemeral Container 创建与移动端弹窗、聚合日志、Helm Diff/回滚/升级、端口转发、关系拓扑筛选、跨命名空间搜索、偏好同步、权限与检查、本地模板、390px/320px/大字体/Android 和弹窗后代边界。
 - Playwright N05–N08：多容器与 Init Container 创建请求体、NodeSelector/容忍/亲和性/拓扑/PriorityClass/ServiceAccount/SecurityContext、Deployment 发布进度与发布控制、CronJob 批处理详情和指定容器 Command/Args 覆盖；在桌面 Chromium、Firefox 以及 320/360/390px 视口检查页面与弹窗横向溢出。
-- axe：资源浏览器、Helm、权限检查、列表、详情在亮暗主题下无 serious/critical 问题。
+- axe：资源浏览器、Helm、权限与检查、列表、详情在亮暗主题下无 serious/critical 问题。
 - `make arch`
 
 ## 4. 后续阶段

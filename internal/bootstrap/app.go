@@ -167,9 +167,10 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 		tokenService = app.NewKubernetesTokenService(kubeClient, sessions, loginAttempts)
 		providerName = "Kubernetes"
 	}
+	accessTokenService := app.NewAccessTokenService(kubeClient, kubeClient, kubeClient, cfg.ReadOnly)
 	authHandler := authhttp.New(authhttp.Options{
 		Mode: cfg.AuthMode, ProviderName: providerName, Local: localService, Token: tokenService, OIDC: oidcService,
-		Sessions: sessions, Audit: auditLogger, Logger: logger, CookieSecure: cfg.CookieSecure,
+		Sessions: sessions, AccessTokens: accessTokenService, Audit: auditLogger, Logger: logger, CookieSecure: cfg.CookieSecure,
 	})
 
 	overviewService := overviewapp.New(kubeClient, cfg.ClusterName)
