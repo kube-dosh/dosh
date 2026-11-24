@@ -159,8 +159,8 @@ export function AppShell() {
   };
 
   return (
-    <div className="min-h-screen w-full min-w-0 max-w-full overflow-x-clip bg-background">
-      <header className="sticky top-0 z-40 flex h-14 w-full min-w-0 max-w-full items-center overflow-x-clip border-b bg-card/95 px-4 backdrop-blur md:px-5">
+    <div className="flex h-dvh max-h-dvh w-full min-w-0 max-w-full flex-col overflow-hidden bg-background">
+      <header className="relative z-40 flex h-14 w-full min-w-0 max-w-full shrink-0 items-center overflow-x-clip border-b bg-card/95 px-4 backdrop-blur md:px-5">
         <Button variant="ghost" size="icon" className="mr-2 shrink-0 lg:hidden" onClick={() => setMobileOpen(true)} aria-label="打开导航" aria-expanded={mobileOpen} aria-controls="app-navigation"><Menu className="h-5 w-5" /></Button>
         <Link to="/" aria-label="Dosh Console 首页" className="flex shrink-0 items-center gap-2.5">
           <div className="grid h-8 w-8 place-items-center rounded-lg bg-primary text-sm font-bold text-primary-foreground shadow-sm">D</div>
@@ -210,8 +210,8 @@ export function AppShell() {
         </div>
       </header>
 
-      <div className="flex min-h-[calc(100vh-3.5rem)] w-full min-w-0 max-w-full lg:pl-60">
-        <aside id="app-navigation" aria-label="主导航" className={cn("fixed inset-y-0 left-0 z-50 flex w-60 flex-col border-r bg-card transition-transform lg:top-14 lg:z-30 lg:h-[calc(100vh-3.5rem)] lg:translate-x-0", mobileOpen ? "visible translate-x-0" : "invisible -translate-x-full lg:visible")}>
+      <div className="flex min-h-0 w-full min-w-0 max-w-full flex-1">
+        <aside id="app-navigation" aria-label="主导航" className={cn("fixed inset-y-0 left-0 z-50 flex w-60 shrink-0 flex-col border-r bg-card transition-transform lg:static lg:z-30 lg:h-full lg:translate-x-0", mobileOpen ? "visible translate-x-0" : "invisible -translate-x-full lg:visible")}>
           <div className="flex h-14 shrink-0 items-center justify-between border-b px-4 lg:hidden">
             <span className="font-semibold">导航</span>
             <Button variant="ghost" size="icon" onClick={() => setMobileOpen(false)} aria-label="关闭导航"><X className="h-4 w-4" /></Button>
@@ -264,7 +264,7 @@ export function AppShell() {
           </div>
         </aside>
         {mobileOpen ? <button type="button" aria-label="关闭导航菜单" className="fixed inset-0 z-40 bg-slate-950/30 lg:hidden" onClick={() => setMobileOpen(false)} /> : null}
-        <main className="w-0 min-w-0 max-w-full flex-1 overflow-x-clip p-4 md:p-6"><div className="mx-auto min-w-0 max-w-[1600px] animate-fade-in"><Outlet /></div></main>
+        <main className={cn("h-full min-h-0 w-0 min-w-0 max-w-full flex-1 overflow-x-clip overscroll-contain p-4 md:p-6", mobileOpen ? "overflow-hidden lg:overflow-y-auto" : "overflow-y-auto")}><div className="mx-auto min-w-0 max-w-[1600px] animate-fade-in"><Outlet /></div></main>
       </div>
 
       <GlobalSearch open={searchOpen} onOpenChange={setSearchOpen} />

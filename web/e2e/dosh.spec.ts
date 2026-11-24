@@ -3137,7 +3137,7 @@ test("顶部栏与侧栏读取真实集群上下文", async ({ page }) => {
   await expect(page.getByText("kubedo-lab")).toHaveCount(0);
 });
 
-test("桌面端侧栏在页面滚动时保持固定", async ({ page }) => {
+test("桌面端仅内容区滚动且侧栏保持固定", async ({ page }) => {
   await installApiMocks(page);
   await page.setViewportSize({ width: 1280, height: 720 });
   await page.goto("/access");
@@ -3158,8 +3158,10 @@ test("桌面端侧栏在页面滚动时保持固定", async ({ page }) => {
     spacer.style.height = "2400px";
     element.appendChild(spacer);
   });
-  await page.evaluate(() => window.scrollTo(0, 900));
-  await expect.poll(() => page.evaluate(() => window.scrollY)).toBeGreaterThan(0);
+  await main.evaluate((element) => element.scrollTo(0, 900));
+  await expect.poll(() => main.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
+  expect(await page.evaluate(() => window.scrollY)).toBe(0);
+  expect(await page.evaluate(() => document.documentElement.scrollHeight <= window.innerHeight + 1)).toBe(true);
   await waitForVisualStability(page);
 
   const after = await sidebar.boundingBox();
@@ -3168,6 +3170,33 @@ test("桌面端侧栏在页面滚动时保持固定", async ({ page }) => {
   expect(Math.abs(after!.y - before!.y)).toBeLessThanOrEqual(1);
   expect(after!.y).toBeGreaterThanOrEqual(0);
   await expectNoPageOverflow(page, "desktop fixed sidebar while scrolling");
+});
+
+test("移动端仅内容区滚动且顶栏保持固定", async ({ page }) => {
+  await installApiMocks(page);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/nodes");
+  await expect(page.getByRole("heading", { name: "节点管理", exact: true })).toBeVisible();
+
+  const header = page.locator("header");
+  const main = page.locator("main");
+  const before = await header.boundingBox();
+  expect(before).not.toBeNull();
+
+  await main.evaluate((element) => {
+    const spacer = document.createElement("div");
+    spacer.style.height = "2000px";
+    element.appendChild(spacer);
+  });
+  await main.evaluate((element) => element.scrollTo(0, 700));
+  await expect.poll(() => main.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
+  expect(await page.evaluate(() => window.scrollY)).toBe(0);
+  await waitForVisualStability(page);
+
+  const after = await header.boundingBox();
+  expect(after).not.toBeNull();
+  expect(Math.abs(after!.y - before!.y)).toBeLessThanOrEqual(1);
+  await expectNoPageOverflow(page, "mobile content-only scrolling");
 });
 
 test("其他功能默认折叠并可展开访问低频导航", async ({ page }) => {
