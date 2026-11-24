@@ -389,11 +389,14 @@ kubectl auth can-i list secrets -n <namespace>
   `kubectl auth can-i` 命令。页面支持 verb、apiGroup、resource、subresource、namespace
   和资源名。
 - **Token 检查**：调用 `POST /api/v1/access/tokens/review`。Dosh 先使用 TokenReview 验证
-  输入 Token 的 Kubernetes 身份，再以该身份执行 SubjectAccessReview。原始 Token 只用于本次
-  请求，不写入浏览器存储、审计详情、服务端状态或日志。
+  输入 Token 的 Kubernetes 身份，再以该身份执行 SubjectAccessReview；随后使用 Token 自身身份
+  对指定 Namespace 执行 SelfSubjectRulesReview，直接展示该 Token 的有效资源权限。快照读取失败
+  时仍返回单条件检查结果并附带告警。原始 Token 只用于本次请求，不写入浏览器存储、审计详情、
+  服务端状态或日志。
 - **签发 Token**：仅 Dosh 管理员可见，调用 `POST /api/v1/access/tokens`。Dosh 在目标
   Namespace 创建独立 ServiceAccount、Role 和 RoleBinding，并通过 TokenRequest 签发
-  5 分钟至 24 小时的 Token。原始 Token 仅在响应中出现一次。
+  5 分钟至 24 小时的 Token。每条规则可选择同一 API Group 下的多个资源，也可一键全选当前
+  可选资源；不支持 `*` 通配符。原始 Token 仅在响应中出现一次。
 
 ```http
 GET /api/v1/capabilities/review?verb=create&resource=pods&subresource=exec&namespace=team-a&name=api-0

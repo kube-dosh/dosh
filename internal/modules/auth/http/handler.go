@@ -171,13 +171,14 @@ func (h *Handler) AccessReview(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 }
 
 type tokenAccessReviewRequest struct {
-	Token       string `json:"token"`
-	Verb        string `json:"verb"`
-	APIGroup    string `json:"apiGroup"`
-	Resource    string `json:"resource"`
-	Subresource string `json:"subresource"`
-	Namespace   string `json:"namespace"`
-	Name        string `json:"name"`
+	Token          string `json:"token"`
+	Verb           string `json:"verb"`
+	APIGroup       string `json:"apiGroup"`
+	Resource       string `json:"resource"`
+	Subresource    string `json:"subresource"`
+	Namespace      string `json:"namespace"`
+	Name           string `json:"name"`
+	RulesNamespace string `json:"rulesNamespace"`
 }
 
 func (h *Handler) ReviewAccessToken(w stdhttp.ResponseWriter, r *stdhttp.Request) {
@@ -197,7 +198,7 @@ func (h *Handler) ReviewAccessToken(w stdhttp.ResponseWriter, r *stdhttp.Request
 		httpx.Error(w, r, err)
 		return
 	}
-	result, err := h.accessTokens.ReviewToken(r.Context(), request.Token, access)
+	result, err := h.accessTokens.ReviewToken(r.Context(), request.Token, access, request.RulesNamespace)
 	if err != nil {
 		actor, _ := domain.ActorFromContext(r.Context())
 		h.audit.Record(r.Context(), actor, domain.AuditEvent{Action: "review-access-token", Resource: "subjectaccessreview", Result: "denied", Err: err})

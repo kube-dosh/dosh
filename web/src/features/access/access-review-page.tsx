@@ -5,7 +5,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/api/client";
-import type { AccessReview, AccessTokenRule, IssuedAccessToken, ResourceDescriptor } from "@/api/types";
+import type { AccessReview, AccessTokenRule, IssuedAccessToken, ResourceDescriptor, ResourceRule, TokenAccessReview } from "@/api/types";
 import { CopyButton } from "@/components/data/copy-button";
 import { ErrorState } from "@/components/feedback/states";
 import { PageHeader } from "@/components/layout/page-header";
@@ -14,7 +14,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { SearchableSelect } from "@/components/ui/searchable-select";
+import { SearchableMultiSelect, SearchableSelect } from "@/components/ui/searchable-select";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
@@ -47,10 +47,12 @@ type AccessTab = "current" | "token" | "issue";
 type GrantRuleDraft = {
   verbs: string[];
   apiGroup: string;
-  resource: string;
+  resources: string[];
+  manualResourceText: string;
   subresource: string;
   resourceName: string;
   manualResource: boolean;
+  manualGroup: boolean;
 };
 
 function descriptorKey(descriptor: Pick<ResourceDescriptor, "group" | "resource">) {
@@ -159,6 +161,79 @@ function AccessReviewResult({ review }: { review: AccessReview }) {
   );
 }
 
+type TokenRuleView = {
+  key: string;
+  apiGroups: string[];
+  resources: string[];
+  verbs: string[];
+  resourceNames: string[];
+};
+
+function tokenRuleViews(rules: ResourceRule[]): TokenRuleView[] {
+  const grouped = new Map<string, TokenRuleView>();
+  for (const rule of rules) {
+    const apiGroups = [...new Set(rule.apiGroups ?? [""])].sort((left, right) => (left || "core").localeCompare(right || "core"));
+    const resources = [...new Set(rule.resources ?? [])].sort((left, right) => left.localeCompare(right));
+    const resourceNames = [...new Set(rule.resourceNames ?? [])].sort((left, right) => left.localeCompare(right));
+    const key = `${apiGroups.join(",")}\u0000${resources.join(",")}\u0000${resourceNames.join(",")}`;
+    const existing = grouped.get(key);
+    if (existing) {
+      existing.verbs = [...new Set([...existing.verbs, ...(rule.verbs ?? [])])].sort((left, right) => left.localeCompare(right));
+      continue;
+    }
+    grouped.set(key, {
+      key,
+      apiGroups,
+      resources,
+      resourceNames,
+      verbs: [...new Set(rule.verbs ?? [])].sort((left, right) => left.localeCompare(right)),
+    });
+  }
+  return [...grouped.values()].sort((left, right) => (
+    (left.apiGroups[0] || "core").localeCompare(right.apiGroups[0] || "core")
+    || left.resources.join(",").localeCompare(right.resources.join(","))
+  ));
+}
+
+function TokenPermissions({ review }: { review: TokenAccessReview }) {
+  const rules = tokenRuleViews(review.rules ?? []);
+  const warnings = review.ruleWarnings ?? [];
+  return (
+    <Card className="min-w-0">
+      <CardHeader className="pb-3">
+        <div className="flex min-w-0 flex-wrap items-start justify-between gap-2">
+          <div className="min-w-0">
+            <CardTitle className="flex items-center gap-2 text-base"><ShieldCheck className="h-4 w-4 text-primary" />Token 权限</CardTitle>
+            <CardDescription className="mt-1">来自 Kubernetes SelfSubjectRulesReview，展示该 Token 在指定命名空间内的有效资源权限。</CardDescription>
+          </div>
+          <Badge variant="outline" className="max-w-full break-all font-mono">{review.rulesNamespace || "default"}</Badge>
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        {warnings.map((warning) => <p key={warning} className="break-words rounded-md border border-warning/35 bg-warning/10 px-3 py-2 text-xs leading-5 text-warning">{warning}</p>)}
+        {review.rulesIncomplete ? <p className="text-xs leading-5 text-muted-foreground">Kubernetes 返回的规则可能不完整，未列出的权限不代表一定不存在。</p> : null}
+        {rules.length === 0 ? (
+          <p className="rounded-md border bg-muted/20 px-3 py-5 text-center text-sm text-muted-foreground">该命名空间内未发现 Token 的资源权限。</p>
+        ) : (
+          <div className="max-h-80 min-w-0 space-y-2 overflow-y-auto pr-1">
+            {rules.map((rule) => (
+              <div key={rule.key} className="min-w-0 rounded-md border bg-muted/20 p-3">
+                <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+                  {rule.apiGroups.map((group) => <Badge key={group || "core"} variant="secondary" className="font-mono">{group || "core"}</Badge>)}
+                  <span className="min-w-0 break-all font-mono text-xs">{rule.resources.length > 0 ? rule.resources.join(", ") : "未声明资源"}</span>
+                </div>
+                <div className="mt-2 flex flex-wrap gap-1.5">{rule.verbs.length > 0 ? rule.verbs.map((verb) => <Badge key={verb} variant="outline" className="font-mono">{verb}</Badge>) : <span className="text-xs text-muted-foreground">未声明 Verb</span>}</div>
+                {rule.resourceNames.length > 0 ? <p className="mt-2 break-all text-xs leading-5 text-muted-foreground">资源名称限制：{rule.resourceNames.join(", ")}</p> : null}
+              </div>
+            ))}
+          </div>
+        )}
+        <p className="text-xs leading-5 text-muted-foreground">此列表用于说明 Token 身份的有效权限；实际操作仍由每次请求的 Kubernetes RBAC 授权决定。</p>
+      </CardContent>
+    </Card>
+  );
+}
+
 function AccessCheckPanel({ mode }: { mode: "current" | "token" }) {
   const [form, setForm] = useState({ verb: "list", apiGroup: "", resource: "pods", subresource: "", namespace: "default", name: "" });
   const [manual, setManual] = useState<Record<ManualField, boolean>>({ resource: false, apiGroup: false, subresource: false, namespace: false, name: false });
@@ -167,7 +242,14 @@ function AccessCheckPanel({ mode }: { mode: "current" | "token" }) {
   const discovery = useQuery({ queryKey: ["resource-discovery", "all"], queryFn: () => api.resourceDiscovery(), staleTime: 60_000 });
   const namespaces = useQuery({ queryKey: ["namespaces", "access-review"], queryFn: () => api.namespaces({ pageSize: 200 }), staleTime: 60_000, retry: false });
   const currentReview = useMutation({ mutationFn: () => api.accessReview({ ...form, apiGroup: form.apiGroup || undefined, subresource: form.subresource || undefined, namespace: form.namespace || undefined, name: form.name || undefined }) });
-  const tokenReview = useMutation({ mutationFn: () => api.reviewAccessToken({ token, ...form, apiGroup: form.apiGroup || undefined, subresource: form.subresource || undefined, namespace: form.namespace || undefined, name: form.name || undefined }) });
+  const tokenReview = useMutation({ mutationFn: () => api.reviewAccessToken({
+    token, ...form,
+    apiGroup: form.apiGroup || undefined,
+    subresource: form.subresource || undefined,
+    namespace: form.namespace || undefined,
+    name: form.name || undefined,
+    rulesNamespace: form.namespace || "default",
+  }) });
 
   const descriptors = useMemo(() => preferredResourceDescriptors(discovery.data?.items ?? []), [discovery.data?.items]);
   const selectedDescriptor = useMemo(() => descriptors.find((item) => item.group === form.apiGroup && item.resource === form.resource), [descriptors, form.apiGroup, form.resource]);
@@ -212,6 +294,7 @@ function AccessCheckPanel({ mode }: { mode: "current" | "token" }) {
   const setManualField = (field: ManualField, value: boolean) => setManual((current) => ({ ...current, [field]: value }));
   const resetManual = () => setManual({ resource: false, apiGroup: false, subresource: false, namespace: false, name: false });
   const mutation = mode === "token" ? tokenReview : currentReview;
+  const tokenData = mode === "token" ? tokenReview.data : undefined;
   const result = mode === "token" ? tokenReview.data?.review : currentReview.data;
   const identity = mode === "token" ? tokenReview.data?.identity : undefined;
   const submit = (event: FormEvent) => {
@@ -361,6 +444,7 @@ function AccessCheckPanel({ mode }: { mode: "current" | "token" }) {
             </CardContent>
           </Card>
         ) : null}
+        {tokenData ? <TokenPermissions review={tokenData} /> : null}
         {!result && !mutation.isError ? <Card><CardContent className="flex min-h-56 flex-col items-center justify-center gap-3 py-10 text-center text-sm text-muted-foreground"><KeyRound className="h-7 w-7" /><p>{mode === "token" ? "粘贴 Token 并选择条件后开始检查。" : "选择常用场景或填写条件后开始检查。"}</p><p className="max-w-md text-xs">结果来自 Kubernetes SubjectAccessReview；Token 不会被保存，也不会显示在审计详情中。</p></CardContent></Card> : null}
         {result ? <AccessReviewResult review={result} /> : null}
       </div>
@@ -369,11 +453,15 @@ function AccessCheckPanel({ mode }: { mode: "current" | "token" }) {
 }
 
 function emptyGrantRule(): GrantRuleDraft {
-  return { verbs: ["get", "list"], apiGroup: "", resource: "pods", subresource: "", resourceName: "", manualResource: false };
+  return { verbs: ["get", "list"], apiGroup: "", resources: ["pods"], manualResourceText: "", subresource: "", resourceName: "", manualResource: false, manualGroup: false };
 }
 
 function namespacedRule(apiGroup: string, resource: string, verbs: string[]): GrantRuleDraft {
-  return { verbs, apiGroup, resource, subresource: "", resourceName: "", manualResource: false };
+  return { verbs, apiGroup, resources: [resource], manualResourceText: "", subresource: "", resourceName: "", manualResource: false, manualGroup: false };
+}
+
+function splitRuleResources(value: string): string[] {
+  return [...new Set(value.split(/[\s,]+/).map((item) => item.trim()).filter(Boolean))];
 }
 
 function AccessTokenIssuePanel() {
@@ -389,13 +477,13 @@ function AccessTokenIssuePanel() {
   const cleanup = useMutation({ mutationFn: () => api.cleanupAccessTokens(namespace) });
 
   const descriptors = useMemo(() => preferredResourceDescriptors(discovery.data?.items ?? []).filter((item) => item.namespaced), [discovery.data?.items]);
-  const resourceOptions = useMemo<FieldOption[]>(() => descriptors.map((descriptor) => ({
-    value: descriptorKey(descriptor), label: `${descriptor.kind} · ${descriptor.resource} · ${descriptor.group || "core"}/${descriptor.version}`,
-  })), [descriptors]);
+  const groupOptions = useMemo<FieldOption[]>(() => [...new Set(descriptors.map((descriptor) => descriptor.group))]
+    .sort((left, right) => (left || "core").localeCompare(right || "core"))
+    .map((group) => ({ value: group, label: group || "core（留空）" })), [descriptors]);
   const namespaceOptions = useMemo<FieldOption[]>(() => (namespaces.data?.items ?? []).map((item) => ({ value: item.name, label: item.name })), [namespaces.data?.items]);
   const grantValid = namespace.trim() !== "" && rules.length > 0 && rules.every((rule) => (
-    rule.resource.trim() !== ""
-    && !rule.resource.includes("*")
+    (rule.manualResource ? splitRuleResources(rule.manualResourceText).length > 0 : rule.resources.length > 0)
+    && !(rule.manualResource ? rule.manualResourceText : rule.resources.join(",")).includes("*")
     && !rule.apiGroup.includes("*")
     && !rule.subresource.includes("*")
     && !rule.resourceName.includes("*")
@@ -410,11 +498,6 @@ function AccessTokenIssuePanel() {
       if (ruleIndex !== index) return rule;
       return { ...rule, verbs: rule.verbs.includes(verb) ? rule.verbs.filter((item) => item !== verb) : [...rule.verbs, verb] };
     }));
-  };
-  const selectResource = (index: number, key: string) => {
-    const descriptor = descriptors.find((item) => descriptorKey(item) === key);
-    if (!descriptor) return;
-    updateRule(index, { apiGroup: descriptor.group, resource: descriptor.resource, subresource: "", manualResource: false });
   };
   const applyReadonlyPreset = () => {
     setRules([
@@ -459,26 +542,41 @@ function AccessTokenIssuePanel() {
                 <div className="flex flex-wrap gap-2"><Button type="button" variant="outline" size="sm" onClick={applyReadonlyPreset}><ShieldCheck className="h-3.5 w-3.5" />命名空间只读</Button><Button type="button" variant="outline" size="sm" onClick={() => setRules((current) => [...current, emptyGrantRule()])} disabled={rules.length >= 20}><Plus className="h-3.5 w-3.5" />添加规则</Button></div>
               </div>
               <div className="space-y-3">
-                {rules.map((rule, index) => (
+                {rules.map((rule, index) => {
+                  const resourceOptions = descriptors
+                    .filter((descriptor) => descriptor.group === rule.apiGroup)
+                    .map((descriptor) => ({ value: descriptor.resource, label: `${descriptor.kind} · ${descriptor.resource}` }));
+                  const manualResources = rule.manualResource || (!discovery.isLoading && resourceOptions.length === 0);
+                  return (
                   <div key={index} className="min-w-0 space-y-3 rounded-lg border bg-muted/20 p-3">
                     <div className="flex items-center justify-between gap-2"><p className="text-sm font-medium">规则 {index + 1}</p><Button type="button" variant="ghost" size="icon" aria-label={`删除规则 ${index + 1}`} onClick={() => setRules((current) => current.filter((_, ruleIndex) => ruleIndex !== index))} disabled={rules.length === 1}><Trash2 className="h-4 w-4" /></Button></div>
                     <div className="grid min-w-0 gap-3 sm:grid-cols-2">
                       <div className="min-w-0 space-y-1.5">
-                        <div className="flex items-center justify-between gap-2"><Label htmlFor={`grant-resource-${index}`}>资源 {index + 1}</Label>{rule.manualResource && resourceOptions.length > 0 ? <button type="button" className="text-xs text-primary underline-offset-4 hover:underline" onClick={() => updateRule(index, { manualResource: false })}>返回列表</button> : null}</div>
-                        {!rule.manualResource && (discovery.isLoading || resourceOptions.length > 0) ? (
-                          <SearchableSelect id={`grant-resource-${index}`} label={`资源 ${index + 1}`} value={descriptorKey({ group: rule.apiGroup, resource: rule.resource })} options={resourceOptions} onChange={(value) => selectResource(index, value)} onManualSelect={() => updateRule(index, { manualResource: true })} placeholder="选择命名空间级资源" />
+                        <div className="flex min-w-0 items-center justify-between gap-2"><Label htmlFor={`grant-api-group-${index}`}>API Group {index + 1}</Label>{rule.manualGroup && groupOptions.length > 0 ? <button type="button" className="shrink-0 text-xs text-primary underline-offset-4 hover:underline" onClick={() => updateRule(index, { manualGroup: false, apiGroup: "", resources: [], manualResource: false, manualResourceText: "" })}>返回列表</button> : null}</div>
+                        {!rule.manualGroup && (discovery.isLoading || groupOptions.length > 0) ? (
+                          <SearchableSelect id={`grant-api-group-${index}`} label={`API Group ${index + 1}`} value={rule.apiGroup} options={groupOptions} onChange={(apiGroup) => updateRule(index, { apiGroup, resources: [], manualResource: false, manualResourceText: "" })} onManualSelect={() => updateRule(index, { manualGroup: true })} placeholder="选择 API Group" />
                         ) : (
-                          <Input id={`grant-resource-${index}`} aria-label={`资源 ${index + 1}`} value={rule.resource} onChange={(event) => updateRule(index, { resource: event.target.value })} placeholder="pods" autoComplete="off" />
+                          <Input id={`grant-api-group-${index}`} aria-label={`API Group ${index + 1}`} value={rule.apiGroup} onChange={(event) => updateRule(index, { manualGroup: true, apiGroup: event.target.value, resources: [], manualResource: false, manualResourceText: "" })} placeholder="core 资源留空" autoComplete="off" />
                         )}
-                        {!rule.manualResource && !discovery.isLoading && resourceOptions.length === 0 ? <p className="text-xs leading-5 text-muted-foreground">资源列表不可用，已切换为手动输入。</p> : null}
+                        {!rule.manualGroup && !discovery.isLoading && groupOptions.length === 0 ? <p className="text-xs leading-5 text-muted-foreground">资源列表不可用，已切换为手动输入。</p> : null}
                       </div>
-                      <div className="space-y-1.5"><Label htmlFor={`grant-subresource-${index}`}>Subresource {index + 1}</Label><Input id={`grant-subresource-${index}`} aria-label={`Subresource ${index + 1}`} value={rule.subresource} onChange={(event) => updateRule(index, { subresource: event.target.value })} placeholder="可选，例如 log / exec" autoComplete="off" /></div>
+                      <div className="min-w-0 space-y-1.5">
+                        <div className="flex min-w-0 items-center justify-between gap-2"><Label htmlFor={`grant-resource-${index}`}>资源 {index + 1}（可多选）</Label>{rule.manualResource && resourceOptions.length > 0 ? <button type="button" className="shrink-0 text-xs text-primary underline-offset-4 hover:underline" onClick={() => updateRule(index, { manualResource: false })}>返回列表</button> : null}</div>
+                        {!manualResources ? (
+                          <SearchableMultiSelect id={`grant-resource-${index}`} label={`资源 ${index + 1}`} values={rule.resources} options={resourceOptions} onChange={(resources) => updateRule(index, { resources })} onManualSelect={() => updateRule(index, { manualResource: true, manualResourceText: rule.resources.join(", ") })} placeholder={discovery.isLoading ? "正在读取资源列表…" : "选择命名空间级资源，可多选"} disabled={discovery.isLoading} />
+                        ) : (
+                          <Input id={`grant-resource-${index}`} aria-label={`资源 ${index + 1}`} value={rule.manualResourceText} onChange={(event) => updateRule(index, { manualResource: true, manualResourceText: event.target.value })} placeholder="pods, deployments" autoComplete="off" />
+                        )}
+                        {manualResources ? <p className="text-xs leading-5 text-muted-foreground">多个资源可用逗号或空格分隔；当前 API Group 将应用于全部所选资源。</p> : null}
+                        {!rule.manualResource && !discovery.isLoading && resourceOptions.length === 0 ? <p className="text-xs leading-5 text-muted-foreground">当前 API Group 没有可选择的资源，已切换为手动输入。</p> : null}
+                      </div>
+                      <div className="space-y-1.5"><Label htmlFor={`grant-subresource-${index}`}>Subresource {index + 1}</Label><Input id={`grant-subresource-${index}`} aria-label={`Subresource ${index + 1}`} value={rule.subresource} onChange={(event) => updateRule(index, { subresource: event.target.value })} placeholder="可选，例如 log / exec" autoComplete="off" />{rule.resources.length > 1 || (rule.manualResource && splitRuleResources(rule.manualResourceText).length > 1) ? <p className="text-xs leading-5 text-muted-foreground">Subresource 将应用于每个所选资源。</p> : null}</div>
                       <div className="space-y-1.5"><Label htmlFor={`grant-resource-name-${index}`}>资源名称 {index + 1}</Label><Input id={`grant-resource-name-${index}`} aria-label={`资源名称 ${index + 1}`} value={rule.resourceName} onChange={(event) => updateRule(index, { resourceName: event.target.value })} placeholder="可选；不填表示该类型全部对象" autoComplete="off" /></div>
-                      <div className="space-y-1.5"><Label htmlFor={`grant-api-group-${index}`}>API Group {index + 1}</Label><Input id={`grant-api-group-${index}`} aria-label={`API Group ${index + 1}`} value={rule.apiGroup} onChange={(event) => updateRule(index, { apiGroup: event.target.value })} placeholder="core 资源留空" autoComplete="off" /></div>
                     </div>
                     <div className="space-y-2"><p className="text-xs font-medium text-muted-foreground">Verbs</p><div className="flex flex-wrap gap-1.5">{verbs.map((verb) => <Button key={verb} type="button" size="sm" variant={rule.verbs.includes(verb) ? "default" : "outline"} aria-pressed={rule.verbs.includes(verb)} aria-label={`${verb} 权限`} onClick={() => toggleVerb(index, verb)}>{verb}</Button>)}</div>{rule.verbs.length === 0 ? <p className="text-xs text-destructive-strong">至少选择一个 Verb</p> : null}</div>
                   </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
             {issue.isError ? <ErrorState error={issue.error} /> : null}
@@ -515,13 +613,13 @@ function AccessTokenIssuePanel() {
 }
 
 function toAccessTokenRule(rule: GrantRuleDraft): AccessTokenRule {
-  const resource = rule.resource.trim();
   const subresource = rule.subresource.trim();
   const resourceName = rule.resourceName.trim();
+  const resources = rule.manualResource ? splitRuleResources(rule.manualResourceText) : rule.resources;
   return {
     verbs: rule.verbs,
     apiGroups: [rule.apiGroup.trim()],
-    resources: [subresource ? `${resource}/${subresource}` : resource],
+    resources: resources.map((resource) => subresource ? `${resource}/${subresource}` : resource),
     ...(resourceName ? { resourceNames: [resourceName] } : {}),
   };
 }

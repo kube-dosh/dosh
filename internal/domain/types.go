@@ -191,8 +191,22 @@ type IssuedAccessToken struct {
 }
 
 type TokenAccessReview struct {
-	Identity Actor        `json:"identity"`
-	Review   AccessReview `json:"review"`
+	Identity        Actor          `json:"identity"`
+	Review          AccessReview   `json:"review"`
+	RulesNamespace  string         `json:"rulesNamespace,omitempty"`
+	Rules           []ResourceRule `json:"rules,omitempty"`
+	RulesIncomplete bool           `json:"rulesIncomplete,omitempty"`
+	RuleWarnings    []string       `json:"ruleWarnings,omitempty"`
+}
+
+// TokenRulesSnapshot is the bounded, namespace-scoped RBAC permission view of
+// a validated Kubernetes token identity. It is informational and must not be
+// used as the authorization decision for individual operations.
+type TokenRulesSnapshot struct {
+	Namespace  string         `json:"namespace"`
+	Rules      []ResourceRule `json:"rules,omitempty"`
+	Incomplete bool           `json:"incomplete,omitempty"`
+	Warnings   []string       `json:"warnings,omitempty"`
 }
 
 type AccessGrantCleanupRequest struct {

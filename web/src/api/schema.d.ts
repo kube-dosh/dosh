@@ -618,8 +618,8 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Authenticate a Kubernetes token and explain one authorization decision
-         * @description Validates the supplied bearer token with TokenReview, then evaluates the requested access with SubjectAccessReview. The token is not retained.
+         * Authenticate a Kubernetes token and explain its permissions
+         * @description Validates the supplied bearer token with TokenReview, evaluates the requested access with SubjectAccessReview, and returns a namespace-scoped SelfSubjectRulesReview permission snapshot for the token identity. The token is not retained.
          */
         post: {
             parameters: {
@@ -7135,6 +7135,12 @@ export interface components {
             resources: string[];
             resourceNames?: string[];
         };
+        ResourceRule: {
+            verbs?: string[];
+            apiGroups?: string[];
+            resources?: string[];
+            resourceNames?: string[];
+        };
         AccessTokenIssueInput: {
             name?: string;
             namespace: string;
@@ -7160,10 +7166,16 @@ export interface components {
             subresource?: string;
             namespace?: string;
             name?: string;
+            /** @description Namespace used for the full permission snapshot. Defaults to namespace */
+            rulesNamespace?: string;
         };
         TokenAccessReview: {
             identity: components["schemas"]["Actor"];
             review: components["schemas"]["AccessReview"];
+            rulesNamespace?: string;
+            rules?: components["schemas"]["ResourceRule"][];
+            rulesIncomplete?: boolean;
+            ruleWarnings?: string[];
         };
         AccessGrantCleanupRequest: {
             namespace: string;

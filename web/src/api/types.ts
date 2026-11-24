@@ -81,6 +81,17 @@ export interface IssuedAccessToken {
 export interface TokenAccessReview {
   identity: User;
   review: AccessReview;
+  rulesNamespace?: string;
+  rules?: ResourceRule[];
+  rulesIncomplete?: boolean;
+  ruleWarnings?: string[];
+}
+
+export interface ResourceRule {
+  verbs?: string[];
+  apiGroups?: string[];
+  resources?: string[];
+  resourceNames?: string[];
 }
 
 export interface AccessGrantCleanupResult {

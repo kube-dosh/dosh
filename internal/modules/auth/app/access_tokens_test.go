@@ -16,6 +16,19 @@ func (f accessReviewerFunc) ReviewAccess(ctx context.Context, actor domain.Actor
 	return f(ctx, actor, access)
 }
 
+type tokenRulesReviewerStub struct {
+	review func(context.Context, domain.Actor, domain.Access) (bool, error)
+	rules  func(context.Context, string, string) (domain.TokenRulesSnapshot, error)
+}
+
+func (s *tokenRulesReviewerStub) ReviewAccess(ctx context.Context, actor domain.Actor, access domain.Access) (bool, error) {
+	return s.review(ctx, actor, access)
+}
+
+func (s *tokenRulesReviewerStub) ReviewTokenRules(ctx context.Context, token, namespace string) (domain.TokenRulesSnapshot, error) {
+	return s.rules(ctx, token, namespace)
+}
+
 type accessTokenIssuerStub struct {
 	request          domain.AccessTokenIssueRequest
 	result           domain.IssuedAccessToken
@@ -56,7 +69,7 @@ func TestAccessTokenServiceReviewTokenUsesTrimmedTokenAndActor(t *testing.T) {
 		nil, false,
 	)
 	access := domain.Access{Verb: "get", Resource: "pods", Namespace: "prod", Name: "api-0"}
-	result, err := service.ReviewToken(context.Background(), "  token-value  ", access)
+	result, err := service.ReviewToken(context.Background(), "  token-value  ", access, "prod")
 	if err != nil {
 		t.Fatalf("ReviewToken() error = %v", err)
 	}
@@ -64,6 +77,64 @@ func TestAccessTokenServiceReviewTokenUsesTrimmedTokenAndActor(t *testing.T) {
 		t.Fatalf("review inputs = token %q actor %#v access %#v", receivedToken, receivedActor, receivedAccess)
 	}
 	if result.Identity.Username != "alice@example.test" || !result.Review.Allowed || result.Review.Reason != "allowed" {
+		t.Fatalf("review result = %#v", result)
+	}
+	if result.RulesNamespace != "prod" {
+		t.Fatalf("rules namespace = %q, want prod", result.RulesNamespace)
+	}
+}
+
+func TestAccessTokenServiceReviewTokenIncludesRulesSnapshot(t *testing.T) {
+	t.Parallel()
+	var receivedToken, receivedNamespace string
+	service := NewAccessTokenService(
+		tokenAuthenticatorFunc(func(context.Context, string) (domain.Actor, error) {
+			return domain.Actor{Username: "alice@example.test"}, nil
+		}),
+		&tokenRulesReviewerStub{
+			review: func(context.Context, domain.Actor, domain.Access) (bool, error) { return true, nil },
+			rules: func(_ context.Context, token, namespace string) (domain.TokenRulesSnapshot, error) {
+				receivedToken, receivedNamespace = token, namespace
+				return domain.TokenRulesSnapshot{
+					Namespace: namespace,
+					Rules:     []domain.ResourceRule{{Verbs: []string{"get", "list"}, APIGroups: []string{""}, Resources: []string{"pods"}}},
+					Warnings:  []string{"部分规则未返回"},
+				}, nil
+			},
+		},
+		nil, false,
+	)
+	result, err := service.ReviewToken(context.Background(), " token-value ", domain.Access{Verb: "get", Resource: "pods", Namespace: "prod"}, " prod ")
+	if err != nil {
+		t.Fatalf("ReviewToken() error = %v", err)
+	}
+	if receivedToken != "token-value" || receivedNamespace != "prod" {
+		t.Fatalf("rules review inputs = token %q namespace %q", receivedToken, receivedNamespace)
+	}
+	if len(result.Rules) != 1 || len(result.RuleWarnings) != 1 || result.Rules[0].Resources[0] != "pods" {
+		t.Fatalf("rules snapshot = %#v", result)
+	}
+}
+
+func TestAccessTokenServiceReviewTokenKeepsSingleReviewWhenRulesFail(t *testing.T) {
+	t.Parallel()
+	service := NewAccessTokenService(
+		tokenAuthenticatorFunc(func(context.Context, string) (domain.Actor, error) {
+			return domain.Actor{Username: "alice@example.test"}, nil
+		}),
+		&tokenRulesReviewerStub{
+			review: func(context.Context, domain.Actor, domain.Access) (bool, error) { return false, nil },
+			rules: func(context.Context, string, string) (domain.TokenRulesSnapshot, error) {
+				return domain.TokenRulesSnapshot{}, domain.ErrForbidden
+			},
+		},
+		nil, false,
+	)
+	result, err := service.ReviewToken(context.Background(), "token-value", domain.Access{Verb: "get", Resource: "pods"}, "")
+	if err != nil {
+		t.Fatalf("ReviewToken() error = %v", err)
+	}
+	if result.Review.Reason != "rbac_denied" || result.RulesNamespace != "default" || len(result.RuleWarnings) != 1 {
 		t.Fatalf("review result = %#v", result)
 	}
 }
@@ -80,7 +151,7 @@ func TestAccessTokenServiceReviewTokenFailsClosed(t *testing.T) {
 		nil, false,
 	)
 	for _, token := range []string{"", "   ", strings.Repeat("x", maxKubernetesTokenLength+1)} {
-		if _, err := service.ReviewToken(context.Background(), token, domain.Access{Verb: "get", Resource: "pods"}); !errors.Is(err, domain.ErrUnauthorized) {
+		if _, err := service.ReviewToken(context.Background(), token, domain.Access{Verb: "get", Resource: "pods"}, "default"); !errors.Is(err, domain.ErrUnauthorized) {
 			t.Fatalf("ReviewToken(%d bytes) error = %v, want unauthorized", len(token), err)
 		}
 	}
@@ -94,7 +165,7 @@ func TestAccessTokenServiceReviewTokenFailsClosed(t *testing.T) {
 		}),
 		nil, false,
 	)
-	result, err := service.ReviewToken(context.Background(), "valid-token", domain.Access{Verb: "get", Resource: "pods"})
+	result, err := service.ReviewToken(context.Background(), "valid-token", domain.Access{Verb: "get", Resource: "pods"}, "default")
 	if err != nil {
 		t.Fatalf("ReviewToken() error = %v", err)
 	}
@@ -133,6 +204,26 @@ func TestAccessTokenServiceIssueNormalizesExplicitRules(t *testing.T) {
 	}
 	if len(request.Rules[0].Resources) != 1 || request.Rules[0].Resources[0] != "pods" || len(request.Rules[0].ResourceNames) != 1 || request.Rules[0].ResourceNames[0] != "api-0" {
 		t.Fatalf("normalized resources = %#v", request.Rules[0])
+	}
+}
+
+func TestAccessTokenServiceIssueAcceptsMultipleResources(t *testing.T) {
+	t.Parallel()
+	issuer := &accessTokenIssuerStub{result: domain.IssuedAccessToken{Token: "issued-token"}}
+	service := NewAccessTokenService(nil, nil, issuer, false)
+	_, err := service.Issue(context.Background(), domain.Actor{Username: "admin", Admin: true}, domain.AccessTokenIssueRequest{
+		Namespace: "default",
+		Rules: []domain.AccessTokenRule{{
+			Verbs:     []string{"get", "list"},
+			APIGroups: []string{""},
+			Resources: []string{"pods", "services", "configmaps"},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("Issue() error = %v", err)
+	}
+	if len(issuer.request.Rules) != 1 || strings.Join(issuer.request.Rules[0].Resources, ",") != "pods,services,configmaps" {
+		t.Fatalf("issued resources = %#v", issuer.request.Rules)
 	}
 }
 

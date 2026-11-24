@@ -1320,7 +1320,7 @@ async function installApiMocks(page: Page, options: { authenticated?: boolean; a
       return json(route, review);
     }
     if (path === "/api/v1/access/tokens/review" && method === "POST") {
-      const body = request.postDataJSON() as { token: string; verb: string; apiGroup?: string; resource: string; subresource?: string; namespace?: string; name?: string };
+      const body = request.postDataJSON() as { token: string; verb: string; apiGroup?: string; resource: string; subresource?: string; namespace?: string; name?: string; rulesNamespace?: string };
       if (body.token.trim() === "invalid-token") {
         return json(route, { code: "unauthorized", message: "authentication required" }, 401);
       }
@@ -1339,6 +1339,12 @@ async function installApiMocks(page: Page, options: { authenticated?: boolean; a
           guidance: allowed ? "Token 身份拥有该操作权限。" : "Token 身份未被 Kubernetes RBAC 授权。",
           kubectlCommand: `kubectl auth can-i ${body.verb} ${body.resource}${body.subresource ? `/${body.subresource}` : ""}${body.namespace ? ` --namespace ${body.namespace}` : ""}`,
         } satisfies AccessReview,
+        rulesNamespace: body.rulesNamespace ?? body.namespace ?? "default",
+        rules: [
+          { verbs: ["get", "list", "watch"], apiGroups: [""], resources: ["pods", "services"] },
+          { verbs: ["create"], apiGroups: [""], resources: ["pods/exec"] },
+          { verbs: ["get", "patch"], apiGroups: ["example.io"], resources: ["widgets"], resourceNames: ["sample-widget"] },
+        ],
       });
     }
     if (path === "/api/v1/access/tokens" && method === "POST") {
@@ -2712,6 +2718,9 @@ test("权限与检查支持 Token 检查、管理员签发 Token 与过期授权
 
   await expect(page.getByText("operator@example.test", { exact: true })).toBeVisible();
   await expect(page.getByText("dosh-operators", { exact: true })).toBeVisible();
+  await expect(page.getByText("Token 权限", { exact: true })).toBeVisible();
+  await expect(page.getByText("pods, services", { exact: true })).toBeVisible();
+  await expect(page.getByText("资源名称限制：sample-widget", { exact: true })).toBeVisible();
   await expect(page.getByText("允许执行", { exact: true })).toBeVisible();
   await expect(page.getByText(/kubectl auth can-i create pods\/exec --namespace default/)).toBeVisible();
   const browserStorage = await page.evaluate(() => `${JSON.stringify(localStorage)}${JSON.stringify(sessionStorage)}`);
@@ -2732,6 +2741,45 @@ test("权限与检查支持 Token 检查、管理员签发 Token 与过期授权
   await page.getByRole("button", { name: "清理 default 的过期授权", exact: true }).click();
   await expect(page.getByText("已清理 2 个过期授权", { exact: true })).toBeVisible();
   await expectNoPageOverflow(page, "access token issuance");
+});
+
+test("签发 Token 支持资源多选、搜索与全选，并提交完整资源列表", async ({ page }) => {
+  await installApiMocks(page);
+  await page.goto("/access");
+  await page.getByRole("tab", { name: "签发 Token", exact: true }).click();
+
+  const resource = page.getByRole("combobox", { name: "资源 1", exact: true });
+  await expect(resource).toContainText("Pod · pods");
+  await resource.click();
+  const search = page.getByRole("searchbox", { name: "搜索 资源 1", exact: true });
+  await expect(search).toBeVisible();
+  await search.fill("secret");
+  await page.getByRole("option", { name: "Secret · secrets", exact: true }).click();
+  await expect(resource).toContainText("Secret · secrets");
+  await expect(search).toBeVisible();
+
+  await search.fill("");
+  await page.getByRole("button", { name: "全选当前结果", exact: true }).click();
+  await expect(resource).toContainText("已选择");
+  await expect(page.getByRole("option", { name: "ServiceAccount · serviceaccounts", exact: true })).toHaveAttribute("aria-selected", "true");
+  await page.keyboard.press("Escape");
+  await expectNoPageOverflow(page, "access token multi-resource selector");
+
+  const group = page.getByRole("combobox", { name: "API Group 1", exact: true });
+  await group.click();
+  await page.getByRole("option", { name: "apps", exact: true }).click();
+  await expect(resource).toContainText("选择命名空间级资源");
+  await resource.click();
+  await page.getByRole("button", { name: "全选当前结果", exact: true }).click();
+  await expect(resource).toContainText("Deployment · deployments");
+  await expect(page.getByRole("option", { name: "StatefulSet · statefulsets", exact: true })).toHaveAttribute("aria-selected", "true");
+  await page.keyboard.press("Escape");
+
+  const issueRequest = page.waitForRequest((request) => new URL(request.url()).pathname === "/api/v1/access/tokens" && request.method() === "POST");
+  await page.getByRole("button", { name: "签发 Token", exact: true }).click();
+  const body = (await issueRequest).postDataJSON() as { rules: Array<{ apiGroups: string[]; resources: string[] }> };
+  expect(body.rules[0].apiGroups).toEqual(["apps"]);
+  expect(body.rules[0].resources).toEqual(expect.arrayContaining(["deployments", "statefulsets"]));
 });
 
 test("非管理员可以检查当前身份与 Token，但不能签发 Token", async ({ page }) => {
@@ -2776,10 +2824,26 @@ test("权限与检查联动选择器在 320px 与 390px 视口内完整可用", 
 
     await page.keyboard.press("Escape");
     await page.getByRole("tab", { name: "Token 检查", exact: true }).click();
-    await expect(page.getByRole("textbox", { name: "Kubernetes Token", exact: true })).toBeVisible();
+    const tokenInput = page.getByRole("textbox", { name: "Kubernetes Token", exact: true });
+    await expect(tokenInput).toBeVisible();
     await expectNoPageOverflow(page, `${viewport.width}px token access review`);
+    await tokenInput.fill("e2e-user-token");
+    await page.getByRole("button", { name: "打开终端", exact: true }).click();
+    await page.getByRole("button", { name: "验证 Token 并检查权限", exact: true }).click();
+    await expect(page.getByText("Token 权限", { exact: true })).toBeVisible();
+    await expectNoPageOverflow(page, `${viewport.width}px token permissions`);
     await page.getByRole("tab", { name: "签发 Token", exact: true }).click();
     await expect(page.getByText("签发临时 Token", { exact: true })).toBeVisible();
+    const grantResource = page.getByRole("combobox", { name: "资源 1", exact: true });
+    await expect(grantResource).toBeEnabled();
+    await grantResource.click();
+    const grantListbox = page.getByRole("listbox", { name: "资源 1选项列表", exact: true });
+    await expect(grantListbox).toBeVisible();
+    await expectElementInsideViewport(page, grantListbox, `${viewport.width}px access grant resource selector`);
+    await page.getByRole("button", { name: "全选当前结果", exact: true }).click();
+    await expect(grantResource).toContainText("已选择");
+    await expectNoPageOverflow(page, `${viewport.width}px access grant resource menu`);
+    await page.keyboard.press("Escape");
     await expectNoPageOverflow(page, `${viewport.width}px access token issuance`);
   }
 });

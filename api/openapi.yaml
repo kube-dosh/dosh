@@ -321,8 +321,8 @@ paths:
   /api/v1/access/tokens/review:
     post:
       tags: [auth]
-      summary: Authenticate a Kubernetes token and explain one authorization decision
-      description: Validates the supplied bearer token with TokenReview, then evaluates the requested access with SubjectAccessReview. The token is not retained.
+      summary: Authenticate a Kubernetes token and explain its permissions
+      description: Validates the supplied bearer token with TokenReview, evaluates the requested access with SubjectAccessReview, and returns a namespace-scoped SelfSubjectRulesReview permission snapshot for the token identity. The token is not retained.
       requestBody:
         required: true
         content:
@@ -4037,6 +4037,21 @@ components:
         resourceNames:
           type: array
           items: { type: string }
+    ResourceRule:
+      type: object
+      properties:
+        verbs:
+          type: array
+          items: { type: string }
+        apiGroups:
+          type: array
+          items: { type: string }
+        resources:
+          type: array
+          items: { type: string }
+        resourceNames:
+          type: array
+          items: { type: string }
     AccessTokenIssueInput:
       type: object
       required: [namespace, ttlSeconds, rules]
@@ -4073,12 +4088,21 @@ components:
         subresource: { type: string, maxLength: 253 }
         namespace: { type: string, maxLength: 253 }
         name: { type: string, maxLength: 253 }
+        rulesNamespace: { type: string, maxLength: 63, description: Namespace used for the full permission snapshot. Defaults to namespace, then default. }
     TokenAccessReview:
       type: object
       required: [identity, review]
       properties:
         identity: { $ref: "#/components/schemas/Actor" }
         review: { $ref: "#/components/schemas/AccessReview" }
+        rulesNamespace: { type: string }
+        rules:
+          type: array
+          items: { $ref: "#/components/schemas/ResourceRule" }
+        rulesIncomplete: { type: boolean }
+        ruleWarnings:
+          type: array
+          items: { type: string }
     AccessGrantCleanupRequest:
       type: object
       required: [namespace]

@@ -34,6 +34,13 @@ type TokenAccessReviewer interface {
 	ReviewAccess(ctx context.Context, actor domain.Actor, access domain.Access) (bool, error)
 }
 
+// TokenRulesReviewer exposes the effective RBAC rules of an authenticated
+// token identity. It is optional so focused tests and alternative adapters can
+// still perform single-condition reviews.
+type TokenRulesReviewer interface {
+	ReviewTokenRules(ctx context.Context, token, namespace string) (domain.TokenRulesSnapshot, error)
+}
+
 // AccessTokenIssuer creates the temporary Kubernetes identity and receives a
 // bounded ServiceAccount token. Implementations must never retain the token.
 type AccessTokenIssuer interface {
@@ -52,7 +59,7 @@ func NewAccessTokenService(authenticator TokenAuthenticator, reviewer TokenAcces
 	return &AccessTokenService{authenticator: authenticator, reviewer: reviewer, issuer: issuer, readOnly: readOnly}
 }
 
-func (s *AccessTokenService) ReviewToken(ctx context.Context, token string, access domain.Access) (domain.TokenAccessReview, error) {
+func (s *AccessTokenService) ReviewToken(ctx context.Context, token string, access domain.Access, rulesNamespace string) (domain.TokenAccessReview, error) {
 	if s.authenticator == nil || s.reviewer == nil {
 		return domain.TokenAccessReview{}, fmt.Errorf("%w: token access review is unavailable", domain.ErrUnsupported)
 	}
@@ -65,7 +72,23 @@ func (s *AccessTokenService) ReviewToken(ctx context.Context, token string, acce
 		return domain.TokenAccessReview{}, err
 	}
 	allowed, reviewErr := s.reviewer.ReviewAccess(ctx, actor, access)
-	return domain.TokenAccessReview{Identity: actor, Review: newAccessReview(access, allowed, reviewErr)}, nil
+	result := domain.TokenAccessReview{Identity: actor, Review: newAccessReview(access, allowed, reviewErr)}
+	rulesNamespace = strings.TrimSpace(rulesNamespace)
+	if !validAccessTokenNamespace(rulesNamespace) {
+		rulesNamespace = "default"
+	}
+	result.RulesNamespace = rulesNamespace
+	if rulesReviewer, ok := s.reviewer.(TokenRulesReviewer); ok {
+		snapshot, rulesErr := rulesReviewer.ReviewTokenRules(ctx, token, rulesNamespace)
+		if rulesErr != nil {
+			result.RuleWarnings = append(result.RuleWarnings, "无法读取该 Token 的完整权限快照，单条件检查结果仍然有效。请确认 Token 是否仍有效以及是否允许 SelfSubjectRulesReview。")
+		} else {
+			result.Rules = snapshot.Rules
+			result.RulesIncomplete = snapshot.Incomplete
+			result.RuleWarnings = append(result.RuleWarnings, snapshot.Warnings...)
+		}
+	}
+	return result, nil
 }
 
 func (s *AccessTokenService) Issue(ctx context.Context, actor domain.Actor, request domain.AccessTokenIssueRequest) (domain.IssuedAccessToken, error) {
