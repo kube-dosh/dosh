@@ -21,11 +21,8 @@ import { useResourcePreferencesSync } from "@/features/preferences/use-preferenc
 
 const nav: Array<{ href: string; label: string; icon: LucideIcon; adminOnly?: boolean; match: (path: string) => boolean }> = [
   { href: "/", label: "总览", icon: LayoutDashboard, match: (path: string) => path === "/" },
-  { href: "/applications", label: "应用工作台", icon: AppWindow, match: (path: string) => path.startsWith("/applications") },
-  { href: "/cluster/config", label: "集群配置", icon: CloudCog, match: (path: string) => path.startsWith("/cluster/config") },
-  { href: "/nodes", label: "节点管理", icon: Server, match: (path: string) => path.startsWith("/nodes") },
   { href: "/workloads", label: "工作负载", icon: Boxes, match: (path: string) => path.startsWith("/workloads") || path.startsWith("/pods") },
-  { href: "/resilience", label: "弹性与可用性", icon: Activity, match: (path: string) => path.startsWith("/resilience") },
+  { href: "/nodes", label: "节点管理", icon: Server, match: (path: string) => path.startsWith("/nodes") },
   { href: "/network", label: "服务与路由", icon: Network, match: (path: string) => path.startsWith("/network") },
   { href: "/configuration", label: "配置与密钥", icon: Settings2, match: (path: string) => path.startsWith("/configuration") },
   { href: "/storage", label: "存储", icon: Database, match: (path: string) => path.startsWith("/storage") },
@@ -33,14 +30,17 @@ const nav: Array<{ href: string; label: string; icon: LucideIcon; adminOnly?: bo
   { href: "/events", label: "事件", icon: Activity, match: (path: string) => path.startsWith("/events") },
   { href: "/helm/charts", label: "Helm", icon: PackageSearch, match: (path: string) => path.startsWith("/helm") },
   { href: "/resources", label: "资源浏览器", icon: Layers3, match: (path: string) => path.startsWith("/resources") },
+  { href: "/resilience", label: "弹性与可用性", icon: Activity, match: (path: string) => path.startsWith("/resilience") },
 ];
 
 const secondaryNav: Array<{ href: string; label: string; icon: LucideIcon; adminOnly?: boolean; match: (path: string) => boolean }> = [
+  { href: "/applications", label: "应用工作台", icon: AppWindow, match: (path: string) => path.startsWith("/applications") },
+  { href: "/cluster/config", label: "集群配置", icon: CloudCog, match: (path: string) => path.startsWith("/cluster/config") },
   { href: "/registries", label: "镜像仓库", icon: Boxes, match: (path: string) => path.startsWith("/registries") },
-  { href: "/system", label: "系统信息", icon: Info, match: (path: string) => path.startsWith("/system") },
+  { href: "/access", label: "权限与检查", icon: KeyRound, match: (path: string) => path.startsWith("/access") },
   { href: "/audit", label: "审计日志", icon: ScrollText, adminOnly: true, match: (path: string) => path.startsWith("/audit") },
   { href: "/governance", label: "治理与策略", icon: ShieldCheck, match: (path: string) => path.startsWith("/governance") },
-  { href: "/access", label: "权限与检查", icon: KeyRound, match: (path: string) => path.startsWith("/access") },
+  { href: "/system", label: "系统信息", icon: Info, match: (path: string) => path.startsWith("/system") },
 ];
 
 type ClusterPresentation = {
@@ -229,8 +229,8 @@ export function AppShell() {
             })}
             <div className="pt-3">
               <p className="px-3 pb-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">快捷入口</p>
-              <Link to="/yaml/create" onClick={() => setMobileOpen(false)} className={cn("flex h-9 items-center gap-3 rounded-md px-3 text-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring", pathname.startsWith("/yaml/create") && "bg-primary/10 font-medium text-primary")}><FileCode2 className="h-4 w-4" />YAML 创建</Link>
               <Link to="/pods" onClick={() => setMobileOpen(false)} className={cn("flex h-9 items-center gap-3 rounded-md px-3 text-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring", pathname.startsWith("/pods") && "bg-primary/10 font-medium text-primary")}><CircleDot className="h-4 w-4" />Pod 实例</Link>
+              <Link to="/yaml/create" onClick={() => setMobileOpen(false)} className={cn("flex h-9 items-center gap-3 rounded-md px-3 text-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring", pathname.startsWith("/yaml/create") && "bg-primary/10 font-medium text-primary")}><FileCode2 className="h-4 w-4" />YAML 创建</Link>
             </div>
           </nav>
           <div className="shrink-0 px-3 py-2">

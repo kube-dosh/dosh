@@ -3205,6 +3205,9 @@ test("其他功能默认折叠并可展开访问低频导航", async ({ page }) 
 
   const other = page.getByRole("button", { name: "其他功能", exact: true });
   await expect(other).toHaveAttribute("aria-expanded", "false");
+  await expect(page.locator("nav a")).toHaveText(["总览", "工作负载", "节点管理", "服务与路由", "配置与密钥", "存储", "命名空间", "事件", "Helm", "资源浏览器", "弹性与可用性", "Pod 实例", "YAML 创建"]);
+  await expect(page.getByRole("link", { name: "应用工作台", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("link", { name: "集群配置", exact: true })).toHaveCount(0);
   await expect(page.getByRole("link", { name: "治理与策略", exact: true })).toHaveCount(0);
   await expect(page.getByRole("link", { name: "权限与检查", exact: true })).toHaveCount(0);
   await expect(page.getByRole("link", { name: "镜像仓库", exact: true })).toHaveCount(0);
@@ -3213,6 +3216,9 @@ test("其他功能默认折叠并可展开访问低频导航", async ({ page }) 
 
   await other.click();
   await expect(other).toHaveAttribute("aria-expanded", "true");
+  await expect(page.locator("#other-navigation a")).toHaveText(["应用工作台", "集群配置", "镜像仓库", "权限与检查", "审计日志", "治理与策略", "系统信息"]);
+  await expect(page.getByRole("link", { name: "应用工作台", exact: true })).toBeVisible();
+  await expect(page.getByRole("link", { name: "集群配置", exact: true })).toBeVisible();
   await expect(page.getByRole("link", { name: "镜像仓库", exact: true })).toBeVisible();
   await expect(page.getByRole("link", { name: "系统信息", exact: true })).toBeVisible();
   await expect(page.getByRole("link", { name: "审计日志", exact: true })).toBeVisible();
@@ -4374,11 +4380,15 @@ test("移动端其他功能默认折叠且可从抽屉进入权限与检查", as
     const drawer = page.locator("aside");
     const other = drawer.getByRole("button", { name: "其他功能", exact: true });
     await expect(other).toHaveAttribute("aria-expanded", "false");
+    await expect(drawer.getByRole("link", { name: "应用工作台", exact: true })).toHaveCount(0);
+    await expect(drawer.getByRole("link", { name: "集群配置", exact: true })).toHaveCount(0);
     await expect(drawer.getByRole("link", { name: "治理与策略", exact: true })).toHaveCount(0);
     await expectNoPageOverflow(page, `${viewport.width}px collapsed other navigation`);
 
     await other.click();
     await expect(other).toHaveAttribute("aria-expanded", "true");
+    await expect(drawer.getByRole("link", { name: "应用工作台", exact: true })).toBeVisible();
+    await expect(drawer.getByRole("link", { name: "集群配置", exact: true })).toBeVisible();
     await expect(drawer.getByRole("link", { name: "治理与策略", exact: true })).toBeVisible();
     await expect(drawer.getByRole("link", { name: "权限与检查", exact: true })).toBeVisible();
     await expect(drawer.getByRole("link", { name: "镜像仓库", exact: true })).toBeVisible();
