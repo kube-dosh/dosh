@@ -84,6 +84,11 @@ func TestClientUsesBasicAuthentication(t *testing.T) {
 			w.WriteHeader(http.StatusUnauthorized)
 			return
 		}
+		if r.URL.Path == "/v2/_catalog" {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = fmt.Fprint(w, `{"repositories":[]}`)
+			return
+		}
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer server.Close()
@@ -94,5 +99,33 @@ func TestClientUsesBasicAuthentication(t *testing.T) {
 	}
 	if _, err := client.Test(context.Background(), registry); err != nil {
 		t.Fatalf("Test() error = %v", err)
+	}
+}
+
+func TestClientTestFailsWhenCatalogIsUnavailable(t *testing.T) {
+	t.Parallel()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v2/" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		http.Error(w, "catalog unavailable", http.StatusBadRequest)
+	}))
+	defer server.Close()
+
+	client := New(5 * time.Second)
+	registry := domain.ContainerRegistry{Endpoint: server.URL, AuthType: domain.RegistryAuthAnonymous}
+	capabilities, err := client.Test(context.Background(), registry)
+	if err == nil {
+		t.Fatal("Test() succeeded although /v2/_catalog is unavailable")
+	}
+	if capabilities.Catalog || capabilities.Tags {
+		t.Fatalf("Test() capabilities = %#v, want both unavailable", capabilities)
+	}
+	if !strings.Contains(err.Error(), "https://") {
+		t.Fatalf("Test() error = %q, want actionable protocol guidance", err)
+	}
+	if !strings.Contains(domain.PublicDetail(err), "HTTP 400") {
+		t.Fatalf("Test() public detail = %q, want HTTP status", domain.PublicDetail(err))
 	}
 }

@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -57,20 +58,29 @@ func New(timeout time.Duration, factories ...*egress.Factory) *Client {
 }
 
 func (c *Client) Test(ctx context.Context, registry domain.ContainerRegistry) (domain.ContainerRegistryCapabilities, error) {
+	capabilities := domain.ContainerRegistryCapabilities{}
 	response, err := c.do(ctx, registry, "/v2/", nil, "")
 	if err != nil {
-		return domain.ContainerRegistryCapabilities{}, err
+		return capabilities, err
 	}
 	_ = response.Body.Close()
-	capabilities := domain.ContainerRegistryCapabilities{Catalog: true, Tags: true}
+	capabilities.Catalog = true
+	capabilities.Tags = true
 	catalogResponse, err := c.do(ctx, registry, "/v2/_catalog", url.Values{"n": []string{"1"}}, "registry:catalog:*")
 	if err != nil {
 		capabilities.Catalog = false
-		return capabilities, nil
+		capabilities.Tags = false
+		return capabilities, domain.WithPublicMessage(err,
+			"镜像仓服务可连接，但仓库目录 /v2/_catalog 读取失败："+catalogErrorMessage(err)+"。请检查网络出口、代理 NO_PROXY、TLS/CA 与镜像仓凭证权限。")
 	}
-	defer catalogResponse.Body.Close()
-	if catalogResponse.StatusCode == http.StatusUnauthorized || catalogResponse.StatusCode == http.StatusForbidden || catalogResponse.StatusCode == http.StatusNotFound {
+	var payload struct {
+		Repositories []string `json:"repositories"`
+	}
+	if err := decodeBounded(catalogResponse, &payload); err != nil {
 		capabilities.Catalog = false
+		capabilities.Tags = false
+		return capabilities, domain.WithPublicMessage(err,
+			"镜像仓仓库目录返回了无法解析的响应："+catalogErrorMessage(err)+"")
 	}
 	return capabilities, nil
 }
@@ -83,11 +93,8 @@ func (c *Client) Repositories(ctx context.Context, registry domain.ContainerRegi
 	for page := 0; page < maxRegistryPages; page++ {
 		response, err := c.do(ctx, registry, path, query, "registry:catalog:*")
 		if err != nil {
-			return nil, err
-		}
-		if response.StatusCode == http.StatusUnauthorized || response.StatusCode == http.StatusForbidden || response.StatusCode == http.StatusNotFound {
-			_ = response.Body.Close()
-			return nil, fmt.Errorf("%w: registry does not expose the catalog API", domain.ErrUnsupported)
+			return nil, domain.WithPublicMessage(err, "读取镜像仓仓库列表失败："+catalogErrorMessage(err)+
+				"。请检查镜像仓地址、HTTPS/CA 配置、统一出站代理 NO_PROXY 和 NetworkPolicy 出口策略。")
 		}
 		var payload struct {
 			Repositories []string `json:"repositories"`
@@ -131,7 +138,8 @@ func (c *Client) Tags(ctx context.Context, registry domain.ContainerRegistry, re
 	for page := 0; page < maxRegistryPages; page++ {
 		response, err := c.do(ctx, registry, path, query, scope)
 		if err != nil {
-			return nil, err
+			return nil, domain.WithPublicMessage(err, "读取镜像 Tag 失败："+catalogErrorMessage(err)+
+				"。请检查镜像仓凭证、仓库路径和网络出口策略。")
 		}
 		var payload struct {
 			Tags []string `json:"tags"`
@@ -177,7 +185,7 @@ func (c *Client) do(ctx context.Context, registry domain.ContainerRegistry, path
 		return nil, err
 	}
 	if response.StatusCode != http.StatusUnauthorized {
-		return response, nil
+		return finishResponse(response)
 	}
 	header := response.Header.Get("WWW-Authenticate")
 	_ = response.Body.Close()
@@ -203,6 +211,13 @@ func (c *Client) do(ctx context.Context, registry domain.ContainerRegistry, path
 	if err != nil {
 		return nil, err
 	}
+	return finishResponse(response)
+}
+
+func finishResponse(response *http.Response) (*http.Response, error) {
+	if response == nil {
+		return nil, fmt.Errorf("%w: registry returned an empty response", domain.ErrUnavailable)
+	}
 	if response.StatusCode == http.StatusUnauthorized || response.StatusCode == http.StatusForbidden {
 		_ = response.Body.Close()
 		return nil, fmt.Errorf("%w: registry authentication failed", domain.ErrUnauthorized)
@@ -214,7 +229,15 @@ func (c *Client) do(ctx context.Context, registry domain.ContainerRegistry, path
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		status := response.StatusCode
 		_ = response.Body.Close()
-		return nil, fmt.Errorf("%w: registry returned HTTP %d", domain.ErrUnavailable, status)
+		cause := fmt.Errorf("%w: registry returned HTTP %d", domain.ErrUnavailable, status)
+		message := fmt.Sprintf("镜像仓返回 HTTP %d。", status)
+		switch {
+		case status == http.StatusBadRequest:
+			message = "镜像仓返回 HTTP 400。若地址使用 http://，请改为 https:// 后重试，并检查反向代理与 TLS 配置。"
+		case status >= 500:
+			message = fmt.Sprintf("镜像仓返回 HTTP %d，请检查 Registry 服务状态。", status)
+		}
+		return nil, domain.WithPublicMessage(cause, message)
 	}
 	return response, nil
 }
@@ -230,7 +253,10 @@ func (c *Client) request(ctx context.Context, client *http.Client, target, autho
 	}
 	response, err := client.Do(request)
 	if err != nil {
-		return nil, fmt.Errorf("%w: registry request failed: %v", domain.ErrUnavailable, sanitizeTransportError(err))
+		detail := sanitizeTransportError(err)
+		cause := fmt.Errorf("%w: registry request failed: %s", domain.ErrUnavailable, detail)
+		return nil, domain.WithPublicMessage(cause,
+			"连接镜像仓失败："+detail+"。请检查镜像仓地址、HTTPS/CA 配置、统一出站代理 NO_PROXY 和 NetworkPolicy 出口策略。")
 	}
 	return response, nil
 }
@@ -417,4 +443,20 @@ func sanitizeTransportError(err error) string {
 		message = message[:300]
 	}
 	return strings.ReplaceAll(message, "\n", " ")
+}
+
+func catalogErrorMessage(err error) string {
+	switch {
+	case errors.Is(err, domain.ErrUnauthorized):
+		return "镜像仓认证失败或凭证无权读取 catalog"
+	case errors.Is(err, domain.ErrNotFound):
+		return "镜像仓未提供 catalog API"
+	case errors.Is(err, domain.ErrUnsupported):
+		return "镜像仓未开放 catalog API"
+	}
+	message := strings.TrimSpace(sanitizeTransportError(err))
+	if message == "" {
+		return "未知错误"
+	}
+	return message
 }

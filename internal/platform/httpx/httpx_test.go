@@ -106,6 +106,22 @@ func TestErrorMapsStableProblemCodes(t *testing.T) {
 	}
 }
 
+func TestErrorPreservesStableCodeAndSafeDependencyDetail(t *testing.T) {
+	err := domain.WithPublicMessage(domain.ErrUnavailable, "registry returned HTTP 400; use https://")
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/test", nil)
+	response := httptest.NewRecorder()
+
+	Error(response, request, err)
+
+	if response.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503", response.Code)
+	}
+	body := response.Body.String()
+	if !strings.Contains(body, `"code":"dependency_unavailable"`) || !strings.Contains(body, `"message":"registry returned HTTP 400; use https://"`) {
+		t.Fatalf("body = %s", body)
+	}
+}
+
 func TestSecurityHeaders(t *testing.T) {
 	handler := SecurityHeaders(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)

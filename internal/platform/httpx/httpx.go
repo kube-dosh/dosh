@@ -387,6 +387,9 @@ func ProblemFor(err error, requestID string) (int, Problem) {
 	case errors.Is(err, domain.ErrStaleCursor):
 		status, code, message = http.StatusBadRequest, "stale_cursor", "pagination cursor expired; refresh the list"
 	}
+	if detail := domain.PublicDetail(err); detail != "" {
+		message = detail
+	}
 	return status, Problem{Code: code, Message: message, RequestID: requestID, FieldErrors: fieldErrs}
 }
 

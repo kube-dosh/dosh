@@ -57,7 +57,7 @@ function registryRequestFailure(label: string, error: unknown, registry?: Contai
     details.push(`最近连接测试：${registry.lastTest.message}`);
   }
   const reason = [...new Set(details)].filter(Boolean).join("；");
-  return `${label}不可用${reason ? `：${reason}` : ""}。请检查镜像仓地址、HTTPS/CA 配置和 networkPolicy.containerRegistries 出口策略。`;
+  return `${label}不可用${reason ? `：${reason}` : ""}。请检查镜像仓地址、HTTPS/CA 配置、统一出站代理 NO_PROXY 和 networkPolicy.containerRegistries 出口策略。`;
 }
 
 export function ImageReferencePicker({ id, value, registryId, onChange, label = "容器镜像", placeholder = "registry.example.com/team/app:1.0.0", disabled = false, hint, hideLabel = false }: {
