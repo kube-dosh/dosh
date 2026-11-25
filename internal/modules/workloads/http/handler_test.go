@@ -53,62 +53,86 @@ func TestSameOriginWebSocket(t *testing.T) {
 }
 
 type workloadRepo struct {
-	scaleCalls        int
-	restartCalls      int
-	imageCalls        int
-	containerCalls    int
-	suspendCalls      int
-	deleteCalls       int
-	lastKind          string
-	lastNamespace     string
-	lastName          string
-	lastReplicas      int32
-	lastResourceVer   string
-	lastImage         domain.WorkloadImageUpdate
-	lastContainer     domain.WorkloadContainerConfigUpdate
-	lastSuspend       domain.CronJobSuspendUpdate
-	lastPropagation   domain.DeletionPropagation
-	lastTailLines     int64
-	lastSinceSeconds  int64
-	lastQuery         domain.ListQuery
-	scaleErr          error
-	restartErr        error
-	imageErr          error
-	containerErr      error
-	suspendErr        error
-	rolloutErr        error
-	rolloutCalls      int
-	lastRollout       domain.WorkloadRolloutUpdate
-	lastRunInput      domain.CronJobRunInput
-	deleteErr         error
-	logsErr           error
-	logsErrors        map[string]error
-	logsPayload       string
-	logsReader        io.ReadCloser
-	workloads         []domain.WorkloadSummary
-	workloadDetail    domain.WorkloadDetail
-	pods              []domain.PodSummary
-	podDetail         domain.PodDetail
-	listWorkloadsErr  error
-	createCalls       []bool
-	lastCreateSpec    domain.WorkloadCreateSpec
-	previewCalls      int
-	createErr         error
-	previewYAML       string
-	revisions         []domain.WorkloadRevision
-	revisionErr       error
-	rollbackCalls     int
-	rollbackErr       error
-	lastRevision      int64
-	ephemeralCalls    int
-	ephemeralErr      error
-	lastEphemeral     domain.PodEphemeralContainerRequest
-	lastEphemeralName string
-	lastTunnel        domain.PortForwardTarget
-	forwardPod        domain.PortForwardPod
-	forwardErr        error
-	openForwardErr    error
-	forwardCalls      int
+	scaleCalls          int
+	restartCalls        int
+	imageCalls          int
+	containerCalls      int
+	suspendCalls        int
+	deleteCalls         int
+	lastKind            string
+	lastNamespace       string
+	lastName            string
+	lastReplicas        int32
+	lastResourceVer     string
+	lastImage           domain.WorkloadImageUpdate
+	lastContainer       domain.WorkloadContainerConfigUpdate
+	lastSuspend         domain.CronJobSuspendUpdate
+	lastPropagation     domain.DeletionPropagation
+	lastTailLines       int64
+	lastSinceSeconds    int64
+	lastQuery           domain.ListQuery
+	scaleErr            error
+	restartErr          error
+	imageErr            error
+	containerErr        error
+	suspendErr          error
+	rolloutErr          error
+	rolloutCalls        int
+	lastRollout         domain.WorkloadRolloutUpdate
+	lastRunInput        domain.CronJobRunInput
+	deleteErr           error
+	logsErr             error
+	logsErrors          map[string]error
+	logsPayload         string
+	logsReader          io.ReadCloser
+	workloads           []domain.WorkloadSummary
+	workloadDetail      domain.WorkloadDetail
+	pods                []domain.PodSummary
+	podDetail           domain.PodDetail
+	listWorkloadsErr    error
+	createCalls         []bool
+	lastCreateSpec      domain.WorkloadCreateSpec
+	previewCalls        int
+	createErr           error
+	previewYAML         string
+	revisions           []domain.WorkloadRevision
+	revisionErr         error
+	rollbackCalls       int
+	rollbackErr         error
+	lastRevision        int64
+	ephemeralCalls      int
+	ephemeralErr        error
+	lastEphemeral       domain.PodEphemeralContainerRequest
+	lastEphemeralName   string
+	lastTunnel          domain.PortForwardTarget
+	forwardPod          domain.PortForwardPod
+	forwardErr          error
+	openForwardErr      error
+	forwardCalls        int
+	podTemplate         domain.WorkloadPodTemplate
+	podTemplateResult   domain.WorkloadPodTemplateResult
+	containerInventory  domain.WorkloadContainerInventory
+	podTemplateCalls    int
+	templateUpdateCalls int
+	lastTemplateUpdate  domain.WorkloadPodTemplateUpdate
+}
+
+func (r *workloadRepo) GetWorkloadPodTemplate(_ context.Context, kind, namespace, name string) (domain.WorkloadPodTemplate, error) {
+	r.podTemplateCalls++
+	r.lastKind, r.lastNamespace, r.lastName = kind, namespace, name
+	return r.podTemplate, nil
+}
+
+func (r *workloadRepo) UpdateWorkloadPodTemplate(_ context.Context, kind, namespace, name string, update domain.WorkloadPodTemplateUpdate) (domain.WorkloadPodTemplateResult, error) {
+	r.templateUpdateCalls++
+	r.lastKind, r.lastNamespace, r.lastName = kind, namespace, name
+	r.lastTemplateUpdate = update
+	return r.podTemplateResult, nil
+}
+
+func (r *workloadRepo) GetWorkloadContainerInventory(_ context.Context, kind, namespace, name string) (domain.WorkloadContainerInventory, error) {
+	r.lastKind, r.lastNamespace, r.lastName = kind, namespace, name
+	return r.containerInventory, nil
 }
 
 func (r *workloadRepo) ListWorkloads(_ context.Context, query domain.ListQuery) ([]domain.WorkloadSummary, error) {
@@ -714,6 +738,47 @@ func TestUpdateImageRequiresSessionCSRFAndValidPayload(t *testing.T) {
 	response = performWorkloadJSON(server.router, http.MethodPost, "/api/v1/workloads/job/prod/migrate/image", body, server.authHeaders())
 	if response.Code != http.StatusNotImplemented {
 		t.Fatalf("job image status = %d, body = %s", response.Code, response.Body.String())
+	}
+}
+
+func TestPodTemplateAndContainerInventoryRoutes(t *testing.T) {
+	server := newWorkloadTestServer(t)
+	server.repo.podTemplate = domain.WorkloadPodTemplate{Kind: "Deployment", Namespace: "prod", Name: "api", ResourceVersion: "42", Template: map[string]any{"metadata": map[string]any{}, "spec": map[string]any{"containers": []any{}}}, Editable: true}
+	server.repo.containerInventory = domain.WorkloadContainerInventory{Kind: "Deployment", Namespace: "prod", Name: "api", Containers: []domain.WorkloadContainerState{}}
+
+	response := performWorkloadJSON(server.router, http.MethodGet, "/api/v1/workloads/deployment/prod/api/pod-template", "", nil)
+	if response.Code != http.StatusUnauthorized {
+		t.Fatalf("template read without session = %d, want 401", response.Code)
+	}
+	response = performWorkloadJSON(server.router, http.MethodGet, "/api/v1/workloads/deployment/prod/api/pod-template", "", map[string]string{"Cookie": server.cookie.String()})
+	if response.Code != http.StatusOK || server.repo.podTemplateCalls != 1 {
+		t.Fatalf("template read status = %d calls = %d body = %s", response.Code, server.repo.podTemplateCalls, response.Body.String())
+	}
+	response = performWorkloadJSON(server.router, http.MethodGet, "/api/v1/workloads/deployment/prod/api/containers", "", map[string]string{"Cookie": server.cookie.String()})
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "Deployment") {
+		t.Fatalf("inventory status = %d body = %s", response.Code, response.Body.String())
+	}
+
+	body := `{"resourceVersion":"42","template":{"metadata":{},"spec":{"containers":[{"name":"api","image":"registry.test/api:2"}]}},"changeCause":"release","source":"form"}`
+	path := "/api/v1/workloads/deployment/prod/api/pod-template"
+	response = performWorkloadJSON(server.router, http.MethodPost, path, body, map[string]string{"Cookie": server.cookie.String()})
+	if response.Code != http.StatusForbidden {
+		t.Fatalf("template update without CSRF = %d, want 403", response.Code)
+	}
+	response = performWorkloadJSON(server.router, http.MethodPost, path, `{"template":null}`, server.authHeaders())
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("invalid template update = %d, body = %s", response.Code, response.Body.String())
+	}
+	response = performWorkloadJSON(server.router, http.MethodPost, path, body, server.authHeaders())
+	if response.Code != http.StatusOK || server.repo.templateUpdateCalls != 1 {
+		t.Fatalf("template update status = %d calls = %d body = %s", response.Code, server.repo.templateUpdateCalls, response.Body.String())
+	}
+	if server.repo.lastTemplateUpdate.ChangeCause != "release" || server.repo.lastTemplateUpdate.Source != "form" {
+		t.Fatalf("template update = %#v", server.repo.lastTemplateUpdate)
+	}
+	response = performWorkloadJSON(server.router, http.MethodPost, "/api/v1/workloads/job/prod/migrate/pod-template", body, server.authHeaders())
+	if response.Code != http.StatusNotImplemented {
+		t.Fatalf("job template update = %d, want 501; body = %s", response.Code, response.Body.String())
 	}
 }
 

@@ -114,13 +114,21 @@ export function SearchableSelect({ id, label, value, options, onChange, onManual
       if (event?.target instanceof Node && panelRef.current?.contains(event.target)) return;
       updatePosition();
     };
+    const handleEscapeCapture = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      event.stopPropagation();
+      close(true);
+    };
     document.addEventListener("pointerdown", handlePointerDown, true);
+    window.addEventListener("keydown", handleEscapeCapture, true);
     window.addEventListener("resize", handleViewportChange);
     window.addEventListener("scroll", handleViewportChange, true);
     window.visualViewport?.addEventListener("resize", handleViewportChange);
     window.visualViewport?.addEventListener("scroll", handleViewportChange);
     return () => {
       document.removeEventListener("pointerdown", handlePointerDown, true);
+      window.removeEventListener("keydown", handleEscapeCapture, true);
       window.removeEventListener("resize", handleViewportChange);
       window.removeEventListener("scroll", handleViewportChange, true);
       window.visualViewport?.removeEventListener("resize", handleViewportChange);
@@ -178,6 +186,7 @@ export function SearchableSelect({ id, label, value, options, onChange, onManual
               onKeyDown={(event) => {
                 if (event.key === "Escape") {
                   event.preventDefault();
+                  event.stopPropagation();
                   close(true);
                 } else if (event.key === "ArrowDown") {
                   event.preventDefault();
@@ -360,13 +369,21 @@ export function SearchableMultiSelect({ id, label, values, options, onChange, on
       if (event?.target instanceof Node && panelRef.current?.contains(event.target)) return;
       updatePosition();
     };
+    const handleEscapeCapture = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      event.stopPropagation();
+      close(true);
+    };
     document.addEventListener("pointerdown", handlePointerDown, true);
+    window.addEventListener("keydown", handleEscapeCapture, true);
     window.addEventListener("resize", handleViewportChange);
     window.addEventListener("scroll", handleViewportChange, true);
     window.visualViewport?.addEventListener("resize", handleViewportChange);
     window.visualViewport?.addEventListener("scroll", handleViewportChange);
     return () => {
       document.removeEventListener("pointerdown", handlePointerDown, true);
+      window.removeEventListener("keydown", handleEscapeCapture, true);
       window.removeEventListener("resize", handleViewportChange);
       window.removeEventListener("scroll", handleViewportChange, true);
       window.visualViewport?.removeEventListener("resize", handleViewportChange);
@@ -428,6 +445,7 @@ export function SearchableMultiSelect({ id, label, values, options, onChange, on
               onKeyDown={(event) => {
                 if (event.key === "Escape") {
                   event.preventDefault();
+                  event.stopPropagation();
                   close(true);
                 } else if (event.key === "ArrowDown") {
                   event.preventDefault();

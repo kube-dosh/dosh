@@ -29,8 +29,9 @@ const pvColumn = createColumnHelper<PersistentVolume>();
 const pvcColumn = createColumnHelper<PersistentVolumeClaim>();
 const snapshotColumn = createColumnHelper<VolumeSnapshot>();
 type YamlTarget = { type: "storageclass" | "persistentvolume" | "persistentvolumeclaim"; name: string; namespace?: string };
-const storageTabs = ["classes", "volumes", "claims", "snapshots"] as const;
+const storageTabs = ["center", "classes", "volumes", "claims", "snapshots"] as const;
 type StorageTab = (typeof storageTabs)[number];
+const StorageCenterPanel = lazy(() => import("@/features/storage/storage-center").then((module) => ({ default: module.StorageCenterPanel })));
 const PersistentVolumeClaimFormDialog = lazy(() => import("@/features/storage/persistent-volume-claim-form-dialog").then((module) => ({ default: module.PersistentVolumeClaimFormDialog })));
 const PersistentVolumeFormDialog = lazy(() => import("@/features/storage/persistent-volume-form-dialog").then((module) => ({ default: module.PersistentVolumeFormDialog })));
 const StorageClassFormDialog = lazy(() => import("@/features/storage/storage-class-form-dialog").then((module) => ({ default: module.StorageClassFormDialog })));
@@ -46,7 +47,7 @@ export function StoragePage() {
   const queryClient = useQueryClient();
   const q = search.q ?? "";
   const namespace = search.namespace ?? "";
-  const tab: StorageTab = isStorageTab(search.tab) ? search.tab : "classes";
+  const tab: StorageTab = isStorageTab(search.tab) ? search.tab : "center";
   const classPager = useCursorPagination(`storageclasses|${q}`, 20);
   const volumePager = useCursorPagination(`persistentvolumes|${q}`, 20);
   const claimPager = useCursorPagination(`persistentvolumeclaims|${namespace}|${q}`, 20);
@@ -157,6 +158,7 @@ export function StoragePage() {
     { label: "删除快照", icon: <Trash2 className="h-4 w-4" />, onSelect: () => setDeletingSnapshot(item), destructive: true, disabled: !snapshotCaps.delete, separatorBefore: true },
   ];
   const createAction = () => {
+    if (tab === "center") return null;
     if (tab === "classes") return <ActionTooltip content={classCreateHint}><Button onClick={openClassCreate} disabled={Boolean(classCreateHint)}><Plus className="h-4 w-4" />创建 StorageClass</Button></ActionTooltip>;
     if (tab === "volumes") return <ActionTooltip content={volumeCreateHint}><Button onClick={openVolumeCreate} disabled={Boolean(volumeCreateHint)}><Plus className="h-4 w-4" />创建 PV</Button></ActionTooltip>;
     if (tab === "snapshots") return <ActionTooltip content={snapshotCreateHint}><Button onClick={() => setSnapshotForm({ namespace })} disabled={Boolean(snapshotCreateHint)}><Plus className="h-4 w-4" />创建快照</Button></ActionTooltip>;
@@ -167,13 +169,14 @@ export function StoragePage() {
       <PageHeader
         title="存储"
         breadcrumb="存储 / 持久化存储"
-        description="管理 StorageClass、PersistentVolume、PersistentVolumeClaim 与 CSI 快照，并检查绑定和使用影响。"
+        description={tab === "center" ? "发现、安装、验证和诊断集群存储方案，同时保留 StorageClass、PV、PVC 与快照的直接管理能力。" : "管理 StorageClass、PersistentVolume、PersistentVolumeClaim 与 CSI 快照，并检查绑定和使用影响。"}
         actions={createAction()}
       />
-      {noClasses ? <div className="mb-4 rounded-lg border border-warning/35 bg-warning/10 px-4 py-3 text-sm text-warning"><HardDrive className="mr-2 inline h-4 w-4" />当前集群没有 StorageClass，不支持动态持久化卷申请。已有 PV/PVC 仍可正常查看。</div> : null}
-      <div className="mb-3 flex min-w-0 flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center"><SearchInput value={q} onChange={(value) => updateSearch({ q: value || undefined })} placeholder="搜索存储资源" /><NamespaceSelect value={namespace} onChange={(value) => updateSearch({ namespace: value || undefined })} /></div>
-      <Tabs value={tab} onValueChange={(value) => { if (isStorageTab(value)) updateSearch({ tab: value === "classes" ? undefined : value }); }}>
-        <TabsList><TabsTrigger value="classes">StorageClass ({classes.data?.meta.totalKnown ? classes.data.meta.total : classes.data?.items.length ?? 0})</TabsTrigger><TabsTrigger value="volumes">PV ({volumes.data?.meta.totalKnown ? volumes.data.meta.total : volumes.data?.items.length ?? 0})</TabsTrigger><TabsTrigger value="claims">PVC ({claims.data?.meta.totalKnown ? claims.data.meta.total : claims.data?.items.length ?? 0})</TabsTrigger><TabsTrigger value="snapshots">快照 ({snapshotFeature.data?.available ? (snapshots.data?.meta.totalKnown ? snapshots.data.meta.total : snapshots.data?.items.length ?? 0) : "不可用"})</TabsTrigger></TabsList>
+      {tab !== "center" && noClasses ? <div className="mb-4 rounded-lg border border-warning/35 bg-warning/10 px-4 py-3 text-sm text-warning"><HardDrive className="mr-2 inline h-4 w-4" />当前集群没有 StorageClass，不支持动态持久化卷申请。已有 PV/PVC 仍可正常查看。</div> : null}
+      {tab !== "center" ? <div className="mb-3 flex min-w-0 flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center"><SearchInput value={q} onChange={(value) => updateSearch({ q: value || undefined })} placeholder="搜索存储资源" /><NamespaceSelect value={namespace} onChange={(value) => updateSearch({ namespace: value || undefined })} /></div> : null}
+      <Tabs value={tab} onValueChange={(value) => { if (isStorageTab(value)) updateSearch({ tab: value === "center" ? undefined : value }); }}>
+        <TabsList><TabsTrigger value="center">存储中心</TabsTrigger><TabsTrigger value="classes">StorageClass ({classes.data?.meta.totalKnown ? classes.data.meta.total : classes.data?.items.length ?? 0})</TabsTrigger><TabsTrigger value="volumes">PV ({volumes.data?.meta.totalKnown ? volumes.data.meta.total : volumes.data?.items.length ?? 0})</TabsTrigger><TabsTrigger value="claims">PVC ({claims.data?.meta.totalKnown ? claims.data.meta.total : claims.data?.items.length ?? 0})</TabsTrigger><TabsTrigger value="snapshots">快照 ({snapshotFeature.data?.available ? (snapshots.data?.meta.totalKnown ? snapshots.data.meta.total : snapshots.data?.items.length ?? 0) : "不可用"})</TabsTrigger></TabsList>
+        <TabsContent value="center"><Suspense fallback={<LoadingState label="正在加载存储中心" />}><StorageCenterPanel /></Suspense></TabsContent>
         <TabsContent value="classes">
           {classes.isError ? <ErrorState error={classes.error} onRetry={() => retryListQuery(classPager, classes.error, classes.refetch)} /> : noClasses ? <EmptyState title="没有 StorageClass" description="当前集群未安装动态存储供应器。需要持久卷时请先安装 CSI Driver 并创建 StorageClass。" /> : (
             <DataTable columns={[

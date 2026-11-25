@@ -18,7 +18,10 @@ import type {
   HelmExecutionOptionsInput,
   HelmOperationResource,
 } from "@/api/types";
-import { NamespaceSelect } from "@/components/layout/namespace-select";
+import {
+  NamespacePicker,
+  type NamespacePlan,
+} from "@/components/layout/namespace-picker";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -169,14 +172,23 @@ export function HelmInstallDialog({
   chart,
   open,
   onOpenChange,
+  initialNamespace,
+  initialCreateNamespace,
+  initialReleaseName,
+  onInstalled,
 }: {
   chart: HelmChartDetail;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  initialNamespace?: string;
+  initialCreateNamespace?: boolean;
+  initialReleaseName?: string;
+  onInstalled?: (operation: HelmChartOperation) => void;
 }) {
   const navigate = useNavigate();
   const [mode, setMode] = useState<Mode>("install");
   const [namespace, setNamespace] = useState("");
+  const [namespacePlan, setNamespacePlan] = useState<NamespacePlan>();
   const [releaseName, setReleaseName] = useState("");
   const [version, setVersion] = useState(chart.version);
   const [manualVersion, setManualVersion] = useState(false);
@@ -193,18 +205,31 @@ export function HelmInstallDialog({
   useEffect(() => {
     if (!open) return;
     setMode("install");
-    setNamespace("");
-    setReleaseName("");
+    setNamespace(initialNamespace ?? "");
+    setNamespacePlan(undefined);
+    setReleaseName(initialReleaseName ?? "");
     setVersion(chart.version);
     setManualVersion(false);
     setManualRelease(false);
     setValues(chart.values || "{}");
-    setOptions({ ...defaultHelmExecutionOptions });
+    setOptions({
+      ...defaultHelmExecutionOptions,
+      createNamespace: initialCreateNamespace ?? false,
+    });
     setPlan(undefined);
     setOperation(undefined);
     setConfirmation("");
     setError("");
-  }, [open, chart.repositoryId, chart.name, chart.version, chart.values]);
+  }, [open, chart.repositoryId, chart.name, chart.version, chart.values, initialCreateNamespace, initialNamespace, initialReleaseName]);
+
+  useEffect(() => {
+    if (!open || !namespacePlan || plan) return;
+    setOptions((current) =>
+      current.createNamespace === namespacePlan.createRequired
+        ? current
+        : { ...current, createNamespace: namespacePlan.createRequired },
+    );
+  }, [namespacePlan, open, plan]);
 
   const releases = useQuery({
     queryKey: ["helm-releases", namespace],
@@ -350,6 +375,10 @@ export function HelmInstallDialog({
           : `${result.releaseName} 升级完成`,
       );
       onOpenChange(false);
+      if (onInstalled) {
+        onInstalled(result);
+        return;
+      }
       void navigate({
         to: "/helm/releases/$namespace/$name",
         params: { namespace: result.namespace, name: result.releaseName },
@@ -408,12 +437,12 @@ export function HelmInstallDialog({
               </div>
               <div className="min-w-0 space-y-1.5">
                 <Label>目标命名空间</Label>
-                <NamespaceSelect
+                <NamespacePicker
+                  id="helm-install-namespace"
+                  label="Chart 安装命名空间"
                   value={namespace}
                   onChange={changeNamespace}
-                  allowAll={false}
-                  ariaLabel="Chart 安装命名空间"
-                  className="w-full"
+                  onPlanChange={setNamespacePlan}
                 />
               </div>
               <div className="min-w-0 space-y-1.5">

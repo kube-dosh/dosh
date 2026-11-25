@@ -5,8 +5,6 @@ import { LoginPage } from "@/routes/login-page";
 import { OverviewPage } from "@/features/overview/overview-page";
 import { NodesPage } from "@/features/nodes/nodes-page";
 import { NodeDetailPage } from "@/features/nodes/node-detail-page";
-import { WorkloadsPage } from "@/features/workloads/workloads-page";
-import { WorkloadDetailPage } from "@/features/workloads/workload-detail-page";
 import { PodsPage } from "@/features/workloads/pods-page";
 import { PodDetailPage } from "@/features/workloads/pod-detail-page";
 import { NetworkPage } from "@/features/network/network-page";
@@ -114,8 +112,18 @@ const helmRepositoriesRoute = createRoute({
 });
 const nodesRoute = createRoute({ getParentRoute: () => appRoute, path: "/nodes", component: NodesPage, validateSearch: parseListSearch });
 const nodeDetailRoute = createRoute({ getParentRoute: () => appRoute, path: "/nodes/$name", component: NodeDetailPage, validateSearch: parseListSearch });
-const workloadsRoute = createRoute({ getParentRoute: () => appRoute, path: "/workloads", component: WorkloadsPage, validateSearch: parseListSearch });
-const workloadDetailRoute = createRoute({ getParentRoute: () => appRoute, path: "/workloads/$kind/$namespace/$name", component: WorkloadDetailPage, validateSearch: parseListSearch });
+const workloadsRoute = createRoute({
+  getParentRoute: () => appRoute,
+  path: "/workloads",
+  component: lazyRouteComponent(() => import("@/features/workloads/workloads-page"), "WorkloadsPage"),
+  validateSearch: parseListSearch,
+});
+const workloadDetailRoute = createRoute({
+  getParentRoute: () => appRoute,
+  path: "/workloads/$kind/$namespace/$name",
+  component: lazyRouteComponent(() => import("@/features/workloads/workload-detail-page"), "WorkloadDetailPage"),
+  validateSearch: parseListSearch,
+});
 const podsRoute = createRoute({ getParentRoute: () => appRoute, path: "/pods", component: PodsPage, validateSearch: parseListSearch });
 const podDetailRoute = createRoute({ getParentRoute: () => appRoute, path: "/pods/$namespace/$name", component: PodDetailPage, validateSearch: parseListSearch });
 const networkRoute = createRoute({ getParentRoute: () => appRoute, path: "/network", component: NetworkPage, validateSearch: parseListSearch });

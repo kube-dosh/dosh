@@ -42,11 +42,18 @@ import type {
   ServerCertificate,
   ServiceDetail,
   SessionResponse,
+  StorageCenter,
   StorageClassDetail,
+  StoragePreflight,
+  StorageVerification,
   SystemInfo,
   UpdateStatus,
   VolumeSnapshot,
+  WorkloadContainerInventory,
   WorkloadDetail,
+  WorkloadPodTemplate,
+  WorkloadPodTemplateResult,
+  WorkloadPodTemplateUpdateInput,
   WorkloadRevision,
   WorkloadSummary,
   UserPreferences,
@@ -223,6 +230,101 @@ const workloadDetail: WorkloadDetail = {
   replicaSets: [
     { name: "web-7d8f9c6b5", revision: 4, current: true, desired: 2, ready: 2, available: 2, images: ["nginx:alpine"], createdAt: "2026-11-02T00:00:00Z" },
     { name: "web-64c8b7d9f", revision: 3, current: false, desired: 0, ready: 0, available: 0, images: ["nginx:1.24"], createdAt: "2026-10-20T00:00:00Z" },
+  ],
+};
+
+const workloadPodTemplate: WorkloadPodTemplate = {
+  kind: "Deployment",
+  namespace: "default",
+  name: "web",
+  resourceVersion: "42",
+  selector: { app: "web" },
+  protectedLabels: ["app"],
+  editable: true,
+  warnings: [],
+  template: {
+    metadata: { labels: { app: "web" }, annotations: {} },
+    spec: {
+      initContainers: [{ name: "init-config", image: "busybox:1.37" }],
+      containers: [{
+        name: "web",
+        image: "nginx:alpine",
+        ports: [{ name: "http", containerPort: 80, protocol: "TCP" }],
+        resources: { requests: { cpu: "100m", memory: "128Mi" }, limits: { cpu: "500m", memory: "512Mi" } },
+        env: [
+          { name: "MODE", value: "production" },
+          { name: "TOKEN", valueFrom: { secretKeyRef: { name: "web-secret", key: "token" } } },
+        ],
+        volumeMounts: [{ name: "config", mountPath: "/etc/web", readOnly: true }],
+        readinessProbe: { httpGet: { path: "/ready", port: 80 }, initialDelaySeconds: 5, periodSeconds: 10 },
+      }],
+      volumes: [{ name: "config", configMap: { name: "web-config" } }],
+    },
+  },
+  yaml: "metadata:\n  labels:\n    app: web\nspec:\n  containers:\n    - name: web\n      image: nginx:alpine\n",
+};
+
+const workloadContainerInventory: WorkloadContainerInventory = {
+  kind: "Deployment",
+  namespace: "default",
+  name: "web",
+  resourceVersion: "42",
+  selector: { app: "web" },
+  templateEditable: true,
+  metricsAvailable: true,
+  warnings: [],
+  refreshedAt: "2026-11-25T10:00:00Z",
+  containers: [
+    {
+      ...workloadDetail.initContainers![0],
+      type: "initContainer",
+      init: true,
+      sidecar: false,
+      runtime: { pods: 1, running: 0, ready: 0, terminated: 1, restarts: 0, metricsAvailable: false },
+      instances: [{
+        pod: "web-abcdef-12345",
+        namespace: "default",
+        node: "worker-0001",
+        image: "busybox:1.37",
+        state: "Terminated",
+        reason: "Completed",
+        ready: false,
+        restartCount: 0,
+        metricsAvailable: false,
+      }],
+    },
+    {
+      ...workloadDetail.containers[0],
+      type: "container",
+      init: false,
+      sidecar: false,
+      runtime: { pods: 2, running: 2, ready: 2, terminated: 0, restarts: 0, metricsAvailable: true, cpuUsageMilli: 43, memoryUsageBytes: 58720256 },
+      instances: [{
+        pod: "web-abcdef-12345",
+        namespace: "default",
+        node: "worker-0001",
+        image: "nginx:alpine",
+        state: "Running",
+        ready: true,
+        restartCount: 0,
+        startedAt: "2026-11-02T00:00:00Z",
+        metricsAvailable: true,
+        cpuUsageMilli: 25,
+        memoryUsageBytes: 33554432,
+      }, {
+        pod: "web-abcdef-67890",
+        namespace: "default",
+        node: "worker-0002",
+        image: "nginx:alpine",
+        state: "Running",
+        ready: true,
+        restartCount: 0,
+        startedAt: "2026-11-02T00:00:00Z",
+        metricsAvailable: true,
+        cpuUsageMilli: 18,
+        memoryUsageBytes: 25165824,
+      }],
+    },
   ],
 };
 
@@ -723,6 +825,73 @@ const persistentVolumeClaimDetail: PersistentVolumeClaimDetail = {
 const volumeSnapshot: VolumeSnapshot = {
   name: "snap-daily", namespace: "production", resourceVersion: "21", sourcePvc: "data-claim", volumeSnapshotClassName: "csi-snap",
   status: "Ready", readyToUse: true, restoreSizeBytes: 5 * 1024 * 1024 * 1024, createdAt: "2026-11-19T01:00:00Z",
+};
+
+const storageCenterFixture: StorageCenter = {
+  summary: {
+    nodeCount: 3, readyNodeCount: 3, storageClassCount: 2, defaultStorageClassCount: 1,
+    persistentVolumeCount: 1, persistentVolumeClaimCount: 1, pendingClaimCount: 0,
+    managedIntegrationCount: 1, adoptedIntegrationCount: 1, volumeSnapshotAvailable: true,
+  },
+  catalog: [
+    {
+      id: "local-path-provisioner", name: "Local Path Provisioner", vendor: "Rancher", project: "rancher/local-path-provisioner", category: "node-local",
+      description: "使用节点本地目录动态供应 PV，适合单节点、开发、边缘和测试环境。",
+      supportLevel: "verified", status: "available", defaultNamespace: "local-path-storage", defaultReleaseName: "local-path-provisioner",
+      provisioners: ["rancher.io/local-path"], expectedStorageClasses: ["local-path"], capabilities: ["动态供应", "ReadWriteOnce", "节点本地数据"],
+      prerequisites: ["节点本地磁盘可用"], warnings: ["Local Path 不是高可用存储。"], installed: true, integrationId: "storage-local-path",
+      chart: { repositoryId: "repo-1", repositoryName: "trusted", chartName: "local-path-provisioner", version: "0.0.30", digest: "sha256:abc", deprecated: false },
+    },
+    {
+      id: "nfs-subdir-external-provisioner", name: "NFS Subdir External Provisioner", vendor: "Kubernetes SIGs", project: "kubernetes-sigs/nfs-subdir-external-provisioner", category: "network-file",
+      description: "基于已有 NFS 服务动态创建子目录并供应 PV。", supportLevel: "verified", status: "chart-missing",
+      statusMessage: "已配置 Helm 仓库，但未找到 Chart nfs-subdir-external-provisioner。", defaultNamespace: "nfs-provisioning",
+      defaultReleaseName: "nfs-subdir-provisioner", provisioners: ["cluster.local/nfs-subdir-external-provisioner"], expectedStorageClasses: ["nfs-client"],
+      capabilities: ["动态供应", "ReadWriteMany"], prerequisites: ["可访问的 NFS Server"], installed: false,
+    },
+  ],
+  integrations: [
+    {
+      id: "storage-local-path", name: "Local Path Provisioner", kind: "provisioner", provisioner: "rancher.io/local-path",
+      source: "managed", status: "healthy", releaseName: "local-path-provisioner", releaseNamespace: "local-path-storage",
+      storageClasses: ["local-path"], driverRegistered: false, podCount: 1, readyPodCount: 1, defaultClass: "local-path",
+      message: "驱动工作负载全部处于 Running 状态。",
+    },
+    {
+      id: "storage-adopted", name: "CSI Example", kind: "csi", provisioner: "csi.example.test", source: "adopted",
+      status: "healthy", storageClasses: ["data-standard"], driverRegistered: true, podCount: 1, readyPodCount: 1,
+      message: "驱动工作负载全部处于 Running 状态。",
+    },
+  ],
+  diagnostics: [
+    { id: "storage.no-default-class", severity: "info", title: "存储策略检查", message: "建议为业务显式指定 StorageClass。", suggestion: "按业务需要配置默认类。" },
+  ],
+  generatedAt: "2026-11-24T00:00:00Z",
+};
+
+const storagePreflightFixture: StoragePreflight = {
+  catalogId: "local-path-provisioner", status: "pass",
+  checks: [
+    { id: "chart", title: "Chart 来源", status: "pass", message: "trusted / local-path-provisioner v0.0.30 已固定。" },
+    { id: "namespace", title: "目标命名空间", status: "pass", message: "安装目标为 local-path-storage" },
+    { id: "nodes", title: "节点可用性", status: "pass", message: "3/3 个节点 Ready。" },
+    { id: "helm-rbac", title: "Helm 存储权限", status: "pass", message: "已具备目标命名空间 Helm Release Secret 写入权限。" },
+  ],
+  warnings: [],
+};
+
+const storageVerificationFixture: StorageVerification = {
+  status: "pass", namespace: "production", storageClass: "data-standard",
+  checks: [
+    { id: "storage-class", title: "StorageClass", status: "pass", message: "data-standard 使用 Provisioner csi.example.test。" },
+    { id: "driver-pods", title: "驱动工作负载", status: "pass", message: "发现 1/1 个驱动工作负载 Running。" },
+    { id: "smoke-test", title: "Smoke Test", status: "pass", message: "PVC 已绑定且 Pod 已成功挂载存储。" },
+  ],
+  smokeTest: {
+    name: "dosh-smoke", namespace: "production", storageClass: "data-standard", pvcName: "dosh-smoke", podName: "dosh-smoke",
+    bound: true, podRunning: true, volumeName: "pv-smoke", durationMs: 3200, cleanedUp: true, message: "PVC 已绑定且 Pod 已成功挂载存储。",
+  },
+  warnings: [],
 };
 
 const overview: Overview = {
@@ -1482,6 +1651,21 @@ async function installApiMocks(page: Page, options: { authenticated?: boolean; a
       return json(route, { status: "deleting" }, 202);
     }
     if (path === "/api/v1/workloads/deployment/default/web") return json(route, workloadDetail);
+    if (path === "/api/v1/workloads/deployment/default/web/containers" && method === "GET") return json(route, workloadContainerInventory);
+    if (path === "/api/v1/workloads/deployment/default/web/pod-template" && method === "GET") return json(route, workloadPodTemplate);
+    if (path === "/api/v1/workloads/deployment/default/web/pod-template" && method === "POST") {
+      const body = request.postDataJSON() as WorkloadPodTemplateUpdateInput;
+      const result: WorkloadPodTemplateResult = {
+        ...workloadPodTemplate,
+        template: body.template,
+        resourceVersion: "43",
+        changed: true,
+        diff: [{ path: "spec.containers[0].image", before: "nginx:alpine", after: "registry.example.test/web:2" }],
+        rollout: { effect: "rollingUpdate", message: "模板已保存，将创建新的 ReplicaSet 并触发滚动发布" },
+        newWarnings: [],
+      };
+      return json(route, result);
+    }
     if (path === "/api/v1/workloads/deployment/default/web/logs") {
       return route.fulfill({
         status: 200,
@@ -1527,6 +1711,8 @@ async function installApiMocks(page: Page, options: { authenticated?: boolean; a
       return json(route, { name: "debug-e2e01", status: "created" }, 201);
     }
     if (path === "/api/v1/pods/default/web-abcdef-12345") return json(route, podDetail);
+    const podDetailMatch = path.match(/^\/api\/v1\/pods\/default\/([^/]+)$/);
+    if (podDetailMatch && method === "GET") return json(route, { ...podDetail, name: decodeURIComponent(podDetailMatch[1]) });
     if (path === "/api/v1/pods/default/web-abcdef-12345/logs") {
       return route.fulfill({
         status: 200,
@@ -1640,6 +1826,9 @@ async function installApiMocks(page: Page, options: { authenticated?: boolean; a
       const name = body.yaml.match(/^  name:\s*(\S+)/m)?.[1] ?? "web";
       return json(route, { kind, namespace: "default", name, yaml: body.yaml });
     }
+    if (path === "/api/v1/storage/center" && method === "GET") return json(route, storageCenterFixture);
+    if (path === "/api/v1/storage/center/preflight" && method === "POST") return json(route, storagePreflightFixture);
+    if (path === "/api/v1/storage/center/verify" && method === "POST") return json(route, storageVerificationFixture);
     if (path === "/api/v1/storageclasses" && method === "GET") {
       const q = new URL(request.url()).searchParams.get("q") ?? "";
       return json(route, list([
@@ -2188,7 +2377,7 @@ test("Helm Release 列表、详情和历史版本可读且敏感值已遮蔽", a
   await expect(page.getByRole("link", { name: "web", exact: true })).toBeVisible();
   await page.getByRole("link", { name: "web", exact: true }).click();
   await expect(page).toHaveURL(/\/helm\/releases\/default\/web/);
-  await expect(page.getByRole("heading", { name: "web", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "web", exact: true, level: 1 })).toBeVisible();
   await expect(page.getByText("revision #2")).toBeVisible();
   await expect(page.getByText("部署说明")).toBeVisible();
   await page.getByRole("tab", { name: /Values/ }).click();
@@ -3480,25 +3669,30 @@ test("工作负载扩容发送带 CSRF 的受控写请求", async ({ page }) => 
 test("工作负载镜像更新携带容器和资源版本并发送 CSRF", async ({ page }) => {
   await installApiMocks(page);
   await page.goto("/workloads/deployment/default/web");
-  await expect(page.getByRole("heading", { name: "web", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "web", exact: true, level: 1 })).toBeVisible();
 
   await page.getByRole("button", { name: "更新镜像" }).click();
   await expect(page.getByRole("dialog", { name: "更新容器镜像" })).toBeVisible();
-  await page.getByLabel("镜像地址").fill("registry.example.test/web:2");
+  await page.locator("#workload-image-row-web").getByLabel("镜像地址").fill("registry.example.test/web:2");
 
   const imageRequest = page.waitForRequest((request) =>
-    request.method() === "POST" && new URL(request.url()).pathname === "/api/v1/workloads/deployment/default/web/image",
+    request.method() === "POST" && new URL(request.url()).pathname === "/api/v1/workloads/deployment/default/web/pod-template",
   );
   await page.getByRole("button", { name: "确认更新" }).click();
   const request = await imageRequest;
 
   expect(request.headers()["x-csrf-token"]).toBe(csrfToken);
-  expect(request.postDataJSON()).toEqual({
-    containerName: "web",
-    image: "registry.example.test/web:2",
+  expect(request.postDataJSON()).toMatchObject({
     resourceVersion: "42",
+    source: "form",
+    template: {
+      spec: {
+        initContainers: [{ name: "init-config", image: "busybox:1.37" }],
+        containers: [{ name: "web", image: "registry.example.test/web:2" }],
+      },
+    },
   });
-  await expect(page.getByText("镜像已更新，滚动发布已触发")).toBeVisible();
+  await expect(page.getByText("已更新 1 个容器镜像，滚动发布已触发")).toBeVisible();
   await expect(page.getByRole("dialog", { name: "更新容器镜像" })).toBeHidden();
 });
 
@@ -3548,8 +3742,9 @@ test("镜像选择器可搜索仓库与 Tag 并默认锁定镜像所属仓库", 
   await page.goto("/workloads/deployment/default/web");
   await page.getByRole("button", { name: "更新镜像", exact: true }).click();
   const updateDialog = page.getByRole("dialog", { name: "更新容器镜像" });
-  await updateDialog.getByLabel("镜像地址").fill("registry.example.com/platform/api:1.0.0");
-  await updateDialog.getByRole("button", { name: "浏览镜像仓" }).click();
+  let webImageRow = updateDialog.locator("#workload-image-row-web");
+  await webImageRow.getByLabel("镜像地址").fill("registry.example.com/platform/api:1.0.0");
+  await webImageRow.getByRole("button", { name: "浏览镜像仓" }).click();
 
   const picker = page.getByRole("dialog", { name: "选择容器镜像" });
   await expect(picker).toBeVisible();
@@ -3581,15 +3776,15 @@ test("镜像选择器可搜索仓库与 Tag 并默认锁定镜像所属仓库", 
   await expect(picker.getByText("registry.example.com/platform/api:2.0.0", { exact: true })).toBeVisible();
   await picker.getByRole("button", { name: "使用此镜像", exact: true }).click();
   await expect(picker).toBeHidden();
-  await expect(updateDialog.getByLabel("镜像地址")).toHaveValue("registry.example.com/platform/api:2.0.0");
+  webImageRow = updateDialog.locator("#workload-image-row-web");
+  await expect(webImageRow.getByLabel("镜像地址")).toHaveValue("registry.example.com/platform/api:2.0.0");
 
-  const imageRequest = page.waitForRequest((request) => request.method() === "POST" && new URL(request.url()).pathname === "/api/v1/workloads/deployment/default/web/image");
+  const imageRequest = page.waitForRequest((request) => request.method() === "POST" && new URL(request.url()).pathname === "/api/v1/workloads/deployment/default/web/pod-template");
   await updateDialog.getByRole("button", { name: "确认更新", exact: true }).click();
-  expect((await imageRequest).postDataJSON()).toEqual({
-    containerName: "web",
-    image: "registry.example.com/platform/api:2.0.0",
-    registryId: "primary",
+  expect((await imageRequest).postDataJSON()).toMatchObject({
     resourceVersion: "42",
+    source: "form",
+    template: { spec: { containers: [{ name: "web", image: "registry.example.com/platform/api:2.0.0" }] } },
   });
 });
 
@@ -3606,7 +3801,8 @@ test("镜像仓页面与镜像选择器在 320px 和 390px 视口内无横向溢
 
     await page.goto("/workloads/deployment/default/web");
     await page.getByRole("button", { name: "更新镜像", exact: true }).click();
-    await page.getByRole("button", { name: "浏览镜像仓" }).click();
+    const webImageRow = page.locator("#workload-image-row-web");
+    await webImageRow.getByRole("button", { name: "浏览镜像仓" }).click();
     const picker = page.getByRole("dialog", { name: "选择容器镜像" });
     await expect(picker).toBeVisible();
     await expectElementInsideViewport(page, picker, `${viewport.width}px image picker`);
@@ -3637,7 +3833,7 @@ test("镜像选择器显示仓库与 Tag 接口失败的诊断信息", async ({ 
   });
   await page.goto("/workloads/deployment/default/web");
   await page.getByRole("button", { name: "更新镜像", exact: true }).click();
-  await page.getByRole("button", { name: "浏览镜像仓" }).click();
+  await page.locator("#workload-image-row-web").getByRole("button", { name: "浏览镜像仓" }).click();
 
   const picker = page.getByRole("dialog", { name: "选择容器镜像" });
   await picker.getByRole("button", { name: "展开仓库列表" }).click();
@@ -3650,48 +3846,77 @@ test("镜像选择器显示仓库与 Tag 接口失败的诊断信息", async ({ 
   await expect(picker.getByRole("alert").filter({ hasText: "Tag 列表不可用" })).toContainText("registry request failed: context deadline exceeded");
 });
 
-test("工作负载容器配置可查看并更新环境变量", async ({ page }) => {
+test("工作负载容器中心展示全部容器、实例和配置入口", async ({ page }) => {
   await installApiMocks(page);
   await page.goto("/workloads/deployment/default/web?tab=config");
-  await expect(page.getByRole("heading", { name: "web", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "web", exact: true, level: 1 })).toBeVisible();
+  const center = page.getByTestId("workload-container-center");
+  await expect(center).toBeVisible();
+  await expect(center.getByTestId("container-init-config")).toContainText("Init Container");
+  const web = center.getByTestId("container-web");
+  await expect(web).toContainText("业务容器");
+  await expect(web).toContainText("2 个实例");
 
-  await expect(page.getByText("环境变量", { exact: true })).toBeVisible();
-  await expect(page.getByText("MODE", { exact: true })).toBeVisible();
-  await expect(page.getByText("production", { exact: true })).toBeVisible();
-  await expect(page.getByText("/etc/web", { exact: true })).toBeVisible();
-  await expect(page.getByText("HTTP GET http://Pod/ready:80", { exact: true })).toBeVisible();
+  await web.getByRole("button", { name: "详情与实例" }).click();
+  await expect(web.getByText("MODE=production")).toBeVisible();
+  await expect(web.getByText("config → /etc/web")).toBeVisible();
+  await expect(web.getByText("Readiness · httpGet")).toBeVisible();
+  await expect(web.getByTestId("container-instance").first()).toContainText("web-abcdef-12345");
+  await expect(web.getByTestId("container-instance").nth(1)).toContainText("web-abcdef-67890");
 
-  await page.getByRole("button", { name: "编辑环境变量" }).click();
-  const dialog = page.getByRole("dialog", { name: "编辑环境变量" });
-  await expect(dialog).toBeVisible();
-  await dialog.getByRole("button", { name: "添加环境变量" }).click();
-  await dialog.getByLabel("变量 3 名称").fill("FEATURE_FLAG");
-  await dialog.getByLabel("变量 3 值").fill("enabled");
+  await web.getByRole("button", { name: "终端" }).click();
+  const terminalDialog = page.getByRole("dialog", { name: "容器终端 · web" });
+  await expect(terminalDialog).toBeVisible();
+  await expect(terminalDialog.getByRole("button", { name: "web-abcdef-12345" })).toBeVisible();
+  await terminalDialog.getByRole("button", { name: "web-abcdef-67890" }).click();
+  await expect(terminalDialog.getByText("default/web-abcdef-67890", { exact: false })).toBeVisible();
+  await terminalDialog.getByRole("button", { name: "关闭" }).click();
 
-  const configRequest = page.waitForRequest((request) =>
-    request.method() === "PUT" && new URL(request.url()).pathname === "/api/v1/workloads/deployment/default/web/containers/web/config",
-  );
-  await dialog.getByRole("button", { name: "保存配置" }).click();
-  const request = await configRequest;
-  expect(request.headers()["x-csrf-token"]).toBe(csrfToken);
-  expect(request.postDataJSON()).toMatchObject({
-    resourceVersion: "42",
-    volumeMounts: [{ name: "config", mountPath: "/etc/web", readOnly: true }],
-    env: [
-      { name: "MODE", value: "production" },
-      { name: "TOKEN", value: "", valueFrom: { kind: "secretKeyRef", name: "web-secret", key: "token" } },
-      { name: "FEATURE_FLAG", value: "enabled" },
-    ],
-    readinessProbe: { type: "httpGet", path: "/ready", port: "80" },
-  });
-  await expect(page.getByText("容器配置已更新，滚动发布已触发")).toBeVisible();
-  await expect(dialog).toBeHidden();
+  await web.getByRole("button", { name: "编辑配置" }).click();
+  const editor = page.getByRole("dialog", { name: "Pod 模板 · web" });
+  await expect(editor).toBeVisible();
+  await expect(editor.getByText("完整 YAML", { exact: true })).toBeVisible();
+  await editor.getByRole("button", { name: "取消" }).click();
+  await expect(editor).toBeHidden();
+});
+
+test("容器中心与镜像/模板编辑器在桌面和移动端无横向溢出", async ({ page }) => {
+  await installApiMocks(page);
+  for (const viewport of [{ width: 1440, height: 960 }, { width: 768, height: 900 }, { width: 390, height: 844 }, { width: 320, height: 720 }]) {
+    await page.setViewportSize(viewport);
+    await page.goto("/workloads/deployment/default/web?tab=config");
+    await expect(page.getByRole("heading", { name: "web", exact: true, level: 1 })).toBeVisible();
+    const center = page.getByTestId("workload-container-center");
+    await expect(center).toBeVisible();
+    await expectNoPageOverflow(page, `${viewport.width}px container center`);
+    const overflow = await center.evaluate((element) => ({ scrollWidth: element.scrollWidth, clientWidth: element.clientWidth }));
+    expect(overflow.scrollWidth, `${viewport.width}px container center must not overflow horizontally`).toBeLessThanOrEqual(overflow.clientWidth + 1);
+    await page.screenshot({ path: `test-results/container-center/center-${viewport.width}.png`, fullPage: true });
+
+    const web = center.getByTestId("container-web");
+    await web.getByRole("button", { name: "更新镜像" }).click();
+    const imageDialog = page.getByRole("dialog", { name: "更新容器镜像" });
+    await expect(imageDialog).toBeVisible();
+    await expectElementInsideViewport(page, imageDialog, `${viewport.width}px image update dialog`);
+    await expectNoHorizontalOverflowInside(imageDialog, `${viewport.width}px image update dialog`);
+    await expectNoPageOverflow(page, `${viewport.width}px image update dialog`);
+    await imageDialog.getByRole("button", { name: "取消" }).click();
+
+    await web.getByRole("button", { name: "编辑配置" }).click();
+    const templateDialog = page.getByRole("dialog", { name: "Pod 模板 · web" });
+    await expect(templateDialog).toBeVisible();
+    await expectElementInsideViewport(page, templateDialog, `${viewport.width}px pod template editor`);
+    await expectNoHorizontalOverflowInside(templateDialog, `${viewport.width}px pod template editor`);
+    await expectNoPageOverflow(page, `${viewport.width}px pod template editor`);
+    await page.screenshot({ path: `test-results/container-center/template-${viewport.width}.png`, fullPage: false });
+    await templateDialog.getByRole("button", { name: "取消" }).click();
+  }
 });
 
 test("工作负载实例中的节点名称可跳转到节点详情", async ({ page }) => {
   await installApiMocks(page);
   await page.goto("/workloads/deployment/default/web?tab=pods");
-  await expect(page.getByRole("heading", { name: "web", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "web", exact: true, level: 1 })).toBeVisible();
 
   await page.getByRole("link", { name: "worker-0001", exact: true }).click();
   await expect(page).toHaveURL(/\/nodes\/worker-0001$/);
@@ -3880,7 +4105,7 @@ test("Deployment 发布进度与发布控制提交资源版本和滚动策略", 
   const rolloutRequests: WorkloadRequestBody[] = [];
   await installApiMocks(page, { workloadRolloutRequests: rolloutRequests });
   await page.goto("/workloads/deployment/default/web");
-  await expect(page.getByRole("heading", { name: "web", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "web", exact: true, level: 1 })).toBeVisible();
   await expect(page.getByText("发布进度")).toBeVisible();
   await expect(page.getByText("web-7d8f9c6b5")).toBeVisible();
   await expect(page.getByText("当前版本")).toBeVisible();
@@ -4244,7 +4469,7 @@ test("集群事件对象可跳转到资源详情并显示完整总数", async ({
   await expect(page.getByRole("link", { name: "Pod/web-event-10", exact: true })).toBeVisible();
   await deployment.click();
   await expect(page).toHaveURL(/\/workloads\/deployment\/default\/web$/);
-  await expect(page.getByRole("heading", { name: "web", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "web", exact: true, level: 1 })).toBeVisible();
 });
 
 test("Pod 日志可切换时间戳参数", async ({ page }) => {
@@ -4280,7 +4505,7 @@ test("详情页多标签可深链并加载事件与 YAML", async ({ page }) => {
   await page.goto("/workloads/deployment/default/web");
 
   await expect(page.getByRole("tab", { name: "概览", exact: true })).toBeVisible();
-  await expect(page.getByRole("tab", { name: "容器配置", exact: true })).toBeVisible();
+  await expect(page.getByRole("tab", { name: "容器", exact: true })).toBeVisible();
   await expect(page.getByRole("tab", { name: /实例/ })).toBeVisible();
   await expect(page.getByRole("tab", { name: "事件", exact: true })).toBeVisible();
   await expect(page.getByRole("tab", { name: "日志", exact: true })).toBeVisible();
@@ -5128,7 +5353,7 @@ test("移动端多容器创建、发布控制与 CronJob 执行弹窗无横向�
     await page.keyboard.press("Escape");
 
     await page.goto("/workloads/deployment/default/web");
-    await expect(page.getByRole("heading", { name: "web", exact: true })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "web", exact: true, level: 1 })).toBeVisible();
     await expect(page.getByText("发布进度")).toBeVisible();
     await page.getByRole("button", { name: "发布控制" }).click();
     dialog = page.getByRole("dialog", { name: "发布控制" });
@@ -5282,14 +5507,14 @@ test("命名空间支持输入名称确认后级联删除", async ({ page }) => 
 
 test("存储筛选写入 URL 并在刷新后恢复", async ({ page }) => {
   await installApiMocks(page);
-  await page.goto("/storage?q=logs");
+  await page.goto("/storage?tab=classes&q=logs");
 
   await expect(page.getByRole("cell", { name: "logs-fast", exact: true })).toBeVisible();
   await expect(page.getByRole("cell", { name: "data-standard", exact: true })).toHaveCount(0);
   await expect(page.getByPlaceholder("搜索存储资源")).toHaveValue("logs");
 
   await page.getByPlaceholder("搜索存储资源").fill("data");
-  await expect(page).toHaveURL(/\/storage\?q=data$/);
+  await expect(page).toHaveURL(/\/storage\?tab=classes&q=data$/);
   await page.reload();
   await expect(page.getByRole("cell", { name: "data-standard", exact: true })).toBeVisible();
   await expect(page.getByRole("cell", { name: "logs-fast", exact: true })).toHaveCount(0);
@@ -5302,6 +5527,100 @@ test("存储标签可深链并在刷新后保持", async ({ page }) => {
   await expect(page.getByRole("tab", { name: /PVC/ })).toHaveAttribute("aria-selected", "true");
   await page.reload();
   await expect(page.getByRole("tab", { name: /PVC/ })).toHaveAttribute("aria-selected", "true");
+});
+
+test("存储中心在桌面与移动端完成目录、预检和存储验证", async ({ page }) => {
+  await installApiMocks(page);
+  await page.goto("/storage");
+
+  await expect(page.getByRole("heading", { name: "存储中心", exact: true })).toBeVisible();
+  await expect(page.getByRole("tab", { name: "存储中心" })).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByText("Local Path Provisioner", { exact: true }).first()).toBeVisible();
+  await expect(page.getByText("rancher/local-path-provisioner", { exact: true }).first()).toBeVisible();
+  await expect(page.getByText("CSI Example", { exact: true })).toBeVisible();
+  await expectNoPageOverflow(page, "desktop storage center");
+
+  await page.getByRole("button", { name: "查看方案与预检" }).first().click();
+  const catalogDialog = page.getByRole("dialog", { name: "Local Path Provisioner" });
+  await expect(catalogDialog).toBeVisible();
+  await expectElementInsideViewport(page, catalogDialog, "desktop storage catalog dialog");
+  const namespacePicker = catalogDialog.getByRole("combobox", { name: "目标命名空间" });
+  await expect(namespacePicker).toContainText("local-path-storage（推荐，将新建）");
+  await namespacePicker.click();
+  const namespaceSearch = page.getByRole("searchbox", { name: "搜索 目标命名空间" });
+  await expect(namespaceSearch).toBeVisible();
+  await namespaceSearch.fill("prod");
+  await expect(page.getByRole("option", { name: "production", exact: true })).toBeVisible();
+  await namespaceSearch.fill("local");
+  await page.getByRole("option", { name: "local-path-storage（推荐，将新建）" }).click();
+  await catalogDialog.getByRole("button", { name: "运行预检" }).click();
+  await expect(catalogDialog.getByText("预检结果")).toBeVisible();
+  await expect(catalogDialog.getByText("Chart 来源", { exact: true })).toBeVisible();
+  await expectNoPageOverflow(page, "desktop storage catalog dialog");
+  await catalogDialog.getByRole("button", { name: "进入 Helm 安装" }).click();
+  const helmInstallDialog = page.getByRole("dialog", { name: /安装 local-path-provisioner/ });
+  await expect(helmInstallDialog).toBeVisible();
+  await expect(helmInstallDialog.getByLabel("Chart 安装命名空间")).toBeVisible();
+  await expectElementInsideViewport(page, helmInstallDialog, "desktop storage helm install dialog");
+  await expectNoPageOverflow(page, "desktop storage helm install dialog");
+  await helmInstallDialog.getByText("高级执行选项", { exact: true }).click();
+  await expect(helmInstallDialog.getByRole("checkbox", { name: /自动创建命名空间/ })).toBeChecked();
+  const planRequest = page.waitForRequest((request) => request.method() === "POST" && new URL(request.url()).pathname === "/api/v1/helm/charts/plan");
+  await helmInstallDialog.getByRole("button", { name: "生成安装计划" }).click();
+  const planPayload = (await planRequest).postDataJSON() as { options: { createNamespace: boolean } };
+  expect(planPayload.options.createNamespace).toBe(true);
+  await expect(helmInstallDialog.getByText("渲染资源预检")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(helmInstallDialog).toBeHidden();
+
+  await page.getByRole("button", { name: "验证存储" }).first().click();
+  const verifyDialog = page.getByRole("dialog", { name: "验证存储" });
+  await expect(verifyDialog).toBeVisible();
+  await verifyDialog.getByRole("combobox", { name: "存储验证命名空间" }).click();
+  await page.getByRole("option", { name: "production", exact: true }).click();
+  const verifyRequest = page.waitForRequest((request) => request.method() === "POST" && new URL(request.url()).pathname === "/api/v1/storage/center/verify");
+  await verifyDialog.getByRole("button", { name: "开始验证" }).click();
+  const payload = (await verifyRequest).postDataJSON() as { namespace: string; storageClass: string; smokeTest: boolean };
+  expect(payload).toMatchObject({ namespace: "production", storageClass: "local-path", smokeTest: true });
+  await expect(verifyDialog.getByText("验证结果：通过")).toBeVisible();
+  await expect(verifyDialog.getByText(/PVC 已绑定且 Pod 已成功挂载存储/).first()).toBeVisible();
+  await expectElementInsideViewport(page, verifyDialog, "desktop storage verify dialog");
+  await expectNoPageOverflow(page, "desktop storage verify dialog");
+  await page.keyboard.press("Escape");
+  await expect(verifyDialog).toBeHidden();
+
+  for (const viewport of [{ width: 390, height: 844 }, { width: 360, height: 800 }, { width: 320, height: 720 }]) {
+    await page.setViewportSize(viewport);
+    await page.goto("/storage?tab=center");
+    await expect(page.getByRole("heading", { name: "存储中心", exact: true })).toBeVisible();
+    await expect(page.getByText("Local Path Provisioner", { exact: true }).first()).toBeVisible();
+    await expectNoPageOverflow(page, `${viewport.width}px storage center`);
+    await page.getByRole("button", { name: "查看方案与预检" }).first().click();
+    const mobileCatalog = page.getByRole("dialog", { name: "Local Path Provisioner" });
+    await expect(mobileCatalog).toBeVisible();
+    await expectElementInsideViewport(page, mobileCatalog, `${viewport.width}px storage catalog dialog`);
+    await expectNoPageOverflow(page, `${viewport.width}px storage catalog dialog`);
+    const mobileNamespacePicker = mobileCatalog.getByRole("combobox", { name: "目标命名空间" });
+    await expect(mobileNamespacePicker).toContainText("local-path-storage（推荐，将新建）");
+    await mobileNamespacePicker.click();
+    const mobileNamespaceList = page.getByRole("listbox", { name: "目标命名空间选项列表" });
+    await expect(mobileNamespaceList).toBeVisible();
+    await expectElementInsideViewport(page, mobileNamespaceList, `${viewport.width}px storage namespace list`);
+    await page.keyboard.press("Escape");
+    await expect(mobileNamespaceList).toBeHidden();
+    await expect(mobileCatalog).toBeVisible();
+    await page.screenshot({ path: `test-results/mobile-storage/center-${viewport.width}.png`, fullPage: false });
+    await page.keyboard.press("Escape");
+    await expect(mobileCatalog).toBeHidden();
+
+    await page.getByRole("button", { name: "验证存储" }).first().click();
+    const mobileVerify = page.getByRole("dialog", { name: "验证存储" });
+    await expect(mobileVerify).toBeVisible();
+    await expectElementInsideViewport(page, mobileVerify, `${viewport.width}px storage verify dialog`);
+    await expectNoPageOverflow(page, `${viewport.width}px storage verify dialog`);
+    await page.keyboard.press("Escape");
+    await expect(mobileVerify).toBeHidden();
+  }
 });
 
 test("StorageClass 详情展示存储参数并支持事件深链", async ({ page }) => {
@@ -5346,7 +5665,7 @@ test("N15 存储运维在桌面与移动端完成创建、快照恢复且无横�
   await installApiMocks(page);
   await page.setViewportSize({ width: 1280, height: 900 });
 
-  await page.goto("/storage");
+  await page.goto("/storage?tab=classes");
   await expect(page.locator("main h1")).toBeVisible();
   await expectNoPageOverflow(page, "desktop storage classes");
   await page.getByRole("button", { name: "创建 StorageClass" }).click();
@@ -5419,7 +5738,7 @@ test("N15 存储运维在桌面与移动端完成创建、快照恢复且无横�
     await page.keyboard.press("Escape");
     await expect(dialog).toBeHidden();
 
-    await page.goto("/storage");
+    await page.goto("/storage?tab=classes");
     await page.getByRole("button", { name: "创建 StorageClass" }).click();
     dialog = page.getByRole("dialog", { name: "创建 StorageClass" });
     await expectElementInsideViewport(page, dialog, `${viewport.width}px StorageClass dialog`);
@@ -5448,7 +5767,7 @@ test("Service 详情展示 Endpoint 就绪状态并支持事件深链", async ({
   await installApiMocks(page);
   await page.goto("/network/services/default/web?tab=endpoints");
 
-  await expect(page.getByRole("heading", { name: "web", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "web", exact: true, level: 1 })).toBeVisible();
   await expect(page.getByRole("tab", { name: /Endpoint/ })).toHaveAttribute("aria-selected", "true");
   await expect(page.getByRole("cell", { name: "10.244.1.10", exact: true })).toBeVisible();
   await expect(page.getByRole("cell", { name: "web-abcdef-12345", exact: true })).toBeVisible();
@@ -5462,7 +5781,7 @@ test("Ingress 详情展示默认后端与 TLS Secret", async ({ page }) => {
   await installApiMocks(page);
   await page.goto("/network/ingresses/default/web?tab=routes");
 
-  await expect(page.getByRole("heading", { name: "web", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "web", exact: true, level: 1 })).toBeVisible();
   await expect(page.getByRole("cell", { name: "默认后端", exact: true })).toBeVisible();
   await expect(page.getByText("web.example.test").first()).toBeVisible();
 
@@ -5635,7 +5954,7 @@ test("仅用键盘完成登录、导航、扩容确认和退出", async ({ page 
   await expectVisibleFocusRing(page);
   await expect(webLink).toBeFocused();
   await page.keyboard.press("Enter");
-  await expect(page.getByRole("heading", { name: "web", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "web", exact: true, level: 1 })).toBeVisible();
 
   await pressTabUntil(
     page,

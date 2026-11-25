@@ -253,7 +253,48 @@ func (h *Handler) DeleteVolumeSnapshot(w stdhttp.ResponseWriter, r *stdhttp.Requ
 	httpx.JSON(w, stdhttp.StatusAccepted, map[string]string{"status": "deleting"})
 }
 
+func (h *Handler) StorageCenter(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	actor, _ := domain.ActorFromContext(r.Context())
+	item, err := h.service.StorageCenter(r.Context(), actor)
+	if err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	httpx.JSON(w, stdhttp.StatusOK, item)
+}
+
+func (h *Handler) StoragePreflight(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	var request domain.StoragePreflightRequest
+	if !httpx.DecodeJSON(w, r, &request) {
+		return
+	}
+	actor, _ := domain.ActorFromContext(r.Context())
+	item, err := h.service.StoragePreflight(r.Context(), actor, request)
+	if err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	httpx.JSON(w, stdhttp.StatusOK, item)
+}
+
+func (h *Handler) VerifyStorage(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	var request domain.StorageVerifyRequest
+	if !httpx.DecodeJSON(w, r, &request) {
+		return
+	}
+	actor, _ := domain.ActorFromContext(r.Context())
+	item, err := h.service.VerifyStorage(r.Context(), actor, request)
+	if err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	httpx.JSON(w, stdhttp.StatusOK, item)
+}
+
 func (h *Handler) Mount(r chi.Router) {
+	r.Get("/storage/center", h.StorageCenter)
+	r.Post("/storage/center/preflight", h.StoragePreflight)
+	r.Post("/storage/center/verify", h.VerifyStorage)
 	r.Get("/storageclasses", h.StorageClasses)
 	r.Get("/storageclasses/{name}", h.StorageClass)
 	r.Post("/storageclasses", h.CreateStorageClass)

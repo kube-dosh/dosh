@@ -201,9 +201,11 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 	diagnosticsService := diagnosticsapp.New(kubeClient, authorizer, auditLogger)
 	certificatesService := certificatesapp.New(certificateStore, authorizer, auditLogger)
 	storageService := storageapp.New(kubeClient, authorizer, auditLogger)
+	storageService.SetHelmCatalog(helmChartsService)
 	yamlService := yamlapp.New(kubeClient, authorizer, auditLogger)
 	auditHistoryService := audithistoryapp.New(auditLogger, authorizer)
-	egressState := egressController.Status()
+	egressRuntime := newSystemEgressRuntime(egressController)
+	egressState := egressRuntime.Status()
 	updateChecker := releasecheck.New(releasecheck.Config{
 		Enabled: cfg.UpdateCheckEnabled, URL: cfg.UpdateCheckURL, Token: cfg.UpdateCheckToken,
 		Channel: cfg.UpdateCheckChannel, CurrentVersion: version.Version,
@@ -213,12 +215,8 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 		Version: version.Version, Commit: version.Commit, BuildDate: version.Date,
 		ChartVersion: cfg.ChartVersion, GoVersion: runtime.Version(), ClusterName: cfg.ClusterName,
 		AuthMode: cfg.AuthMode, ReadOnly: cfg.ReadOnly, RequestTimeout: cfg.RequestTimeout.String(),
-		Egress: domain.EgressStatus{
-			Mode: egressState.Mode, Enabled: egressState.Enabled, HTTPProxy: egressState.HTTPProxy,
-			HTTPSProxy: egressState.HTTPSProxy, NoProxy: egressState.NoProxy,
-			CredentialsConfigured: egressState.CredentialsConfigured, CAConfigured: egressState.CAConfigured,
-		},
-	}, updateChecker, egressController, auditLogger)
+		Egress: egressState,
+	}, updateChecker, egressRuntime, auditLogger)
 
 	router, err := buildRouter(routerDependencies{
 		logger:        logger,

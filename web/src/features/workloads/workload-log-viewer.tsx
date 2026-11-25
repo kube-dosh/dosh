@@ -10,14 +10,16 @@ import { cn } from "@/lib/utils";
 
 const maxLogBytes = 1_500_000;
 
-export function WorkloadLogViewer({ kind, namespace, name, containers }: {
+export function WorkloadLogViewer({ kind, namespace, name, containers, initialContainer, lockContainer = false }: {
   kind: string;
   namespace: string;
   name: string;
   containers: { name: string; init?: boolean }[];
+  initialContainer?: string;
+  lockContainer?: boolean;
 }) {
-  const regularContainers = containers.filter((item) => !item.init);
-  const [container, setContainer] = useState("");
+  const logContainers = containers.filter((item) => item.name);
+  const [container, setContainer] = useState(initialContainer || logContainers.find((item) => !item.init)?.name || logContainers[0]?.name || "");
   const [follow, setFollow] = useState(true);
   const [tailLines, setTailLines] = useState(300);
   const [timestamps, setTimestamps] = useState(false);
@@ -33,7 +35,7 @@ export function WorkloadLogViewer({ kind, namespace, name, containers }: {
   const stickToBottom = useRef(true);
 
   useEffect(() => {
-    if (!regularContainers.length) return;
+    if (!logContainers.length) return;
     const controller = new AbortController();
     let active = true;
     setLogs("");
@@ -98,7 +100,11 @@ export function WorkloadLogViewer({ kind, namespace, name, containers }: {
     };
     void run();
     return () => { active = false; controller.abort(); };
-  }, [container, follow, generation, kind, name, namespace, previous, sinceSeconds, tailLines, timestamps, regularContainers.length]);
+  }, [container, follow, generation, kind, name, namespace, previous, sinceSeconds, tailLines, timestamps, logContainers.length]);
+
+  useEffect(() => {
+    if (initialContainer && containers.some((item) => item.name === initialContainer)) setContainer(initialContainer);
+  }, [containers, initialContainer]);
 
   const visibleLogs = useMemo(() => {
     const needle = filter.trim().toLowerCase();
@@ -110,19 +116,19 @@ export function WorkloadLogViewer({ kind, namespace, name, containers }: {
     if (stickToBottom.current && outputRef.current) outputRef.current.scrollTop = outputRef.current.scrollHeight;
   }, [logs]);
 
-  if (!regularContainers.length) {
-    return <p className="rounded-lg border border-dashed px-5 py-10 text-center text-sm text-muted-foreground">该工作负载没有可读取日志的普通容器。</p>;
+  if (!logContainers.length) {
+    return <p className="rounded-lg border border-dashed px-5 py-10 text-center text-sm text-muted-foreground">该工作负载没有可读取日志的容器。</p>;
   }
 
   return (
     <div className="min-w-0 overflow-hidden rounded-lg border bg-slate-950">
       <div className="flex flex-wrap items-center gap-2 border-b border-slate-800 bg-slate-900 px-3 py-2.5">
         <span className="inline-flex items-center gap-1.5 rounded-md border border-slate-700 px-2 py-1 text-[11px] text-slate-300"><Layers3 className="h-3.5 w-3.5" />多实例聚合</span>
-        <Select value={container || "all"} onValueChange={(value) => setContainer(value === "all" ? "" : value)}>
+        <Select value={container || (lockContainer ? "" : "all")} onValueChange={(value) => setContainer(value === "all" ? "" : value)} disabled={lockContainer}>
           <SelectTrigger className="h-8 w-44 border-slate-700 bg-slate-900 text-xs text-slate-200" aria-label="选择容器"><SelectValue /></SelectTrigger>
           <SelectContent>
-            <SelectItem value="all">全部容器</SelectItem>
-            {regularContainers.map((item) => <SelectItem key={item.name} value={item.name}>{item.name}</SelectItem>)}
+            {!lockContainer ? <SelectItem value="all">全部容器</SelectItem> : null}
+            {logContainers.map((item) => <SelectItem key={item.name} value={item.name}>{item.name}{item.init ? " · Init/Sidecar" : ""}</SelectItem>)}
           </SelectContent>
         </Select>
         <Select value={String(tailLines)} onValueChange={(value) => setTailLines(Number(value))}>

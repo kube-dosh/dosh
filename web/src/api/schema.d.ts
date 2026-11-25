@@ -1999,6 +1999,142 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/workloads/{kind}/{namespace}/{name}/containers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List all workload containers with runtime instances and usage
+         * @description Returns application containers, Init Containers and native sidecar containers declared by the Pod template. Each entry includes matching Pod instances, actual images, state, readiness, restart count and container-level metrics when Metrics Server is available.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    kind: components["parameters"]["KindPath"];
+                    namespace: components["parameters"]["NamespacePath"];
+                    name: components["parameters"]["Name"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Workload container inventory */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["WorkloadContainerInventory"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+                404: components["responses"]["NotFound"];
+                501: components["responses"]["NotSupported"];
+                503: components["responses"]["DependencyUnavailable"];
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/workloads/{kind}/{namespace}/{name}/pod-template": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read the editable Pod template of a workload
+         * @description Returns only the workload PodTemplateSpec plus selector protection and risk metadata. Workload-level fields such as replicas, strategy and selector are excluded from the editable document. Jobs are read-only.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    kind: components["parameters"]["KindPath"];
+                    namespace: components["parameters"]["NamespacePath"];
+                    name: components["parameters"]["Name"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Pod template document */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["WorkloadPodTemplate"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+                404: components["responses"]["NotFound"];
+                501: components["responses"]["NotSupported"];
+                503: components["responses"]["DependencyUnavailable"];
+            };
+        };
+        put?: never;
+        /**
+         * Atomically replace a workload Pod template
+         * @description Validates resourceVersion and selector labels, performs an API Server dry run, then commits exactly one workload update. Existing risks are reported as warnings; only newly introduced high-risk fields require acknowledgeRisks=true. Jobs are immutable and return 501.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    kind: components["parameters"]["KindPath"];
+                    namespace: components["parameters"]["NamespacePath"];
+                    name: components["parameters"]["Name"];
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["WorkloadPodTemplateUpdate"];
+                };
+            };
+            responses: {
+                /** @description Template validation or update result */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["WorkloadPodTemplateResult"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+                404: components["responses"]["NotFound"];
+                409: components["responses"]["Conflict"];
+                501: components["responses"]["NotSupported"];
+                503: components["responses"]["DependencyUnavailable"];
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/workloads/{kind}/{namespace}/{name}/suspend": {
         parameters: {
             query?: never;
@@ -5125,6 +5261,134 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/storage/center": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Discover the storage center catalog, driver integrations and diagnostics */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Storage center state */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["StorageCenter"];
+                    };
+                };
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+                503: components["responses"]["DependencyUnavailable"];
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/storage/center/preflight": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Run preflight checks for a verified storage catalog item */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["StoragePreflightRequest"];
+                };
+            };
+            responses: {
+                /** @description Storage preflight result */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["StoragePreflight"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+                404: components["responses"]["NotFound"];
+                503: components["responses"]["DependencyUnavailable"];
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/storage/center/verify": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Verify a StorageClass and optionally run an isolated PVC and Pod smoke test */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["StorageVerifyRequest"];
+                };
+            };
+            responses: {
+                /** @description Storage verification result */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["StorageVerification"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+                503: components["responses"]["DependencyUnavailable"];
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/storageclasses": {
         parameters: {
             query?: never;
@@ -7834,6 +8098,109 @@ export interface components {
             startupProbe?: components["schemas"]["WorkloadProbe"];
             resourceVersion?: string;
         };
+        WorkloadPodTemplate: {
+            kind: string;
+            namespace: string;
+            name: string;
+            resourceVersion?: string;
+            /** @description PodTemplateSpec document containing metadata.labels, metadata.annotations and spec. */
+            template: {
+                [key: string]: unknown;
+            };
+            yaml: string;
+            selector?: {
+                [key: string]: string;
+            };
+            protectedLabels?: string[];
+            editable: boolean;
+            restrictions?: string[];
+            warnings?: string[];
+        };
+        WorkloadPodTemplateUpdate: {
+            resourceVersion: string;
+            template: {
+                [key: string]: unknown;
+            };
+            changeCause?: string;
+            /** @enum {string} */
+            source?: "form" | "yaml";
+            /** @default false */
+            dryRun: boolean;
+            /** @default false */
+            acknowledgeRisks: boolean;
+        };
+        WorkloadTemplateDiff: {
+            path: string;
+            before?: unknown;
+            after?: unknown;
+        };
+        WorkloadTemplateRollout: {
+            /** @enum {string} */
+            effect: "none" | "rollingUpdate" | "futureJobs";
+            message: string;
+        };
+        WorkloadPodTemplateResult: components["schemas"]["WorkloadPodTemplate"] & {
+            changed: boolean;
+            diff: components["schemas"]["WorkloadTemplateDiff"][];
+            rollout: components["schemas"]["WorkloadTemplateRollout"];
+            /** @description High-risk settings introduced by this change; only these require acknowledgement. */
+            newWarnings?: string[];
+        };
+        WorkloadContainerRuntime: {
+            pods: number;
+            running: number;
+            ready: number;
+            terminated: number;
+            restarts: number;
+            metricsAvailable: boolean;
+            /** Format: int64 */
+            cpuUsageMilli?: number;
+            /** Format: int64 */
+            memoryUsageBytes?: number;
+        };
+        WorkloadContainerInstance: {
+            pod: string;
+            namespace: string;
+            node?: string;
+            job?: string;
+            image: string;
+            /** @enum {string} */
+            state: "Pending" | "Waiting" | "Running" | "Terminated";
+            reason?: string;
+            message?: string;
+            ready: boolean;
+            restartCount: number;
+            /** Format: date-time */
+            startedAt?: string;
+            metricsAvailable: boolean;
+            /** Format: int64 */
+            cpuUsageMilli?: number;
+            /** Format: int64 */
+            memoryUsageBytes?: number;
+        };
+        WorkloadContainerState: components["schemas"]["WorkloadContainer"] & {
+            /** @enum {string} */
+            type: "container" | "initContainer" | "sidecar";
+            init: boolean;
+            sidecar: boolean;
+            runtime: components["schemas"]["WorkloadContainerRuntime"];
+            instances: components["schemas"]["WorkloadContainerInstance"][];
+        };
+        WorkloadContainerInventory: {
+            kind: string;
+            namespace: string;
+            name: string;
+            resourceVersion?: string;
+            selector?: {
+                [key: string]: string;
+            };
+            containers: components["schemas"]["WorkloadContainerState"][];
+            templateEditable: boolean;
+            metricsAvailable: boolean;
+            warnings?: string[];
+            /** Format: date-time */
+            refreshedAt: string;
+        };
         AutoscalerMetric: {
             type: string;
             resource?: string;
@@ -8651,6 +9018,140 @@ export interface components {
         SecretList: {
             items: components["schemas"]["SecretSummary"][];
             meta: components["schemas"]["ListMeta"];
+        };
+        StorageCenter: {
+            summary: components["schemas"]["StorageCenterSummary"];
+            catalog: components["schemas"]["StorageCatalogItem"][];
+            integrations: components["schemas"]["StorageIntegration"][];
+            diagnostics: components["schemas"]["StorageDiagnostic"][];
+            warnings?: string[];
+            /** Format: date-time */
+            generatedAt: string;
+        };
+        StorageCenterSummary: {
+            nodeCount: number;
+            readyNodeCount: number;
+            storageClassCount: number;
+            defaultStorageClassCount: number;
+            persistentVolumeCount: number;
+            persistentVolumeClaimCount: number;
+            pendingClaimCount: number;
+            managedIntegrationCount: number;
+            adoptedIntegrationCount: number;
+            volumeSnapshotAvailable: boolean;
+        };
+        StorageCatalogItem: {
+            id: string;
+            name: string;
+            vendor: string;
+            /** @description Upstream project coordinate such as owner/repository, not a URL or a Kubernetes provisioner identifier. */
+            project: string;
+            category: string;
+            description: string;
+            /** @enum {string} */
+            supportLevel: "verified" | "generic";
+            /** @enum {string} */
+            status: "available" | "repository-missing" | "chart-missing" | "forbidden";
+            statusMessage?: string;
+            chart?: components["schemas"]["StorageCatalogChart"];
+            defaultNamespace: string;
+            defaultReleaseName: string;
+            provisioners: string[];
+            expectedStorageClasses: string[];
+            capabilities: string[];
+            prerequisites: string[];
+            warnings?: string[];
+            installed: boolean;
+            integrationId?: string;
+        };
+        StorageCatalogChart: {
+            repositoryId: string;
+            repositoryName: string;
+            chartName: string;
+            version: string;
+            appVersion?: string;
+            digest?: string;
+            deprecated: boolean;
+        };
+        StorageIntegration: {
+            id: string;
+            name: string;
+            kind: string;
+            provisioner?: string;
+            /** @enum {string} */
+            source: "managed" | "adopted";
+            /** @enum {string} */
+            status: "healthy" | "degraded" | "unknown";
+            releaseName?: string;
+            releaseNamespace?: string;
+            storageClasses: string[];
+            driverRegistered: boolean;
+            podCount: number;
+            readyPodCount: number;
+            defaultClass?: string;
+            message?: string;
+            warnings?: string[];
+        };
+        StoragePreflightRequest: {
+            catalogId: string;
+            namespace?: string;
+            releaseName?: string;
+        };
+        StoragePreflight: {
+            catalogId: string;
+            /** @enum {string} */
+            status: "pass" | "warning" | "fail";
+            checks: components["schemas"]["StorageCheck"][];
+            warnings?: string[];
+            catalog?: components["schemas"]["StorageCatalogItem"];
+        };
+        StorageCheck: {
+            id: string;
+            title: string;
+            /** @enum {string} */
+            status: "pass" | "warning" | "fail" | "info";
+            message: string;
+            suggestion?: string;
+        };
+        StorageVerifyRequest: {
+            catalogId?: string;
+            namespace: string;
+            storageClass: string;
+            releaseName?: string;
+            smokeTest: boolean;
+            smokeTestImage?: string;
+        };
+        StorageVerification: {
+            /** @enum {string} */
+            status: "pass" | "warning" | "fail";
+            namespace: string;
+            storageClass: string;
+            checks: components["schemas"]["StorageCheck"][];
+            smokeTest?: components["schemas"]["StorageSmokeTestResult"];
+            warnings?: string[];
+        };
+        StorageSmokeTestResult: {
+            name: string;
+            namespace: string;
+            storageClass: string;
+            pvcName?: string;
+            podName?: string;
+            bound: boolean;
+            podRunning: boolean;
+            volumeName?: string;
+            /** Format: int64 */
+            durationMs: number;
+            cleanedUp: boolean;
+            message?: string;
+        };
+        StorageDiagnostic: {
+            id: string;
+            /** @enum {string} */
+            severity: "critical" | "warning" | "info";
+            title: string;
+            message: string;
+            resource?: string;
+            suggestion?: string;
         };
         StorageClass: {
             name: string;

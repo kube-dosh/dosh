@@ -2,10 +2,8 @@ package app
 
 import (
 	"context"
-	"time"
 
 	"dosh/internal/domain"
-	"dosh/internal/platform/egress"
 )
 
 type UpdateChecker interface {
@@ -13,10 +11,10 @@ type UpdateChecker interface {
 }
 
 type EgressRuntime interface {
-	Status() egress.Status
-	View() egress.View
-	Save(ctx context.Context, input egress.UpdateInput) (egress.View, error)
-	Preflight(ctx context.Context, input egress.UpdateInput) (egress.Preflight, error)
+	Status() domain.EgressStatus
+	View() domain.EgressSettings
+	Save(ctx context.Context, input domain.EgressSettingsUpdate) (domain.EgressSettings, error)
+	Preflight(ctx context.Context, input domain.EgressSettingsUpdate) (domain.EgressPreflight, error)
 }
 
 type Service struct {
@@ -36,12 +34,7 @@ func (s *Service) Info(ctx context.Context) (domain.SystemInfo, error) {
 	}
 	info := s.info
 	if s.egress != nil {
-		status := s.egress.Status()
-		info.Egress = domain.EgressStatus{
-			Mode: status.Mode, Enabled: status.Enabled, HTTPProxy: status.HTTPProxy, HTTPSProxy: status.HTTPSProxy,
-			NoProxy: status.NoProxy, CredentialsConfigured: status.CredentialsConfigured, CAConfigured: status.CAConfigured,
-			Source: status.Source,
-		}
+		info.Egress = s.egress.Status()
 	}
 	return info, nil
 }
@@ -60,7 +53,7 @@ func (s *Service) Egress(ctx context.Context) (domain.EgressSettings, error) {
 	if s.egress == nil {
 		return domain.EgressSettings{}, domain.ErrUnsupported
 	}
-	return egressSettingsView(s.egress.View()), nil
+	return s.egress.View(), nil
 }
 
 func (s *Service) SaveEgress(ctx context.Context, actor domain.Actor, input domain.EgressSettingsUpdate) (domain.EgressSettings, error) {
@@ -70,11 +63,7 @@ func (s *Service) SaveEgress(ctx context.Context, actor domain.Actor, input doma
 	if s.egress == nil {
 		return domain.EgressSettings{}, domain.ErrUnsupported
 	}
-	saved, err := s.egress.Save(ctx, egress.UpdateInput{
-		Mode: input.Mode, HTTPProxy: input.HTTPProxy, HTTPSProxy: input.HTTPSProxy, NoProxy: input.NoProxy,
-		Username: input.Username, Password: input.Password, ClearCredentials: input.ClearCredentials,
-		CAPEM: input.CAPEM, ClearCA: input.ClearCA, Revision: input.Revision,
-	})
+	saved, err := s.egress.Save(ctx, input)
 	if s.auditor != nil {
 		event := domain.AuditEvent{Action: "update", Resource: "system-egress", Result: "success"}
 		if err != nil {
@@ -88,7 +77,7 @@ func (s *Service) SaveEgress(ctx context.Context, actor domain.Actor, input doma
 	if err != nil {
 		return domain.EgressSettings{}, err
 	}
-	return egressSettingsView(saved), nil
+	return saved, nil
 }
 
 func (s *Service) PreflightEgress(ctx context.Context, actor domain.Actor, input domain.EgressSettingsUpdate) (domain.EgressPreflight, error) {
@@ -98,55 +87,9 @@ func (s *Service) PreflightEgress(ctx context.Context, actor domain.Actor, input
 	if s.egress == nil {
 		return domain.EgressPreflight{}, domain.ErrUnsupported
 	}
-	result, err := s.egress.Preflight(ctx, egress.UpdateInput{
-		Mode: input.Mode, HTTPProxy: input.HTTPProxy, HTTPSProxy: input.HTTPSProxy,
-		NoProxy: input.NoProxy, Username: input.Username, ClearCredentials: input.ClearCredentials,
-		ClearCA: input.ClearCA, Revision: input.Revision,
-	})
+	result, err := s.egress.Preflight(ctx, input)
 	if err != nil {
 		return domain.EgressPreflight{}, err
 	}
-	return egressPreflightView(result), nil
-}
-
-func egressSettingsView(view egress.View) domain.EgressSettings {
-	updatedAt := ""
-	if !view.UpdatedAt.IsZero() {
-		updatedAt = view.UpdatedAt.UTC().Format(time.RFC3339)
-	}
-	return domain.EgressSettings{
-		Mode: view.Mode, EffectiveMode: view.EffectiveMode, Enabled: view.Enabled,
-		HTTPProxy: view.HTTPProxy, HTTPSProxy: view.HTTPSProxy, NoProxy: view.NoProxy, Username: view.Username,
-		CredentialsConfigured: view.CredentialsConfigured, CAConfigured: view.CAConfigured,
-		Source: view.Source, Revision: view.Revision, UpdatedAt: updatedAt,
-		NetworkPolicy: domain.EgressNetworkPolicyStatus{
-			Enabled: view.NetworkPolicy.Enabled, Mode: view.NetworkPolicy.Mode,
-			AutoManage: view.NetworkPolicy.AutoManage, CanAutoManage: view.NetworkPolicy.CanAutoManage,
-			PolicyName: view.NetworkPolicy.PolicyName, HelmPolicyName: view.NetworkPolicy.HelmPolicyName,
-			Message: view.NetworkPolicy.Message,
-		},
-	}
-}
-
-func egressPreflightView(result egress.Preflight) domain.EgressPreflight {
-	view := domain.EgressPreflight{
-		Status: result.Status, Message: result.Message, RequiredIPBlocks: append([]string(nil), result.RequiredIPBlocks...),
-		RequiredPorts: append([]int(nil), result.RequiredPorts...),
-		NetworkPolicy: domain.EgressNetworkPolicyStatus{
-			Enabled: result.NetworkPolicy.Enabled, Mode: result.NetworkPolicy.Mode,
-			AutoManage: result.NetworkPolicy.AutoManage, CanAutoManage: result.NetworkPolicy.CanAutoManage,
-			PolicyName: result.NetworkPolicy.PolicyName, HelmPolicyName: result.NetworkPolicy.HelmPolicyName,
-			Message: result.NetworkPolicy.Message,
-		},
-		Targets: make([]domain.EgressProxyTarget, 0, len(result.Targets)),
-	}
-	for _, target := range result.Targets {
-		view.Targets = append(view.Targets, domain.EgressProxyTarget{
-			Kind: target.Kind, URL: target.URL, Host: target.Host, Port: target.Port, Hostname: target.Hostname,
-			Addresses: append([]string(nil), target.Addresses...), CIDRs: append([]string(nil), target.CIDRs...),
-			Reachable: target.Reachable, LatencyMS: target.LatencyMS, Error: target.Error,
-			Allowed: target.Allowed, PolicySource: target.PolicySource,
-		})
-	}
-	return view
+	return result, nil
 }

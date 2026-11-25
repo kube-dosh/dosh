@@ -143,28 +143,38 @@ Token/OIDC 模式下，审计历史权限由 SubjectAccessReview 的
 该记录保存在单进程有界内存中，Pod 重启或副本切换后会清空或分叉，不是持久审计系统，也不能替代
 stdout、SIEM 或离机 WORM。调查事件时仍以集中日志和 SIEM 为合规事实源。
 
-### 2.1.3 工作负载镜像更新
+### 2.1.3 工作负载容器中心、镜像与 Pod 模板更新
 
-工作负载详情页的“更新镜像”只在当前会话具备 `updateImage` capability 时显示，适用于
-Deployment、StatefulSet 和 DaemonSet。请求为：
+工作负载详情的“容器”页签展示业务容器、Init Container 和 native sidecar 的声明式配置、
+运行实例、实际镜像、探针和指标。每个容器都可打开日志、选择具体运行 Pod 进入终端或建立端口
+转发；已结束的 Init Container 可查看日志，但不能进入终端。
+
+“更新镜像”与“编辑 Pod 模板”一次提交完整 PodTemplateSpec。UI 使用：
 
 ```http
-POST /api/v1/workloads/{kind}/{namespace}/{name}/image
+GET  /api/v1/workloads/{kind}/{namespace}/{name}/containers
+GET  /api/v1/workloads/{kind}/{namespace}/{name}/pod-template
+POST /api/v1/workloads/{kind}/{namespace}/{name}/pod-template
 Content-Type: application/json
 X-CSRF-Token: <token>
 
-{"containerName":"app","image":"registry.example.test/app@sha256:...","resourceVersion":"<当前版本>"}
+{"resourceVersion":"<当前版本>","template":{...},"source":"form","dryRun":false,"acknowledgeRisks":false}
 ```
 
-服务端先校验 kind、命名空间、工作负载名、容器名、镜像和资源版本，再执行资源级授权；随后读取
-工作负载并比较 `resourceVersion`，只有版本一致时才更新 Pod 模板并触发滚动发布。旧版本且目标
-镜像尚未生效时返回 409，不覆盖他人变更；目标镜像已经生效时按幂等成功处理。Job/CronJob 返回
-501，本功能不修改其 Pod 模板。所有成功、校验失败、无权限和冲突都记录 `action=update-image` 审计。
+服务端校验 kind、命名空间、名称、模板大小和 `resourceVersion`，保护工作负载 selector 依赖的
+Pod 标签，先以 API Server dry run 验证，再用同一版本执行一次正式 Update。Deployment、
+StatefulSet、DaemonSet 和 CronJob 可编辑；Job 模板只读。模板已有高风险字段只作为 warning，
+本次新增 hostNetwork、hostPID、hostIPC、hostPath、hostPort、privileged、root 或 capabilities
+时必须显式确认。并发修改返回 409，客户端必须保留草稿并只刷新服务端版本。成功、校验失败、
+无权限和冲突分别记录 `update-pod-template` 或 `validate-pod-template` 审计。
+
+旧版单容器接口 `POST /api/v1/workloads/{kind}/{namespace}/{name}/image` 保留兼容，但当前 UI
+不再使用它；需要同时更新多个容器、Init Container 或 sidecar 时应使用 Pod 模板接口。
 
 发布前应使用不可变 digest，避免节点无法拉取新镜像或 tag 漂移。更新后执行：
 
 ```bash
-kubectl -n <namespace> get <kind> <name> -o jsonpath='{range .spec.template.spec.containers[*]}{.name}{"="}{.image}{"\n"}{end}'
+kubectl -n <namespace> get <kind> <name> -o jsonpath='{range .spec.template.spec.containers[*]}{.name}{"="}{.image}{"\n"}{end}{range .spec.template.spec.initContainers[*]}{.name}{"="}{.image}{"\n"}{end}'
 kubectl -n <namespace> rollout status <kind>/<name> --timeout=5m
 ```
 

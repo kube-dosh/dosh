@@ -98,9 +98,14 @@ import type {
   ServiceUpdateInput,
   SessionResponse,
   ServerCertificate,
+  StorageCenter,
   StorageClass,
   StorageClassDetail,
   StorageClassWriteInput,
+  StoragePreflight,
+  StoragePreflightRequest,
+  StorageVerification,
+  StorageVerifyRequest,
   SystemInfo,
   TokenAccessReview,
   UpdateStatus,
@@ -114,6 +119,10 @@ import type {
   WorkloadRolloutInput,
   WorkloadContainerConfigUpdateInput,
   WorkloadImageUpdateInput,
+  WorkloadContainerInventory,
+  WorkloadPodTemplate,
+  WorkloadPodTemplateResult,
+  WorkloadPodTemplateUpdateInput,
   WorkloadProbe,
   WorkloadRevision,
   WorkloadRollbackInput,
@@ -544,6 +553,15 @@ export const api = {
       method: "POST",
       body: JSON.stringify(input),
     }),
+  workloadPodTemplate: (kind: string, namespace: string, name: string) =>
+    request<WorkloadPodTemplate>(`/api/v1/workloads/${kind}/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}/pod-template`),
+  updateWorkloadPodTemplate: (kind: string, namespace: string, name: string, input: WorkloadPodTemplateUpdateInput) =>
+    request<WorkloadPodTemplateResult>(`/api/v1/workloads/${kind}/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}/pod-template`, {
+      method: "POST",
+      body: JSON.stringify(input),
+    }),
+  workloadContainerInventory: (kind: string, namespace: string, name: string) =>
+    request<WorkloadContainerInventory>(`/api/v1/workloads/${kind}/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}/containers`),
   workloadRevisions: async (kind: string, namespace: string, name: string) => {
     const value = await request<{ items?: WorkloadRevision[] }>(`/api/v1/workloads/${kind}/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}/revisions`);
     return list(value.items);
@@ -709,6 +727,18 @@ export const api = {
     request<SecretSummary>(`/api/v1/secrets/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}`, { method: "PUT", body: JSON.stringify(input) }),
   deleteSecret: (namespace: string, name: string, resourceVersion?: string) =>
     request<{ status: string }>(`/api/v1/secrets/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}${resourceVersion ? `?resourceVersion=${encodeURIComponent(resourceVersion)}` : ""}`, { method: "DELETE" }),
+  storageCenter: async (): Promise<StorageCenter> => {
+    const value = await request<StorageCenter>("/api/v1/storage/center");
+    return { ...value, catalog: list(value.catalog), integrations: list(value.integrations), diagnostics: list(value.diagnostics), warnings: list(value.warnings) };
+  },
+  storagePreflight: async (input: StoragePreflightRequest): Promise<StoragePreflight> => {
+    const value = await request<StoragePreflight>("/api/v1/storage/center/preflight", { method: "POST", body: JSON.stringify(input) });
+    return { ...value, checks: list(value.checks), warnings: list(value.warnings) };
+  },
+  verifyStorage: async (input: StorageVerifyRequest): Promise<StorageVerification> => {
+    const value = await request<StorageVerification>("/api/v1/storage/center/verify", { method: "POST", body: JSON.stringify(input) });
+    return { ...value, checks: list(value.checks), warnings: list(value.warnings) };
+  },
   storageclasses: (params?: ListParams) => listRequest<StorageClass>(`/api/v1/storageclasses${query(params)}`),
   storageclass: async (name: string) => normalizeStorageClassDetail(await request<StorageClassDetail>(`/api/v1/storageclasses/${encodeURIComponent(name)}`)),
   createStorageClass: async (input: StorageClassWriteInput) => normalizeStorageClassDetail(await request<StorageClassDetail>("/api/v1/storageclasses", { method: "POST", body: JSON.stringify(input) })),

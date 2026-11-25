@@ -990,6 +990,88 @@ paths:
         "409": { $ref: "#/components/responses/Conflict" }
         "501": { $ref: "#/components/responses/NotSupported" }
         "503": { $ref: "#/components/responses/DependencyUnavailable" }
+  /api/v1/workloads/{kind}/{namespace}/{name}/containers:
+    get:
+      tags: [workloads]
+      summary: List all workload containers with runtime instances and usage
+      description: >-
+        Returns application containers, Init Containers and native sidecar
+        containers declared by the Pod template. Each entry includes matching
+        Pod instances, actual images, state, readiness, restart count and
+        container-level metrics when Metrics Server is available.
+      parameters:
+        - { $ref: "#/components/parameters/KindPath" }
+        - { $ref: "#/components/parameters/NamespacePath" }
+        - { $ref: "#/components/parameters/Name" }
+      responses:
+        "200":
+          description: Workload container inventory
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WorkloadContainerInventory" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "501": { $ref: "#/components/responses/NotSupported" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
+  /api/v1/workloads/{kind}/{namespace}/{name}/pod-template:
+    get:
+      tags: [workloads]
+      summary: Read the editable Pod template of a workload
+      description: >-
+        Returns only the workload PodTemplateSpec plus selector protection and
+        risk metadata. Workload-level fields such as replicas, strategy and
+        selector are excluded from the editable document. Jobs are read-only.
+      parameters:
+        - { $ref: "#/components/parameters/KindPath" }
+        - { $ref: "#/components/parameters/NamespacePath" }
+        - { $ref: "#/components/parameters/Name" }
+      responses:
+        "200":
+          description: Pod template document
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WorkloadPodTemplate" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "501": { $ref: "#/components/responses/NotSupported" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
+    post:
+      tags: [workloads]
+      summary: Atomically replace a workload Pod template
+      description: >-
+        Validates resourceVersion and selector labels, performs an API Server
+        dry run, then commits exactly one workload update. Existing risks are
+        reported as warnings; only newly introduced high-risk fields require
+        acknowledgeRisks=true. Jobs are immutable and return 501.
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      parameters:
+        - { $ref: "#/components/parameters/KindPath" }
+        - { $ref: "#/components/parameters/NamespacePath" }
+        - { $ref: "#/components/parameters/Name" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/WorkloadPodTemplateUpdate" }
+      responses:
+        "200":
+          description: Template validation or update result
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WorkloadPodTemplateResult" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "501": { $ref: "#/components/responses/NotSupported" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
   /api/v1/workloads/{kind}/{namespace}/{name}/suspend:
     post:
       tags: [workloads]
@@ -2676,6 +2758,64 @@ paths:
               schema: { $ref: "#/components/schemas/SecretReveal" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/storage/center:
+    get:
+      tags: [storage]
+      summary: Discover the storage center catalog, driver integrations and diagnostics
+      responses:
+        "200":
+          description: Storage center state
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/StorageCenter" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
+  /api/v1/storage/center/preflight:
+    post:
+      tags: [storage]
+      summary: Run preflight checks for a verified storage catalog item
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/StoragePreflightRequest" }
+      responses:
+        "200":
+          description: Storage preflight result
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/StoragePreflight" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
+  /api/v1/storage/center/verify:
+    post:
+      tags: [storage]
+      summary: Verify a StorageClass and optionally run an isolated PVC and Pod smoke test
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/StorageVerifyRequest" }
+      responses:
+        "200":
+          description: Storage verification result
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/StorageVerification" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
   /api/v1/storageclasses:
     get:
       tags: [storage]
@@ -4953,6 +5093,135 @@ components:
         readinessProbe: { $ref: "#/components/schemas/WorkloadProbe" }
         startupProbe: { $ref: "#/components/schemas/WorkloadProbe" }
         resourceVersion: { type: string, maxLength: 256 }
+    WorkloadPodTemplate:
+      type: object
+      required: [kind, namespace, name, template, yaml, editable]
+      properties:
+        kind: { type: string }
+        namespace: { type: string }
+        name: { type: string }
+        resourceVersion: { type: string }
+        template:
+          type: object
+          additionalProperties: true
+          description: PodTemplateSpec document containing metadata.labels, metadata.annotations and spec.
+        yaml: { type: string }
+        selector:
+          type: object
+          additionalProperties: { type: string }
+        protectedLabels:
+          type: array
+          items: { type: string }
+        editable: { type: boolean }
+        restrictions:
+          type: array
+          items: { type: string }
+        warnings:
+          type: array
+          items: { type: string }
+    WorkloadPodTemplateUpdate:
+      type: object
+      required: [resourceVersion, template]
+      properties:
+        resourceVersion: { type: string, minLength: 1, maxLength: 256 }
+        template:
+          type: object
+          additionalProperties: true
+        changeCause: { type: string, maxLength: 256 }
+        source: { type: string, enum: [form, yaml] }
+        dryRun: { type: boolean, default: false }
+        acknowledgeRisks: { type: boolean, default: false }
+    WorkloadTemplateDiff:
+      type: object
+      required: [path]
+      properties:
+        path: { type: string }
+        before: {}
+        after: {}
+    WorkloadTemplateRollout:
+      type: object
+      required: [effect, message]
+      properties:
+        effect: { type: string, enum: [none, rollingUpdate, futureJobs] }
+        message: { type: string }
+    WorkloadPodTemplateResult:
+      allOf:
+        - { $ref: "#/components/schemas/WorkloadPodTemplate" }
+        - type: object
+          required: [changed, diff, rollout]
+          properties:
+            changed: { type: boolean }
+            diff:
+              type: array
+              items: { $ref: "#/components/schemas/WorkloadTemplateDiff" }
+            rollout: { $ref: "#/components/schemas/WorkloadTemplateRollout" }
+            newWarnings:
+              type: array
+              description: High-risk settings introduced by this change; only these require acknowledgement.
+              items: { type: string }
+    WorkloadContainerRuntime:
+      type: object
+      required: [pods, running, ready, terminated, restarts, metricsAvailable]
+      properties:
+        pods: { type: integer }
+        running: { type: integer }
+        ready: { type: integer }
+        terminated: { type: integer }
+        restarts: { type: integer }
+        metricsAvailable: { type: boolean }
+        cpuUsageMilli: { type: integer, format: int64 }
+        memoryUsageBytes: { type: integer, format: int64 }
+    WorkloadContainerInstance:
+      type: object
+      required: [pod, namespace, image, state, ready, restartCount, metricsAvailable]
+      properties:
+        pod: { type: string }
+        namespace: { type: string }
+        node: { type: string }
+        job: { type: string }
+        image: { type: string }
+        state: { type: string, enum: [Pending, Waiting, Running, Terminated] }
+        reason: { type: string }
+        message: { type: string }
+        ready: { type: boolean }
+        restartCount: { type: integer }
+        startedAt: { type: string, format: date-time }
+        metricsAvailable: { type: boolean }
+        cpuUsageMilli: { type: integer, format: int64 }
+        memoryUsageBytes: { type: integer, format: int64 }
+    WorkloadContainerState:
+      allOf:
+        - { $ref: "#/components/schemas/WorkloadContainer" }
+        - type: object
+          required: [type, init, sidecar, runtime, instances]
+          properties:
+            type: { type: string, enum: [container, initContainer, sidecar] }
+            init: { type: boolean }
+            sidecar: { type: boolean }
+            runtime: { $ref: "#/components/schemas/WorkloadContainerRuntime" }
+            instances:
+              type: array
+              items: { $ref: "#/components/schemas/WorkloadContainerInstance" }
+    WorkloadContainerInventory:
+      type: object
+      required: [kind, namespace, name, containers, templateEditable, metricsAvailable, refreshedAt]
+      properties:
+        kind: { type: string }
+        namespace: { type: string }
+        name: { type: string }
+        resourceVersion: { type: string }
+        selector:
+          type: object
+          additionalProperties: { type: string }
+        containers:
+          type: array
+          items: { $ref: "#/components/schemas/WorkloadContainerState" }
+        templateEditable: { type: boolean }
+        metricsAvailable: { type: boolean }
+        warnings:
+          type: array
+          items: { type: string }
+        refreshedAt: { type: string, format: date-time }
     AutoscalerMetric:
       type: object
       required: [type]
@@ -5924,6 +6193,185 @@ components:
           type: array
           items: { $ref: "#/components/schemas/SecretSummary" }
         meta: { $ref: "#/components/schemas/ListMeta" }
+    StorageCenter:
+      type: object
+      required: [summary, catalog, integrations, diagnostics, generatedAt]
+      properties:
+        summary: { $ref: "#/components/schemas/StorageCenterSummary" }
+        catalog:
+          type: array
+          items: { $ref: "#/components/schemas/StorageCatalogItem" }
+        integrations:
+          type: array
+          items: { $ref: "#/components/schemas/StorageIntegration" }
+        diagnostics:
+          type: array
+          items: { $ref: "#/components/schemas/StorageDiagnostic" }
+        warnings:
+          type: array
+          items: { type: string }
+        generatedAt: { type: string, format: date-time }
+    StorageCenterSummary:
+      type: object
+      required: [nodeCount, readyNodeCount, storageClassCount, defaultStorageClassCount, persistentVolumeCount, persistentVolumeClaimCount, pendingClaimCount, managedIntegrationCount, adoptedIntegrationCount, volumeSnapshotAvailable]
+      properties:
+        nodeCount: { type: integer }
+        readyNodeCount: { type: integer }
+        storageClassCount: { type: integer }
+        defaultStorageClassCount: { type: integer }
+        persistentVolumeCount: { type: integer }
+        persistentVolumeClaimCount: { type: integer }
+        pendingClaimCount: { type: integer }
+        managedIntegrationCount: { type: integer }
+        adoptedIntegrationCount: { type: integer }
+        volumeSnapshotAvailable: { type: boolean }
+    StorageCatalogItem:
+      type: object
+      required: [id, name, vendor, project, category, description, supportLevel, status, defaultNamespace, defaultReleaseName, provisioners, expectedStorageClasses, capabilities, prerequisites, installed]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        vendor: { type: string }
+        project:
+          type: string
+          description: Upstream project coordinate such as owner/repository, not a URL or a Kubernetes provisioner identifier.
+        category: { type: string }
+        description: { type: string }
+        supportLevel: { type: string, enum: [verified, generic] }
+        status: { type: string, enum: [available, repository-missing, chart-missing, forbidden] }
+        statusMessage: { type: string }
+        chart: { $ref: "#/components/schemas/StorageCatalogChart" }
+        defaultNamespace: { type: string }
+        defaultReleaseName: { type: string }
+        provisioners:
+          type: array
+          items: { type: string }
+        expectedStorageClasses:
+          type: array
+          items: { type: string }
+        capabilities:
+          type: array
+          items: { type: string }
+        prerequisites:
+          type: array
+          items: { type: string }
+        warnings:
+          type: array
+          items: { type: string }
+        installed: { type: boolean }
+        integrationId: { type: string }
+    StorageCatalogChart:
+      type: object
+      required: [repositoryId, repositoryName, chartName, version, deprecated]
+      properties:
+        repositoryId: { type: string }
+        repositoryName: { type: string }
+        chartName: { type: string }
+        version: { type: string }
+        appVersion: { type: string }
+        digest: { type: string }
+        deprecated: { type: boolean }
+    StorageIntegration:
+      type: object
+      required: [id, name, kind, source, status, storageClasses, driverRegistered, podCount, readyPodCount]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        kind: { type: string }
+        provisioner: { type: string }
+        source: { type: string, enum: [managed, adopted] }
+        status: { type: string, enum: [healthy, degraded, unknown] }
+        releaseName: { type: string }
+        releaseNamespace: { type: string }
+        storageClasses:
+          type: array
+          items: { type: string }
+        driverRegistered: { type: boolean }
+        podCount: { type: integer }
+        readyPodCount: { type: integer }
+        defaultClass: { type: string }
+        message: { type: string }
+        warnings:
+          type: array
+          items: { type: string }
+    StoragePreflightRequest:
+      type: object
+      required: [catalogId]
+      properties:
+        catalogId: { type: string }
+        namespace: { type: string }
+        releaseName: { type: string }
+    StoragePreflight:
+      type: object
+      required: [catalogId, status, checks]
+      properties:
+        catalogId: { type: string }
+        status: { type: string, enum: [pass, warning, fail] }
+        checks:
+          type: array
+          items: { $ref: "#/components/schemas/StorageCheck" }
+        warnings:
+          type: array
+          items: { type: string }
+        catalog: { $ref: "#/components/schemas/StorageCatalogItem" }
+    StorageCheck:
+      type: object
+      required: [id, title, status, message]
+      properties:
+        id: { type: string }
+        title: { type: string }
+        status: { type: string, enum: [pass, warning, fail, info] }
+        message: { type: string }
+        suggestion: { type: string }
+    StorageVerifyRequest:
+      type: object
+      required: [namespace, storageClass, smokeTest]
+      properties:
+        catalogId: { type: string }
+        namespace: { type: string }
+        storageClass: { type: string }
+        releaseName: { type: string }
+        smokeTest: { type: boolean }
+        smokeTestImage: { type: string }
+    StorageVerification:
+      type: object
+      required: [status, namespace, storageClass, checks]
+      properties:
+        status: { type: string, enum: [pass, warning, fail] }
+        namespace: { type: string }
+        storageClass: { type: string }
+        checks:
+          type: array
+          items: { $ref: "#/components/schemas/StorageCheck" }
+        smokeTest: { $ref: "#/components/schemas/StorageSmokeTestResult" }
+        warnings:
+          type: array
+          items: { type: string }
+    StorageSmokeTestResult:
+      type: object
+      required: [name, namespace, storageClass, bound, podRunning, durationMs, cleanedUp]
+      properties:
+        name: { type: string }
+        namespace: { type: string }
+        storageClass: { type: string }
+        pvcName: { type: string }
+        podName: { type: string }
+        bound: { type: boolean }
+        podRunning: { type: boolean }
+        volumeName: { type: string }
+        durationMs: { type: integer, format: int64 }
+        cleanedUp: { type: boolean }
+        message: { type: string }
+    StorageDiagnostic:
+      type: object
+      required: [id, severity, title, message]
+      properties:
+        id: { type: string }
+        severity: { type: string, enum: [critical, warning, info] }
+        title: { type: string }
+        message: { type: string }
+        resource: { type: string }
+        suggestion: { type: string }
     StorageClass:
       type: object
       required: [name, provisioner, reclaimPolicy, volumeBinding, allowVolumeExpansion, default, createdAt]

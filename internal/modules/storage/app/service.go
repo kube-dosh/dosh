@@ -32,9 +32,10 @@ type Repository interface {
 }
 
 type Service struct {
-	repository Repository
-	authorizer domain.Authorizer
-	auditor    domain.Auditor
+	repository  Repository
+	authorizer  domain.Authorizer
+	auditor     domain.Auditor
+	helmCatalog HelmCatalog
 }
 
 func New(repository Repository, authorizer domain.Authorizer, auditor domain.Auditor) *Service {

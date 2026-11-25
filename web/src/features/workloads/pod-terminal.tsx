@@ -46,15 +46,20 @@ function looksLikeMissingShell(message: string): boolean {
 }
 
 export function PodTerminal({
-  namespace, name, containers, canDebugContainer = false, onContainerCreated,
+  namespace, name, containers, canDebugContainer = false, onContainerCreated, initialContainer,
 }: {
   namespace: string;
   name: string;
   containers: ContainerInfo[];
   canDebugContainer?: boolean;
   onContainerCreated?: () => Promise<unknown> | unknown;
+  initialContainer?: string;
 }) {
-  const [container, setContainer] = useState(containers.find((item) => item.state === "Running")?.name || containers[0]?.name || "");
+  const [container, setContainer] = useState(
+    initialContainer && containers.some((item) => item.name === initialContainer)
+      ? initialContainer
+      : containers.find((item) => item.state === "Running")?.name || containers[0]?.name || "",
+  );
   const [shell, setShell] = useState("sh");
   const [terminalReady, setTerminalReady] = useState(false);
   const [connection, setConnection] = useState<ConnectionState>("idle");
@@ -94,6 +99,10 @@ export function PodTerminal({
   });
 
   useEffect(() => {
+    if (initialContainer && containers.some((item) => item.name === initialContainer)) {
+      setContainer(initialContainer);
+      return;
+    }
     if (pendingDebugContainer && containers.some((item) => item.name === pendingDebugContainer)) {
       setContainer(pendingDebugContainer);
       setPendingDebugContainer("");
@@ -102,7 +111,7 @@ export function PodTerminal({
     if (!containers.some((item) => item.name === container)) {
       setContainer(containers.find((item) => item.state === "Running")?.name || containers[0]?.name || "");
     }
-  }, [container, containers, pendingDebugContainer]);
+  }, [container, containers, initialContainer, pendingDebugContainer]);
 
   const sendMessage = (message: Record<string, unknown>) => {
     const socket = socketRef.current;

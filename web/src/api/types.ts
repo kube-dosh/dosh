@@ -725,6 +725,96 @@ export interface WorkloadImageUpdateInput {
   resourceVersion?: string;
 }
 
+export interface WorkloadPodTemplate {
+  kind: string;
+  namespace: string;
+  name: string;
+  resourceVersion?: string;
+  template: Record<string, unknown>;
+  yaml: string;
+  selector?: Record<string, string>;
+  protectedLabels?: string[];
+  editable: boolean;
+  restrictions?: string[];
+  warnings?: string[];
+}
+
+export interface WorkloadPodTemplateUpdateInput {
+  resourceVersion?: string;
+  template: Record<string, unknown>;
+  changeCause?: string;
+  source?: "form" | "yaml";
+  dryRun?: boolean;
+  acknowledgeRisks?: boolean;
+}
+
+export interface WorkloadTemplateDiff {
+  path: string;
+  before?: unknown;
+  after?: unknown;
+}
+
+export interface WorkloadTemplateRollout {
+  effect: "none" | "rollingUpdate" | "futureJobs";
+  message: string;
+}
+
+export interface WorkloadPodTemplateResult extends WorkloadPodTemplate {
+  changed: boolean;
+  diff: WorkloadTemplateDiff[];
+  rollout: WorkloadTemplateRollout;
+  newWarnings?: string[];
+}
+
+export interface WorkloadContainerRuntime {
+  pods: number;
+  running: number;
+  ready: number;
+  terminated: number;
+  restarts: number;
+  metricsAvailable: boolean;
+  cpuUsageMilli?: number;
+  memoryUsageBytes?: number;
+}
+
+export interface WorkloadContainerInstance {
+  pod: string;
+  namespace: string;
+  node?: string;
+  job?: string;
+  image: string;
+  state: string;
+  reason?: string;
+  message?: string;
+  ready: boolean;
+  restartCount: number;
+  startedAt?: string;
+  metricsAvailable: boolean;
+  cpuUsageMilli?: number;
+  memoryUsageBytes?: number;
+}
+
+export interface WorkloadContainerState extends WorkloadContainer {
+  type: "container" | "initContainer" | "sidecar";
+  init: boolean;
+  sidecar: boolean;
+  runtime: WorkloadContainerRuntime;
+  instances: WorkloadContainerInstance[];
+}
+
+export interface WorkloadContainerInventory {
+  kind: string;
+  namespace: string;
+  name: string;
+  resourceVersion?: string;
+  selector?: Record<string, string>;
+  containers: WorkloadContainerState[];
+  templateEditable: boolean;
+  metricsAvailable: boolean;
+  warnings?: string[];
+  refreshedAt: string;
+}
+
 export interface CronJobSuspendInput {
   suspend: boolean;
   resourceVersion?: string;
@@ -1903,3 +1993,144 @@ export interface DisruptionBudgetInput {
   resourceVersion?: string;
 }
 
+
+export type StorageSupportLevel = "verified" | "generic";
+export type StorageCatalogStatus = "available" | "repository-missing" | "chart-missing" | "forbidden";
+export type StorageIntegrationSource = "managed" | "adopted";
+export type StorageIntegrationStatus = "healthy" | "degraded" | "unknown";
+export type StorageCheckStatus = "pass" | "warning" | "fail" | "info";
+
+export interface StorageCenterSummary {
+  nodeCount: number;
+  readyNodeCount: number;
+  storageClassCount: number;
+  defaultStorageClassCount: number;
+  persistentVolumeCount: number;
+  persistentVolumeClaimCount: number;
+  pendingClaimCount: number;
+  managedIntegrationCount: number;
+  adoptedIntegrationCount: number;
+  volumeSnapshotAvailable: boolean;
+}
+
+export interface StorageCatalogChart {
+  repositoryId: string;
+  repositoryName: string;
+  chartName: string;
+  version: string;
+  appVersion?: string;
+  digest?: string;
+  deprecated: boolean;
+}
+
+export interface StorageCatalogItem {
+  id: string;
+  name: string;
+  vendor: string;
+  project: string;
+  category: string;
+  description: string;
+  supportLevel: StorageSupportLevel;
+  status: StorageCatalogStatus;
+  statusMessage?: string;
+  chart?: StorageCatalogChart;
+  defaultNamespace: string;
+  defaultReleaseName: string;
+  provisioners: string[];
+  expectedStorageClasses: string[];
+  capabilities: string[];
+  prerequisites: string[];
+  warnings?: string[];
+  installed: boolean;
+  integrationId?: string;
+}
+
+export interface StorageIntegration {
+  id: string;
+  name: string;
+  kind: string;
+  provisioner?: string;
+  source: StorageIntegrationSource;
+  status: StorageIntegrationStatus;
+  releaseName?: string;
+  releaseNamespace?: string;
+  storageClasses: string[];
+  driverRegistered: boolean;
+  podCount: number;
+  readyPodCount: number;
+  defaultClass?: string;
+  message?: string;
+  warnings?: string[];
+}
+
+export interface StorageDiagnostic {
+  id: string;
+  severity: "critical" | "warning" | "info";
+  title: string;
+  message: string;
+  resource?: string;
+  suggestion?: string;
+}
+
+export interface StorageCenter {
+  summary: StorageCenterSummary;
+  catalog: StorageCatalogItem[];
+  integrations: StorageIntegration[];
+  diagnostics: StorageDiagnostic[];
+  warnings?: string[];
+  generatedAt: string;
+}
+
+export interface StorageCheck {
+  id: string;
+  title: string;
+  status: StorageCheckStatus;
+  message: string;
+  suggestion?: string;
+}
+
+export interface StoragePreflightRequest {
+  catalogId: string;
+  namespace?: string;
+  releaseName?: string;
+}
+
+export interface StoragePreflight {
+  catalogId: string;
+  status: "pass" | "warning" | "fail";
+  checks: StorageCheck[];
+  warnings?: string[];
+  catalog?: StorageCatalogItem;
+}
+
+export interface StorageVerifyRequest {
+  catalogId?: string;
+  namespace: string;
+  storageClass: string;
+  releaseName?: string;
+  smokeTest: boolean;
+  smokeTestImage?: string;
+}
+
+export interface StorageSmokeTestResult {
+  name: string;
+  namespace: string;
+  storageClass: string;
+  pvcName?: string;
+  podName?: string;
+  bound: boolean;
+  podRunning: boolean;
+  volumeName?: string;
+  durationMs: number;
+  cleanedUp: boolean;
+  message?: string;
+}
+
+export interface StorageVerification {
+  status: "pass" | "warning" | "fail";
+  namespace: string;
+  storageClass: string;
+  checks: StorageCheck[];
+  smokeTest?: StorageSmokeTestResult;
+  warnings?: string[];
+}

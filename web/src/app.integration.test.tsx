@@ -6,7 +6,7 @@ import { setupServer } from "msw/node";
 import { Toaster } from "sonner";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { routeTree } from "@/router";
-import type { AutoscalerSummary, DisruptionBudgetSummary, IngressDetail, NodeDetail, Overview, PersistentVolumeClaimDetail, PersistentVolumeDetail, PodDetail, ServiceDetail, SessionResponse, StorageClassDetail, WorkloadDetail, WorkloadSummary } from "@/api/types";
+import type { AutoscalerSummary, DisruptionBudgetSummary, IngressDetail, NodeDetail, Overview, PersistentVolumeClaimDetail, PersistentVolumeDetail, PodDetail, ServiceDetail, SessionResponse, StorageClassDetail, WorkloadContainerInventory, WorkloadDetail, WorkloadPodTemplate, WorkloadPodTemplateResult, WorkloadPodTemplateUpdateInput, WorkloadSummary } from "@/api/types";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { ThemeProvider } from "@/lib/theme";
 
@@ -82,6 +82,77 @@ function configuredWorkload(): WorkloadDetail {
       volumeMounts: [{ name: "config", mountPath: "/etc/web", readOnly: true }],
       readinessProbe: { type: "httpGet", path: "/ready", port: "80", scheme: "HTTP", command: [], initialDelaySeconds: 5, periodSeconds: 10, timeoutSeconds: 1, successThreshold: 1, failureThreshold: 3 },
     }],
+  };
+}
+
+function configuredWorkloadTemplate(): WorkloadPodTemplate {
+  const detail = configuredWorkload();
+  return {
+    kind: "Deployment",
+    namespace: "default",
+    name: "web-api",
+    resourceVersion: detail.resourceVersion,
+    selector: detail.selector,
+    protectedLabels: ["app"],
+    editable: true,
+    warnings: [],
+    template: {
+      metadata: { labels: { app: "web" }, annotations: {} },
+      spec: {
+        containers: [{
+          name: "web",
+          image: "nginx:alpine",
+          ports: [{ name: "http", containerPort: 80, protocol: "TCP" }],
+          resources: { requests: { cpu: "100m", memory: "128Mi" }, limits: { cpu: "500m", memory: "512Mi" } },
+          env: [
+            { name: "MODE", value: "production" },
+            { name: "TOKEN", valueFrom: { secretKeyRef: { name: "web-secret", key: "token" } } },
+          ],
+          volumeMounts: [{ name: "config", mountPath: "/etc/web", readOnly: true }],
+          readinessProbe: { httpGet: { path: "/ready", port: 80, scheme: "HTTP" }, initialDelaySeconds: 5, periodSeconds: 10, timeoutSeconds: 1, successThreshold: 1, failureThreshold: 3 },
+        }],
+        volumes: [{ name: "config", configMap: { name: "web-config" } }],
+      },
+    },
+    yaml: "",
+  };
+}
+
+function configuredContainerInventory(): WorkloadContainerInventory {
+  const detail = configuredWorkload();
+  return {
+    kind: "Deployment",
+    namespace: "default",
+    name: "web-api",
+    resourceVersion: detail.resourceVersion,
+    selector: detail.selector,
+    templateEditable: true,
+    metricsAvailable: true,
+    warnings: [],
+    refreshedAt: "2026-11-25T10:00:00Z",
+    containers: [{
+      ...detail.containers[0],
+      type: "container",
+      init: false,
+      sidecar: false,
+      runtime: { pods: 1, running: 1, ready: 1, terminated: 0, restarts: 0, metricsAvailable: true, cpuUsageMilli: 25, memoryUsageBytes: 33554432 },
+      instances: [{
+        pod: "web-api-abcdef-12345", namespace: "default", node: "worker-0001", image: "nginx:alpine", state: "Running",
+        ready: true, restartCount: 0, metricsAvailable: true, cpuUsageMilli: 25, memoryUsageBytes: 33554432,
+      }],
+    }],
+  };
+}
+
+function templateResult(body: WorkloadPodTemplateUpdateInput): WorkloadPodTemplateResult {
+  return {
+    ...configuredWorkloadTemplate(),
+    resourceVersion: "317755",
+    template: body.template,
+    changed: true,
+    diff: [{ path: "spec.containers[0]", before: "old", after: "new" }],
+    rollout: { effect: "rollingUpdate", message: "模板已保存，将触发滚动发布" },
+    newWarnings: [],
   };
 }
 
@@ -181,6 +252,10 @@ const server = setupServer(
     conditions: [{ type: "DisruptionAllowed", status: "True", reason: "SufficientPods" }], createdAt: "2026-11-02T00:00:00Z",
   } satisfies DisruptionBudgetSummary], meta: { total: 1, totalKnown: true, page: 1, pageSize: 1, totalPages: 1, hasMore: false } })),
   http.get("/api/v1/workloads/deployment/default/web-api", () => HttpResponse.json({ ...workload, name: "web-api", images: ["nginx:alpine"], resourceVersion: "317754", conditions: [], selector: {}, pods: [], containers: [{ name: "web", image: "nginx:alpine" }] })),
+  http.get("/api/v1/workloads/deployment/default/web-api/pod-template", () => HttpResponse.json(configuredWorkloadTemplate())),
+  http.post("/api/v1/workloads/deployment/default/web-api/pod-template", async ({ request }) => HttpResponse.json(templateResult(await request.json() as WorkloadPodTemplateUpdateInput))),
+  http.get("/api/v1/workloads/deployment/default/web-api/containers", () => HttpResponse.json(configuredContainerInventory())),
+  http.get("/api/v1/container-registries", () => HttpResponse.json({ items: [] })),
   http.post("/api/v1/workloads/deployments/preview", () => HttpResponse.json({ yaml: "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: web-api\n" })),
   http.post("/api/v1/workloads/deployments", () => HttpResponse.json({ ...workload, name: "web-api", images: ["nginx:alpine"] }, { status: 201 })),
   http.post("/api/v1/workloads/create/preview", () => HttpResponse.json({ yaml: "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: web-api\n" })),
@@ -524,7 +599,7 @@ describe("dosh application", () => {
         return HttpResponse.json({ items: [], meta: { total: 0 } });
       }),
     );
-    renderRoute("/storage?namespace=production&q=data");
+    renderRoute("/storage?tab=classes&namespace=production&q=data");
 
     expect(await screen.findByRole("cell", { name: "data-standard" })).toBeInTheDocument();
     expect(screen.getByPlaceholderText("搜索存储资源")).toHaveValue("data");
@@ -590,7 +665,7 @@ describe("dosh application", () => {
         return HttpResponse.json({ ...storageClassDetail, name: "fast-ssd", provisioner: "csi.example.test", allowVolumeExpansion: true }, { status: 201 });
       }),
     );
-    renderRoute("/storage");
+    renderRoute("/storage?tab=classes");
 
     const createButton = await screen.findByRole("button", { name: "创建 StorageClass" });
     await waitFor(() => expect(createButton).toBeEnabled());
@@ -1031,132 +1106,104 @@ describe("dosh application", () => {
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "调整副本数" })).not.toBeInTheDocument());
   });
 
-  it("updates a workload image with the current resource version", async () => {
+  it("updates a workload image atomically with the current resource version", async () => {
     let imageBody: Record<string, unknown> | undefined;
     let csrf: string | null = null;
-    server.use(http.post("/api/v1/workloads/deployment/default/web-api/image", async ({ request }) => {
+    server.use(http.post("/api/v1/workloads/deployment/default/web-api/pod-template", async ({ request }) => {
       imageBody = await request.json() as Record<string, unknown>;
       csrf = request.headers.get("x-csrf-token");
-      return HttpResponse.json({ status: "updated" });
+      return HttpResponse.json(templateResult(imageBody as unknown as WorkloadPodTemplateUpdateInput));
     }));
     renderRoute("/workloads/deployment/default/web-api");
     fireEvent.click(await screen.findByRole("button", { name: "更新镜像" }));
     const dialog = await screen.findByRole("dialog", { name: "更新容器镜像" });
-    expect(within(dialog).getByLabelText("镜像地址")).toHaveValue("nginx:alpine");
+    expect(await within(dialog).findByLabelText("镜像地址")).toHaveValue("nginx:alpine");
     fireEvent.change(within(dialog).getByLabelText("镜像地址"), { target: { value: "registry.example.test/web@sha256:abc123" } });
     fireEvent.click(within(dialog).getByRole("button", { name: "确认更新" }));
-    await waitFor(() => expect(imageBody).toEqual({
-      containerName: "web",
-      image: "registry.example.test/web@sha256:abc123",
+    await waitFor(() => expect(imageBody).toMatchObject({
       resourceVersion: "317754",
+      source: "form",
+      template: { spec: { containers: [{ name: "web", image: "registry.example.test/web@sha256:abc123" }] } },
     }));
     expect(csrf).toBe("test-csrf-token");
-    expect(await screen.findByText("镜像已更新，滚动发布已触发")).toBeInTheDocument();
+    expect(await screen.findByText("已更新 1 个容器镜像，滚动发布已触发")).toBeInTheDocument();
   });
 
-  it("keeps the image dialog open and reports a resource conflict", async () => {
-    server.use(http.post("/api/v1/workloads/deployment/default/web-api/image", () => HttpResponse.json(
+  it("keeps the image draft when an atomic template update conflicts", async () => {
+    server.use(http.post("/api/v1/workloads/deployment/default/web-api/pod-template", () => HttpResponse.json(
       { code: "conflict", message: "resource changed since it was loaded" },
       { status: 409 },
     )));
     renderRoute("/workloads/deployment/default/web-api");
     fireEvent.click(await screen.findByRole("button", { name: "更新镜像" }));
     const dialog = await screen.findByRole("dialog", { name: "更新容器镜像" });
-    fireEvent.change(within(dialog).getByLabelText("镜像地址"), { target: { value: "registry.example.test/web:2" } });
+    const imageInput = await within(dialog).findByLabelText("镜像地址");
+    fireEvent.change(imageInput, { target: { value: "registry.example.test/web:2" } });
     fireEvent.click(within(dialog).getByRole("button", { name: "确认更新" }));
-    expect(await screen.findByText("工作负载已被其他操作更新，请刷新后重试")).toBeInTheDocument();
+    expect(await screen.findByText(/你的镜像草稿仍然保留/)).toBeInTheDocument();
     expect(screen.getByRole("dialog", { name: "更新容器镜像" })).toBeInTheDocument();
+    expect(within(dialog).getByLabelText("镜像地址")).toHaveValue("registry.example.test/web:2");
   });
 
-  it("shows workload container environment, mounts and health checks", async () => {
-    server.use(http.get("/api/v1/workloads/deployment/default/web-api", () => HttpResponse.json(configuredWorkload())));
+  it("shows all workload containers, instances and Pod template entry points", async () => {
     renderRoute("/workloads/deployment/default/web-api?tab=config");
+    const center = await screen.findByTestId("workload-container-center");
+    const container = within(center).getByTestId("container-web");
+    expect(container).toHaveTextContent("业务容器");
+    expect(container).toHaveTextContent("1 个实例");
+    fireEvent.click(within(container).getByRole("button", { name: "详情与实例" }));
+    expect(within(container).getByText("MODE=production")).toBeInTheDocument();
+    expect(within(container).getByText("config → /etc/web")).toBeInTheDocument();
+    expect(within(container).getByText("Readiness · httpGet")).toBeInTheDocument();
+    expect(within(container).getByTestId("container-instance")).toHaveTextContent("web-api-abcdef-12345");
 
-    expect(await screen.findByText("环境变量")).toBeInTheDocument();
-    expect(screen.getByText("MODE")).toBeInTheDocument();
-    expect(screen.getByText("production")).toBeInTheDocument();
-    expect(screen.getByText("web-secret / token")).toBeInTheDocument();
-    expect(screen.getByText("/etc/web")).toBeInTheDocument();
-    expect(screen.getByText("web-config")).toBeInTheDocument();
-    expect(screen.getByText("HTTP GET http://Pod/ready:80")).toBeInTheDocument();
-    expect(await screen.findByRole("button", { name: "编辑就绪检查" })).toBeInTheDocument();
+    fireEvent.click(within(container).getByRole("button", { name: "编辑配置" }));
+    const editor = await screen.findByRole("dialog", { name: "Pod 模板 · web-api" });
+    expect(await within(editor).findByText("结构化表单")).toBeInTheDocument();
+    expect(within(editor).getByText("完整 YAML")).toBeInTheDocument();
   });
 
-  it("updates workload environment variables with the current resource version", async () => {
-    let updateBody: Record<string, unknown> | undefined;
-    server.use(
-      http.get("/api/v1/workloads/deployment/default/web-api", () => HttpResponse.json(configuredWorkload())),
-      http.put("/api/v1/workloads/deployment/default/web-api/containers/web/config", async ({ request }) => {
-        updateBody = await request.json() as Record<string, unknown>;
-        return HttpResponse.json({ status: "updated" });
-      }),
-    );
-    renderRoute("/workloads/deployment/default/web-api?tab=config");
-    fireEvent.click(await screen.findByRole("button", { name: "编辑环境变量" }));
-    const dialog = await screen.findByRole("dialog", { name: "编辑环境变量" });
-    fireEvent.click(within(dialog).getByRole("button", { name: "添加环境变量" }));
-    fireEvent.change(within(dialog).getByLabelText("变量 3 名称"), { target: { value: "FEATURE_FLAG" } });
-    fireEvent.change(within(dialog).getByLabelText("变量 3 值"), { target: { value: "enabled" } });
-    fireEvent.click(within(dialog).getByRole("button", { name: "保存配置" }));
-
-    await waitFor(() => expect(updateBody).toMatchObject({
-      resourceVersion: "317754",
-      env: [
-        { name: "MODE", value: "production" },
-        { name: "TOKEN", value: "", valueFrom: { kind: "secretKeyRef", name: "web-secret", key: "token" } },
-        { name: "FEATURE_FLAG", value: "enabled" },
-      ],
-      volumeMounts: [{ name: "config", mountPath: "/etc/web", readOnly: true }],
-      readinessProbe: { type: "httpGet", path: "/ready", port: "80" },
+  it("saves environment and volume changes through one Pod template update", async () => {
+    let updateBody: WorkloadPodTemplateUpdateInput | undefined;
+    server.use(http.post("/api/v1/workloads/deployment/default/web-api/pod-template", async ({ request }) => {
+      updateBody = await request.json() as WorkloadPodTemplateUpdateInput;
+      return HttpResponse.json(templateResult(updateBody));
     }));
-    expect(await screen.findByText("容器配置已更新，滚动发布已触发")).toBeInTheDocument();
-  });
-
-  it("updates workload volume mounts without dropping environment or probes", async () => {
-    let updateBody: Record<string, unknown> | undefined;
-    server.use(
-      http.get("/api/v1/workloads/deployment/default/web-api", () => HttpResponse.json(configuredWorkload())),
-      http.put("/api/v1/workloads/deployment/default/web-api/containers/web/config", async ({ request }) => {
-        updateBody = await request.json() as Record<string, unknown>;
-        return HttpResponse.json({ status: "updated" });
-      }),
-    );
     renderRoute("/workloads/deployment/default/web-api?tab=config");
-    fireEvent.click(await screen.findByRole("button", { name: "编辑数据存储" }));
-    const dialog = await screen.findByRole("dialog", { name: "编辑数据存储" });
-    fireEvent.change(within(dialog).getByLabelText("挂载 1 路径"), { target: { value: "/srv/web-config" } });
-    fireEvent.click(within(dialog).getByRole("button", { name: "保存配置" }));
+    const center = await screen.findByTestId("workload-container-center");
+    const container = within(center).getByTestId("container-web");
+    fireEvent.click(within(container).getByRole("button", { name: "编辑配置" }));
+    const editor = await screen.findByRole("dialog", { name: "Pod 模板 · web-api" });
+    fireEvent.click(await within(editor).findByText("环境变量（2）"));
+    fireEvent.click(within(editor).getByRole("button", { name: "添加环境变量" }));
+    const names = within(editor).getAllByPlaceholderText("变量名");
+    const values = within(editor).getAllByPlaceholderText("变量值");
+    fireEvent.change(names[names.length - 1], { target: { value: "FEATURE_FLAG" } });
+    fireEvent.change(values[values.length - 1], { target: { value: "enabled" } });
+    fireEvent.click(within(editor).getByText("存储挂载（1）"));
+    fireEvent.change(within(editor).getByPlaceholderText("/data"), { target: { value: "/srv/web-config" } });
 
-    await waitFor(() => expect(updateBody).toMatchObject({
+    fireEvent.click(within(editor).getByRole("button", { name: "保存并发布" }));
+    await waitFor(() => expect(updateBody?.dryRun).toBe(false));
+    expect(updateBody).toMatchObject({
       resourceVersion: "317754",
-      env: [{ name: "MODE", value: "production" }, { name: "TOKEN", value: "", valueFrom: { kind: "secretKeyRef", name: "web-secret", key: "token" } }],
-      volumeMounts: [{ name: "config", mountPath: "/srv/web-config", readOnly: true }],
-      readinessProbe: { type: "httpGet", path: "/ready", port: "80" },
-    }));
-  });
-
-  it("updates a readiness probe and keeps disabled probes unset", async () => {
-    let updateBody: Record<string, unknown> | undefined;
-    server.use(
-      http.get("/api/v1/workloads/deployment/default/web-api", () => HttpResponse.json(configuredWorkload())),
-      http.put("/api/v1/workloads/deployment/default/web-api/containers/web/config", async ({ request }) => {
-        updateBody = await request.json() as Record<string, unknown>;
-        return HttpResponse.json({ status: "updated" });
-      }),
-    );
-    renderRoute("/workloads/deployment/default/web-api?tab=config");
-    fireEvent.click(await screen.findByRole("button", { name: "编辑就绪检查" }));
-    const dialog = await screen.findByRole("dialog", { name: "编辑就绪检查" });
-    fireEvent.change(within(dialog).getByLabelText("请求路径"), { target: { value: "/healthz" } });
-    fireEvent.change(within(dialog).getByLabelText("端口"), { target: { value: "8080" } });
-    fireEvent.click(within(dialog).getByRole("button", { name: "保存配置" }));
-
-    await waitFor(() => expect(updateBody).toMatchObject({
-      resourceVersion: "317754",
-      readinessProbe: { type: "httpGet", path: "/healthz", port: "8080" },
-    }));
-    expect(updateBody).not.toHaveProperty("livenessProbe");
-    expect(updateBody).not.toHaveProperty("startupProbe");
+      source: "form",
+      template: {
+        spec: {
+          containers: [{
+            name: "web",
+            env: [
+              { name: "MODE", value: "production" },
+              { name: "TOKEN", valueFrom: { secretKeyRef: { name: "web-secret", key: "token" } } },
+              { name: "FEATURE_FLAG", value: "enabled" },
+            ],
+            volumeMounts: [{ name: "config", mountPath: "/srv/web-config", readOnly: true }],
+            readinessProbe: { httpGet: { path: "/ready", port: 80, scheme: "HTTP" } },
+          }],
+        },
+      },
+    });
+    expect(await screen.findByText("Pod 模板已保存，发布变更已触发")).toBeInTheDocument();
   });
 
   it("pauses a CronJob with the current resource version", async () => {

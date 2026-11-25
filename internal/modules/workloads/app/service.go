@@ -343,14 +343,19 @@ func (s *Service) StreamWorkloadLogs(ctx context.Context, actor domain.Actor, ki
 		s.audit(ctx, actor, "stream-workload-logs", kind, namespace, name, err)
 		return domain.WorkloadLogStreams{}, err
 	}
-	containers := make([]string, 0, len(workload.Containers))
+	containers := make([]string, 0, len(workload.Containers)+len(workload.InitContainers))
 	for _, item := range workload.Containers {
 		if item.Name != "" {
 			containers = append(containers, item.Name)
 		}
 	}
+	for _, item := range workload.InitContainers {
+		if item.Name != "" {
+			containers = append(containers, item.Name)
+		}
+	}
 	if len(containers) == 0 {
-		return domain.WorkloadLogStreams{}, fmt.Errorf("%w: workload has no regular containers", domain.ErrUnsupported)
+		return domain.WorkloadLogStreams{}, fmt.Errorf("%w: workload has no containers", domain.ErrUnsupported)
 	}
 	if container != "" {
 		if !containsString(containers, container) {

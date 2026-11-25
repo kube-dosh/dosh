@@ -204,6 +204,14 @@
 
 当用户创建 Job 或 CronJob 时，系统应支持 completions、parallelism、backoffLimit、activeDeadlineSeconds 和 ttlSecondsAfterFinished。详情应展示活动、成功、失败数量，最近调度/成功时间、失败原因与消息，以及由该 CronJob 控制的有界近期 Job 列表。用户具备 `get cronjobs` 与 `create jobs` 权限时，可选择任一应用容器并临时覆盖 Command/Args 立即创建一次性 Job；不得修改 CronJob 调度或补跑历史任务。目标容器不存在、命令/参数越界或权限不足时，必须在 Kubernetes 写入前拒绝并审计。
 
+### GR-050 工作负载容器中心
+
+当用户查看 Deployment、StatefulSet、DaemonSet、Job 或 CronJob 时，系统应以容器为中心展示全部业务容器、Init Container 和 native sidecar，并分别呈现声明式配置、请求/限制、端口、环境变量、挂载、探针、运行实例、实际镜像、状态、Ready、重启次数和容器级指标。多实例场景下，日志可聚合全部匹配实例；终端与端口转发必须允许选择具体运行 Pod。容器中心不得用单容器视角隐藏 sidecar 或 Init Container，320px/390px 视口不得产生横向溢出。
+
+### GR-051 工作负载 Pod 模板原子编辑
+
+当用户具备工作负载 update 权限时，系统应提供结构化表单和完整 YAML 双模式编辑，二者共用同一份 PodTemplateSpec 文档。保存必须携带 `resourceVersion`，受工作负载 selector 约束的标签不可修改；服务端先执行 API Server dry run，再以同一版本执行一次正式更新。表单未展示的未知字段必须保留，镜像更新可一次覆盖多个业务容器、Init Container 和 native sidecar，且只触发一次滚动发布。模板已有高风险配置只提示；本次新增 hostNetwork、hostPID、hostIPC、hostPath、hostPort、privileged、root 或 capabilities 时必须显式确认。409 冲突必须保留用户草稿并刷新服务端版本，Job 模板只读但仍保留实例运维能力。
+
 ## 2. 实现落点
 
 | 层 | 文件 | 职责 |
@@ -213,7 +221,7 @@
 | http | `internal/modules/resources/http/handler.go` | Discovery、Schema、列表、详情、能力、创建/更新/删除路由与稳定错误映射 |
 | kube | `internal/platform/kube/resources.go`、`resource_relations.go`、`resource_schema.go`、`preferences.go` | API Discovery、OpenAPI v2 读取与缓存、动态客户端读写、分页和搜索、关系拓扑、偏好 ConfigMap 存储 |
 | nodes | `internal/modules/nodes/**`、`internal/platform/kube/node_drain.go` | 排空计划、PDB/DaemonSet/mirror/bare Pod 分类、Eviction API 执行和部分失败结果 |
-| workloads | `internal/modules/workloads/**`、`internal/platform/kube/workloads.go`、`pod_exec.go`、`pods.go`、`pod_port_forward.go` | 发布历史/模板快照、回滚 Diff、日志时间范围、Init/Ephemeral Container、SPDY Exec、会话限额、Ephemeral Debug、Pod/Service 端口转发与审计详情 |
+| workloads | `internal/modules/workloads/**`、`internal/platform/kube/workloads.go`、`pod_template.go`、`pod_exec.go`、`pods.go`、`pod_port_forward.go` | 容器中心、Pod 模板原子编辑与乐观锁、发布历史/模板快照、回滚 Diff、日志时间范围、Init/Ephemeral Container、SPDY Exec、会话限额、Ephemeral Debug、Pod/Service 端口转发与审计详情 |
 | releases | `internal/modules/releases/**`、`internal/platform/kube/helm_releases.go`、`helm_upgrade.go` | Helm v3 Secret 解码、最新 revision/历史、values/manifest 脱敏、revision Diff、Dry Run 回滚与升级、Hook 跳过和 Helm 兼容 revision 写入 |
 | auth | `internal/modules/auth/**`、`internal/platform/kube/access_tokens.go` | 当前身份 SubjectAccessReview 解释、TokenReview 身份检查、管理员临时 ServiceAccount/RBAC/Token 签发与过期授权清理 |
 | bootstrap | `internal/bootstrap/app.go`、`router.go` | 依赖装配和受保护路由挂载 |
@@ -231,6 +239,7 @@
   - SelfSubjectRulesReview 过滤、规则缓存、失败关闭和集群级搜索范围。
   - Pod 日志 `pods/log` 授权、Previous 参数和审计。
   - 多应用容器/Init Container 创建、调度与安全上下文规范化、亲和性 label 值大小写保持、Deployment 发布控制、Job 参数和 CronJob 指定容器覆盖执行。
+  - 容器中心聚合业务容器、Init/原生 sidecar、运行实例与容器级指标；Pod 模板 dry run、selector 保护、未知字段保留、并发版本冲突、风险增量确认、多容器镜像一次原子更新和 Job 只读。
   - 工作负载多 Pod/多容器日志聚合、20 流上限、逐流拒绝、全部拒绝/无 Pod/不可用错误分类和取消释放。
   - 通用创建/更新 Dry Run、Secret 保护、update→patch 回退、能力查询和删除策略。
   - Deployment ReplicaSet 与 StatefulSet ControllerRevision 历史、回滚冲突和 change-cause 恢复。
@@ -250,6 +259,7 @@
 - `cd web && npm test -- --run`
 - Playwright Chromium/Firefox：多版本切换、动态表单、Diff、风险确认、排空、终端、Ephemeral Container 创建与移动端弹窗、聚合日志、Helm Diff/回滚/升级、端口转发、关系拓扑筛选、跨命名空间搜索、偏好同步、权限与检查、本地模板、390px/320px/大字体/Android 和弹窗后代边界。
 - Playwright N05–N08：多容器与 Init Container 创建请求体、NodeSelector/容忍/亲和性/拓扑/PriorityClass/ServiceAccount/SecurityContext、Deployment 发布进度与发布控制、CronJob 批处理详情和指定容器 Command/Args 覆盖；在桌面 Chromium、Firefox 以及 320/360/390px 视口检查页面与弹窗横向溢出。
+- Playwright 容器中心：检查全部容器、实例选择、日志/终端/端口转发入口，以及镜像弹窗和模板编辑器在 1440/768/390/320px 的页面、弹窗和后代控件横向溢出。
 - axe：资源浏览器、Helm、权限与检查、列表、详情在亮暗主题下无 serious/critical 问题。
 - `make arch`
 

@@ -374,6 +374,43 @@ func (h *Handler) UpdateImage(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	httpx.JSON(w, stdhttp.StatusOK, map[string]string{"status": "updated"})
 }
 
+func (h *Handler) GetPodTemplate(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	actor, _ := domain.ActorFromContext(r.Context())
+	item, err := h.service.GetPodTemplate(r.Context(), actor, chi.URLParam(r, "kind"), chi.URLParam(r, "namespace"), chi.URLParam(r, "name"))
+	if err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	httpx.JSON(w, stdhttp.StatusOK, item)
+}
+
+func (h *Handler) UpdatePodTemplate(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	var request domain.WorkloadPodTemplateUpdate
+	if !httpx.DecodeJSON(w, r, &request) {
+		return
+	}
+	actor, _ := domain.ActorFromContext(r.Context())
+	item, err := h.service.UpdatePodTemplate(r.Context(), actor, chi.URLParam(r, "kind"), chi.URLParam(r, "namespace"), chi.URLParam(r, "name"), request)
+	if err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	httpx.JSON(w, stdhttp.StatusOK, item)
+}
+
+func (h *Handler) GetContainerInventory(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	actor, _ := domain.ActorFromContext(r.Context())
+	item, err := h.service.GetContainerInventory(r.Context(), actor, chi.URLParam(r, "kind"), chi.URLParam(r, "namespace"), chi.URLParam(r, "name"))
+	if err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	httpx.JSON(w, stdhttp.StatusOK, item)
+}
+
 func (h *Handler) UpdateContainerConfig(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	var request containerConfigRequest
 	if !httpx.DecodeJSON(w, r, &request) {
@@ -684,6 +721,9 @@ func (h *Handler) Mount(r chi.Router) {
 	r.Post("/workloads/create", h.CreateWorkload)
 	r.Post("/workloads/create/preview", h.PreviewWorkload)
 	r.Get("/workloads/{kind}/{namespace}/{name}", h.Get)
+	r.Get("/workloads/{kind}/{namespace}/{name}/containers", h.GetContainerInventory)
+	r.Get("/workloads/{kind}/{namespace}/{name}/pod-template", h.GetPodTemplate)
+	r.Post("/workloads/{kind}/{namespace}/{name}/pod-template", h.UpdatePodTemplate)
 	r.Post("/workloads/{kind}/{namespace}/{name}/scale", h.Scale)
 	r.Post("/workloads/{kind}/{namespace}/{name}/restart", h.Restart)
 	r.Post("/workloads/{kind}/{namespace}/{name}/image", h.UpdateImage)

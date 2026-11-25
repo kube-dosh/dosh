@@ -12,7 +12,6 @@ import (
 
 	"dosh/internal/domain"
 	systemapp "dosh/internal/modules/system/app"
-	"dosh/internal/platform/egress"
 )
 
 type checkerStub struct {
@@ -106,30 +105,30 @@ func (releaseDisabledChecker) Status(context.Context, bool) domain.UpdateStatus 
 }
 
 type egressRuntimeStub struct {
-	status    egress.Status
-	view      egress.View
-	preflight egress.Preflight
-	saved     egress.UpdateInput
+	status    domain.EgressStatus
+	view      domain.EgressSettings
+	preflight domain.EgressPreflight
+	saved     domain.EgressSettingsUpdate
 	err       error
 }
 
-func (e *egressRuntimeStub) Status() egress.Status { return e.status }
-func (e *egressRuntimeStub) View() egress.View     { return e.view }
-func (e *egressRuntimeStub) Save(_ context.Context, input egress.UpdateInput) (egress.View, error) {
+func (e *egressRuntimeStub) Status() domain.EgressStatus { return e.status }
+func (e *egressRuntimeStub) View() domain.EgressSettings { return e.view }
+func (e *egressRuntimeStub) Save(_ context.Context, input domain.EgressSettingsUpdate) (domain.EgressSettings, error) {
 	e.saved = input
 	return e.view, e.err
 }
-func (e *egressRuntimeStub) Preflight(_ context.Context, input egress.UpdateInput) (egress.Preflight, error) {
+func (e *egressRuntimeStub) Preflight(_ context.Context, input domain.EgressSettingsUpdate) (domain.EgressPreflight, error) {
 	e.saved = input
 	return e.preflight, e.err
 }
 
 func TestEgressSettingsRequireAdministratorAndDoNotExposeSecrets(t *testing.T) {
 	runtime := &egressRuntimeStub{
-		status: egress.Status{Mode: "explicit", Enabled: true, Source: egress.SourceRuntime},
-		view: egress.View{
+		status: domain.EgressStatus{Mode: "explicit", Enabled: true, Source: "runtime"},
+		view: domain.EgressSettings{
 			Mode: "explicit", EffectiveMode: "explicit", Enabled: true, HTTPProxy: "http://proxy.example.test:3128",
-			Username: "dosh", CredentialsConfigured: true, CAConfigured: true, Source: egress.SourceRuntime, Revision: "42",
+			Username: "dosh", CredentialsConfigured: true, CAConfigured: true, Source: "runtime", Revision: "42",
 		},
 	}
 	handler := New(systemapp.New(domain.SystemInfo{}, &checkerStub{}, runtime, nil))
@@ -169,11 +168,11 @@ func TestEgressSettingsRequireAdministratorAndDoNotExposeSecrets(t *testing.T) {
 }
 
 func TestEgressPreflightRequiresAdministratorAndReturnsPolicyDetails(t *testing.T) {
-	runtime := &egressRuntimeStub{preflight: egress.Preflight{
+	runtime := &egressRuntimeStub{preflight: domain.EgressPreflight{
 		Status: "warning", Message: "proxy DNS may change",
-		NetworkPolicy:    egress.NetworkPolicyStatus{Enabled: true, Mode: egress.NetworkPolicyModeRuntime, AutoManage: true, CanAutoManage: true},
+		NetworkPolicy:    domain.EgressNetworkPolicyStatus{Enabled: true, Mode: "runtime", AutoManage: true, CanAutoManage: true},
 		RequiredIPBlocks: []string{"192.0.2.10/32"}, RequiredPorts: []int{1080},
-		Targets: []egress.ProxyTarget{{Kind: "http", Host: "proxy.example.test", Port: 1080, Addresses: []string{"192.0.2.10"}, CIDRs: []string{"192.0.2.10/32"}, Allowed: true, Reachable: true}},
+		Targets: []domain.EgressProxyTarget{{Kind: "http", Host: "proxy.example.test", Port: 1080, Addresses: []string{"192.0.2.10"}, CIDRs: []string{"192.0.2.10/32"}, Allowed: true, Reachable: true}},
 	}}
 	handler := New(systemapp.New(domain.SystemInfo{}, &checkerStub{}, runtime, nil))
 	body := `{"mode":"explicit","httpProxy":"http://proxy.example.test:1080"}`

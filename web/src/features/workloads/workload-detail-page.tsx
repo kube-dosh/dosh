@@ -32,8 +32,9 @@ import { ResourceEvents } from "@/features/events/resource-events";
 import { PodTerminal } from "@/features/workloads/pod-terminal";
 import { WorkloadLogViewer } from "@/features/workloads/workload-log-viewer";
 import { ResourceRelationsPanel } from "@/features/resources/resource-relations-panel";
-import { WorkloadContainerConfigPanel } from "@/features/workloads/workload-container-config-panel";
-import { ImageReferencePicker } from "@/features/registries/image-reference-picker";
+import { WorkloadContainerCenter } from "@/features/workloads/workload-container-center";
+import { WorkloadImageUpdateDialog } from "@/features/workloads/workload-image-update-dialog";
+import { WorkloadPodTemplateEditor } from "@/features/workloads/workload-pod-template-editor";
 import { WorkloadRevisionHistory } from "@/features/workloads/workload-revision-history";
 import { WorkloadServicesPanel } from "@/features/workloads/workload-services-panel";
 import { formatAge, formatDate } from "@/lib/utils";
@@ -78,11 +79,10 @@ export function WorkloadDetailPage() {
   const [runContainer, setRunContainer] = useState("");
   const [runCommand, setRunCommand] = useState("");
   const [runArgs, setRunArgs] = useState("");
-  const [imageOpen, setImageOpen] = useState(false);
-  const [imageContainer, setImageContainer] = useState("");
-  const [imageValue, setImageValue] = useState("");
-  const [imageRegistryId, setImageRegistryId] = useState("");
-  const [imageResourceVersion, setImageResourceVersion] = useState("");
+  const [imageUpdateOpen, setImageUpdateOpen] = useState(false);
+  const [imageFocusContainer, setImageFocusContainer] = useState<string | undefined>();
+  const [podTemplateOpen, setPodTemplateOpen] = useState(false);
+  const [podTemplateFocusContainer, setPodTemplateFocusContainer] = useState<string | undefined>();
   const [replicas, setReplicas] = useState(1);
   const [confirmName, setConfirmName] = useState("");
   const [terminalPod, setTerminalPod] = useState<PodSummary | null>(null);
@@ -117,8 +117,7 @@ export function WorkloadDetailPage() {
   const workloadCaps = workloadCapabilities(capabilities, kind);
   const canScale = workloadCaps.scale && ["deployment", "statefulset"].includes(kind);
   const canRestart = workloadCaps.update && !["job", "cronjob"].includes(kind);
-  const canUpdateImage = workloadCaps.update && ["deployment", "statefulset", "daemonset"].includes(kind);
-  const canUpdateContainerConfig = workloadCaps.update && ["deployment", "statefulset", "daemonset"].includes(kind);
+  const canEditPodTemplate = workloadCaps.update && ["deployment", "statefulset", "daemonset", "cronjob"].includes(kind);
   const canSuspend = workloadCaps.update && kind === "cronjob";
   const canRunNow = kind === "cronjob" && resourceCapabilities(capabilities, "jobs").create;
   const canRollout = workloadCaps.update && ["deployment", "statefulset", "daemonset"].includes(kind);
@@ -128,6 +127,8 @@ export function WorkloadDetailPage() {
     await queryClient.invalidateQueries({ queryKey: ["workload", kind, params.namespace, params.name] });
     await queryClient.invalidateQueries({ queryKey: ["workloads"] });
     await queryClient.invalidateQueries({ queryKey: ["workload-revisions", kind, params.namespace, params.name] });
+    await queryClient.invalidateQueries({ queryKey: ["workload-container-inventory", kind, params.namespace, params.name] });
+    await queryClient.invalidateQueries({ queryKey: ["workload-pod-template", kind, params.namespace, params.name] });
   };
   const scale = useMutation({
     mutationFn: () => api.scaleWorkload(kind, params.namespace, params.name, replicas),
@@ -156,27 +157,6 @@ export function WorkloadDetailPage() {
     onError: (error) => {
       if (error instanceof ApiError && error.status === 409) {
         toast.error(`${kindLabel} 已被其他操作更新，请刷新后重试`);
-        void invalidate();
-        return;
-      }
-      toast.error(error.message);
-    },
-  });
-  const updateImage = useMutation({
-    mutationFn: () => api.updateWorkloadImage(kind, params.namespace, params.name, {
-      containerName: imageContainer,
-      image: imageValue.trim(),
-      registryId: imageRegistryId || undefined,
-      resourceVersion: imageResourceVersion || undefined,
-    }),
-    onSuccess: async () => {
-      setImageOpen(false);
-      await invalidate();
-      toast.success("镜像已更新，滚动发布已触发");
-    },
-    onError: (error) => {
-      if (error instanceof ApiError && error.status === 409) {
-        toast.error("工作负载已被其他操作更新，请刷新后重试");
         void invalidate();
         return;
       }
@@ -227,14 +207,13 @@ export function WorkloadDetailPage() {
   if (query.isError) return <ErrorState error={query.error} onRetry={() => void query.refetch()} />;
   const workload = query.data!;
   const suspended = workload.status === "Suspended";
-  const selectedImageContainer = workload.containers.find((container) => container.name === imageContainer);
-  const openImageDialog = () => {
-    const container = workload.containers[0];
-    setImageContainer(container?.name ?? "");
-    setImageValue(container?.image ?? "");
-    setImageRegistryId("");
-    setImageResourceVersion(workload.resourceVersion ?? "");
-    setImageOpen(true);
+  const openImageDialog = (containerName?: string) => {
+    setImageFocusContainer(containerName || workload.containers[0]?.name);
+    setImageUpdateOpen(true);
+  };
+  const openTemplateEditor = (containerName?: string) => {
+    setPodTemplateFocusContainer(containerName);
+    setPodTemplateOpen(true);
   };
   const openRolloutDialog = () => {
     setRolloutPaused(Boolean(workload.rollout?.paused));
@@ -268,7 +247,8 @@ export function WorkloadDetailPage() {
             {canRunNow ? <Button variant="outline" size="sm" onClick={openRunDialog}><PlayCircle className="h-4 w-4" />立即执行</Button> : null}
             {canSuspend ? <Button variant="outline" size="sm" onClick={() => setSuspendOpen(true)}>{suspended ? <Play className="h-4 w-4" /> : <Pause className="h-4 w-4" />}{suspended ? "恢复调度" : "暂停调度"}</Button> : null}
             {canRollout ? <Button variant="outline" size="sm" onClick={openRolloutDialog}>{workload.rollout?.paused ? <Play className="h-4 w-4" /> : <Pause className="h-4 w-4" />}发布控制</Button> : null}
-            {canUpdateImage && workload.containers.length ? <Button variant="outline" size="sm" onClick={openImageDialog}><Pencil className="h-4 w-4" />更新镜像</Button> : null}
+            {canEditPodTemplate ? <Button variant="outline" size="sm" onClick={() => openTemplateEditor()}><Pencil className="h-4 w-4" />编辑 Pod 模板</Button> : null}
+            {canEditPodTemplate && (workload.containers.length || workload.initContainers?.length) ? <Button variant="outline" size="sm" onClick={() => openImageDialog()}><RefreshCw className="h-4 w-4" />更新镜像</Button> : null}
             {canRestart ? <Button variant="outline" size="sm" onClick={() => setRestartOpen(true)}><RefreshCw className="h-4 w-4" />重启</Button> : null}
             {canScale ? <Button size="sm" onClick={() => { setReplicas(workload.desired); setScaleOpen(true); }}><Plus className="h-4 w-4" />扩缩容</Button> : null}
             {canDelete ? <Button variant="destructive" size="sm" onClick={() => { setConfirmName(""); setDeleteOpen(true); }}><Trash2 className="h-4 w-4" />删除</Button> : null}
@@ -276,7 +256,7 @@ export function WorkloadDetailPage() {
         }
       />
       <Tabs value={tab} onValueChange={changeTab}>
-        <TabsList><TabsTrigger value="overview">概览</TabsTrigger><TabsTrigger value="config">容器配置</TabsTrigger><TabsTrigger value="pods">实例 ({workload.pods.length})</TabsTrigger><TabsTrigger value="services">访问方式</TabsTrigger><TabsTrigger value="events">事件</TabsTrigger><TabsTrigger value="logs"><ScrollText className="h-3.5 w-3.5" />日志</TabsTrigger>{supportsRevisions ? <TabsTrigger value="history"><RefreshCw className="h-3.5 w-3.5" />发布历史</TabsTrigger> : null}<TabsTrigger value="yaml"><FileCode2 className="h-3.5 w-3.5" />YAML</TabsTrigger></TabsList>
+        <TabsList><TabsTrigger value="overview">概览</TabsTrigger><TabsTrigger value="config">容器</TabsTrigger><TabsTrigger value="pods">实例 ({workload.pods.length})</TabsTrigger><TabsTrigger value="services">访问方式</TabsTrigger><TabsTrigger value="events">事件</TabsTrigger><TabsTrigger value="logs"><ScrollText className="h-3.5 w-3.5" />日志</TabsTrigger>{supportsRevisions ? <TabsTrigger value="history"><RefreshCw className="h-3.5 w-3.5" />发布历史</TabsTrigger> : null}<TabsTrigger value="yaml"><FileCode2 className="h-3.5 w-3.5" />YAML</TabsTrigger></TabsList>
         <TabsContent value="overview">
           <div className="grid gap-4 xl:grid-cols-[1.1fr_0.9fr]">
             <Card>
@@ -314,8 +294,7 @@ export function WorkloadDetailPage() {
           <div className="mt-4"><ResourceRelationsPanel reference={{ group: relationGroup, version: "v1", resource: relationResource }} name={workload.name} namespace={workload.namespace} title="故障拓扑与直接关系" /></div>
         </TabsContent>
         <TabsContent value="config" className="space-y-4">
-          {workload.initContainers?.length ? <InitContainerPanel containers={workload.initContainers} /> : null}
-          <WorkloadContainerConfigPanel workload={workload} canEdit={canUpdateContainerConfig} onSaved={invalidate} />
+          <WorkloadContainerCenter kind={kind} namespace={workload.namespace} name={workload.name} onEditTemplate={openTemplateEditor} onUpdateImages={openImageDialog} />
         </TabsContent>
         <TabsContent value="pods">
           <DataTable
@@ -336,7 +315,7 @@ export function WorkloadDetailPage() {
         </TabsContent>
         <TabsContent value="services"><WorkloadServicesPanel namespace={workload.namespace} workloadName={workload.name} workloadSelector={workload.selector} /></TabsContent>
         <TabsContent value="events"><ResourceEvents namespace={workload.namespace} objectKind={kindLabel} objectName={workload.name} /></TabsContent>
-        <TabsContent value="logs"><WorkloadLogViewer kind={kind} namespace={workload.namespace} name={workload.name} containers={workload.containers} /></TabsContent>
+        <TabsContent value="logs"><WorkloadLogViewer kind={kind} namespace={workload.namespace} name={workload.name} containers={[...(workload.initContainers ?? []).map((container) => ({ name: container.name, init: true })), ...workload.containers]} /></TabsContent>
         {supportsRevisions ? <TabsContent value="history"><WorkloadRevisionHistory kind={kind} namespace={workload.namespace} name={workload.name} canRollback={canRollback} onRolledBack={invalidate} /></TabsContent> : null}
         <TabsContent value="yaml"><YamlPanel type={kind} name={workload.name} namespace={workload.namespace} height="64vh" /></TabsContent>
       </Tabs>
@@ -404,44 +383,6 @@ export function WorkloadDetailPage() {
             <Button onClick={() => updateRollout.mutate()} disabled={updateRollout.isPending || !rolloutFormValid}>
               {updateRollout.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : rolloutPaused ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
               保存发布设置
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog open={imageOpen} onOpenChange={setImageOpen}>
-        <DialogContent className="max-w-lg">
-          <DialogHeader>
-            <DialogTitle>更新容器镜像</DialogTitle>
-            <DialogDescription>{workload.namespace}/{workload.name} · 将更新 Pod 模板并触发滚动发布</DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="workload-image-container">容器</Label>
-              <Select value={imageContainer} onValueChange={(value) => {
-                setImageContainer(value);
-                const container = workload.containers.find((item) => item.name === value);
-                setImageValue(container?.image ?? "");
-                setImageRegistryId("");
-              }}>
-                <SelectTrigger id="workload-image-container" aria-label="选择容器"><SelectValue placeholder="选择容器" /></SelectTrigger>
-                <SelectContent>{workload.containers.map((container) => <SelectItem key={container.name} value={container.name}>{container.name}</SelectItem>)}</SelectContent>
-              </Select>
-            </div>
-            <ImageReferencePicker
-              id="workload-image"
-              value={imageValue}
-              registryId={imageRegistryId || undefined}
-              onChange={(image, registryId) => { setImageValue(image); setImageRegistryId(registryId ?? ""); }}
-              label="镜像地址"
-              hint={`使用不可变 digest 或明确版本标签；当前资源版本 ${imageResourceVersion || "未锁定"}。`}
-            />
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setImageOpen(false)} disabled={updateImage.isPending}>取消</Button>
-            <Button onClick={() => updateImage.mutate()} disabled={updateImage.isPending || !imageContainer || !imageValue.trim() || imageValue.trim() === selectedImageContainer?.image}>
-              {updateImage.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Pencil className="h-4 w-4" />}
-              确认更新
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -515,6 +456,8 @@ export function WorkloadDetailPage() {
         </AlertDialogContent>
       </AlertDialog>
       <YamlDialog open={yamlOpen} onOpenChange={setYamlOpen} type={kind} name={workload.name} namespace={workload.namespace} />
+      <WorkloadImageUpdateDialog open={imageUpdateOpen} onOpenChange={setImageUpdateOpen} kind={kind} namespace={workload.namespace} name={workload.name} focusContainer={imageFocusContainer} onSaved={invalidate} />
+      <WorkloadPodTemplateEditor open={podTemplateOpen} onOpenChange={setPodTemplateOpen} kind={kind} namespace={workload.namespace} name={workload.name} focusContainer={podTemplateFocusContainer} onSaved={invalidate} />
     </>
   );
 }
@@ -599,23 +542,6 @@ function ReplicaSetPanel({ replicaSets }: { replicaSets: NonNullable<WorkloadDet
             </div>
             <div className="mt-2 flex min-w-0 flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground"><span>期望 {replicaSet.desired}</span><span>就绪 {replicaSet.ready}</span><span>可用 {replicaSet.available}</span></div>
             <p className="mt-2 break-all font-mono text-xs text-muted-foreground">{replicaSet.images.join(" · ") || "—"}</p>
-          </div>
-        ))}
-      </CardContent>
-    </Card>
-  );
-}
-
-function InitContainerPanel({ containers }: { containers: NonNullable<WorkloadDetail["initContainers"]> }) {
-  return (
-    <Card className="min-w-0 overflow-hidden">
-      <CardHeader><CardTitle>Init Container</CardTitle></CardHeader>
-      <CardContent className="grid min-w-0 gap-2 sm:grid-cols-2">
-        {containers.map((container) => (
-          <div key={container.name} className="min-w-0 rounded-md border border-dashed bg-muted/20 px-3 py-2">
-            <p className="break-all font-mono text-xs font-medium">{container.name}</p>
-            <p className="mt-1 break-all font-mono text-xs text-muted-foreground">{container.image}</p>
-            <p className="mt-1 text-xs text-muted-foreground">{container.env.length} 个环境变量 · {container.volumeMounts.length} 个挂载</p>
           </div>
         ))}
       </CardContent>
