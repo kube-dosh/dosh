@@ -47,6 +47,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import { HelmInstallDialog } from "@/features/helm/charts/helm-install-dialog";
+import { ImageReferencePicker } from "@/features/registries/image-reference-picker";
 import { cn } from "@/lib/utils";
 
 const catalogStatusLabel: Record<StorageCatalogItem["status"], string> = {
@@ -477,7 +478,7 @@ function StorageVerifyDialog({ target, classes, result, error, pending, onClose,
             <input type="checkbox" className="mt-0.5 h-4 w-4 shrink-0 accent-primary" checked={smokeTest} onChange={(event) => setSmokeTest(event.target.checked)} />
             <span className="min-w-0"><span className="font-medium">运行 Smoke Test</span><span className="mt-0.5 block break-words text-xs text-muted-foreground">会在目标命名空间创建 1Gi PVC 和探针 Pod，验证 WaitForFirstConsumer 供应与挂载，完成后自动删除。</span></span>
           </label>
-          {smokeTest ? <div className="min-w-0 space-y-1.5"><Label htmlFor="storage-smoke-image">探针镜像（可选）</Label><Input id="storage-smoke-image" value={image} onChange={(event) => setImage(event.target.value)} className="font-mono" placeholder="registry.k8s.io/pause:3.10" autoComplete="off" spellCheck={false} /><p className="text-xs text-muted-foreground">隔离网络或镜像仓库受限时，请填写节点可拉取的 pause 镜像。</p></div> : null}
+          {smokeTest ? <ImageReferencePicker id="storage-smoke-image" value={image} onChange={(next) => setImage(next)} label="探针镜像（可选）" placeholder="registry.k8s.io/pause:3.10" hint="留空时使用内置 pause 镜像；可从已配置镜像仓搜索仓库与 Tag，也可手动输入完整地址。" /> : null}
           {result ? (
             <div className="min-w-0 space-y-3">
               <div className={cn("rounded-md border px-3 py-2 text-sm", result.status === "pass" ? "border-success/30 bg-success/5 text-success" : result.status === "fail" ? "border-destructive/30 bg-destructive/10 text-destructive-strong" : "border-warning/30 bg-warning/10 text-warning")}>验证结果：{result.status === "pass" ? "通过" : result.status === "fail" ? "失败" : "需要关注"}</div>

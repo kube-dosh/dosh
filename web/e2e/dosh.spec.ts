@@ -5578,10 +5578,20 @@ test("存储中心在桌面与移动端完成目录、预检和存储验证", as
   await expect(verifyDialog).toBeVisible();
   await verifyDialog.getByRole("combobox", { name: "存储验证命名空间" }).click();
   await page.getByRole("option", { name: "production", exact: true }).click();
+  await verifyDialog.getByRole("button", { name: "浏览镜像仓" }).click();
+  const verifyImagePicker = page.getByRole("dialog", { name: "选择容器镜像" });
+  await expect(verifyImagePicker).toBeVisible();
+  await expect(verifyImagePicker.getByRole("combobox", { name: "镜像仓" })).toContainText("Primary Registry");
+  await verifyImagePicker.getByRole("option", { name: "platform/api", exact: true }).click();
+  await verifyImagePicker.getByRole("option", { name: "2.0.0", exact: true }).click();
+  await expect(verifyImagePicker.getByText("registry.example.com/platform/api:2.0.0", { exact: true })).toBeVisible();
+  await verifyImagePicker.getByRole("button", { name: "使用此镜像", exact: true }).click();
+  await expect(verifyImagePicker).toBeHidden();
+  await expect(verifyDialog.getByLabel("探针镜像（可选）")).toHaveValue("registry.example.com/platform/api:2.0.0");
   const verifyRequest = page.waitForRequest((request) => request.method() === "POST" && new URL(request.url()).pathname === "/api/v1/storage/center/verify");
   await verifyDialog.getByRole("button", { name: "开始验证" }).click();
-  const payload = (await verifyRequest).postDataJSON() as { namespace: string; storageClass: string; smokeTest: boolean };
-  expect(payload).toMatchObject({ namespace: "production", storageClass: "local-path", smokeTest: true });
+  const payload = (await verifyRequest).postDataJSON() as { namespace: string; storageClass: string; smokeTest: boolean; smokeTestImage: string };
+  expect(payload).toMatchObject({ namespace: "production", storageClass: "local-path", smokeTest: true, smokeTestImage: "registry.example.com/platform/api:2.0.0" });
   await expect(verifyDialog.getByText("验证结果：通过")).toBeVisible();
   await expect(verifyDialog.getByText(/PVC 已绑定且 Pod 已成功挂载存储/).first()).toBeVisible();
   await expectElementInsideViewport(page, verifyDialog, "desktop storage verify dialog");
@@ -5618,6 +5628,14 @@ test("存储中心在桌面与移动端完成目录、预检和存储验证", as
     await expect(mobileVerify).toBeVisible();
     await expectElementInsideViewport(page, mobileVerify, `${viewport.width}px storage verify dialog`);
     await expectNoPageOverflow(page, `${viewport.width}px storage verify dialog`);
+    await mobileVerify.getByRole("button", { name: "浏览镜像仓" }).click();
+    const mobileImagePicker = page.getByRole("dialog", { name: "选择容器镜像" });
+    await expect(mobileImagePicker).toBeVisible();
+    await expectElementInsideViewport(page, mobileImagePicker, `${viewport.width}px storage image picker`);
+    await expectNoPageOverflow(page, `${viewport.width}px storage image picker`);
+    await mobileImagePicker.getByRole("button", { name: "取消", exact: true }).click();
+    await expect(mobileImagePicker).toBeHidden();
+    await expect(mobileVerify).toBeVisible();
     await page.keyboard.press("Escape");
     await expect(mobileVerify).toBeHidden();
   }
