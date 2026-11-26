@@ -27,6 +27,7 @@ type HelmRepository struct {
 	NextSyncAt       *time.Time                `json:"nextSyncAt,omitempty"`
 	ChartCount       int                       `json:"chartCount"`
 	Revision         string                    `json:"revision,omitempty"`
+	SupplyChain      *HelmSupplyChainPolicy    `json:"supplyChain,omitempty"`
 	CreatedAt        time.Time                 `json:"createdAt"`
 	UpdatedAt        time.Time                 `json:"updatedAt"`
 }
@@ -39,21 +40,65 @@ type HelmRepositoryCredentials struct {
 }
 
 type HelmRepositoryUpsert struct {
-	Name             string `json:"name"`
-	URL              string `json:"url"`
-	Description      string `json:"description,omitempty"`
-	Default          bool   `json:"default"`
-	Enabled          *bool  `json:"enabled,omitempty"`
-	SyncEnabled      *bool  `json:"syncEnabled,omitempty"`
-	SyncIntervalSec  int    `json:"syncIntervalSeconds,omitempty"`
-	InsecureSkipTLS  bool   `json:"insecureSkipTLSVerify,omitempty"`
-	AuthType         string `json:"authType,omitempty"`
-	Username         string `json:"username,omitempty"`
-	Password         string `json:"password,omitempty"`
-	Token            string `json:"token,omitempty"`
-	CAPEM            string `json:"caPEM,omitempty"`
-	ClearCredentials bool   `json:"clearCredentials,omitempty"`
-	Revision         string `json:"revision,omitempty"`
+	Name             string                 `json:"name"`
+	URL              string                 `json:"url"`
+	Description      string                 `json:"description,omitempty"`
+	Default          bool                   `json:"default"`
+	Enabled          *bool                  `json:"enabled,omitempty"`
+	SyncEnabled      *bool                  `json:"syncEnabled,omitempty"`
+	SyncIntervalSec  int                    `json:"syncIntervalSeconds,omitempty"`
+	InsecureSkipTLS  bool                   `json:"insecureSkipTLSVerify,omitempty"`
+	AuthType         string                 `json:"authType,omitempty"`
+	Username         string                 `json:"username,omitempty"`
+	Password         string                 `json:"password,omitempty"`
+	Token            string                 `json:"token,omitempty"`
+	CAPEM            string                 `json:"caPEM,omitempty"`
+	ClearCredentials bool                   `json:"clearCredentials,omitempty"`
+	Revision         string                 `json:"revision,omitempty"`
+	SupplyChain      *HelmSupplyChainPolicy `json:"supplyChain,omitempty"`
+}
+
+// HelmSupplyChainPolicy controls whether an OCI Chart must be signed before
+// Dosh will include it in a plan or execute a Release mutation. HTTP index
+// repositories do not have OCI signatures and cannot enable this policy.
+type HelmSupplyChainPolicy struct {
+	Mode                     string                    `json:"mode"`
+	PublicKeys               []string                  `json:"publicKeys,omitempty"`
+	Identities               []HelmSupplyChainIdentity `json:"identities,omitempty"`
+	RequireAttestation       bool                      `json:"requireAttestation"`
+	AttestationPredicateType string                    `json:"attestationPredicateType,omitempty"`
+}
+
+type HelmSupplyChainIdentity struct {
+	Issuer        string `json:"issuer,omitempty"`
+	Subject       string `json:"subject,omitempty"`
+	IssuerRegExp  string `json:"issuerRegExp,omitempty"`
+	SubjectRegExp string `json:"subjectRegExp,omitempty"`
+}
+
+const (
+	HelmSupplyChainDisabled = "disabled"
+	HelmSupplyChainKey      = "key"
+	HelmSupplyChainKeyless  = "keyless"
+)
+
+// HelmSupplyChainStatus is safe to return to the browser. It records the
+// identity and digest that satisfied the configured trust policy, not raw
+// signature material.
+type HelmSupplyChainStatus struct {
+	Policy              string    `json:"policy"`
+	Verified            bool      `json:"verified"`
+	SignatureVerified   bool      `json:"signatureVerified"`
+	AttestationVerified bool      `json:"attestationVerified"`
+	Reference           string    `json:"reference,omitempty"`
+	ManifestDigest      string    `json:"manifestDigest,omitempty"`
+	ChartDigest         string    `json:"chartDigest,omitempty"`
+	Signer              string    `json:"signer,omitempty"`
+	Issuer              string    `json:"issuer,omitempty"`
+	Subject             string    `json:"subject,omitempty"`
+	KeyFingerprint      string    `json:"keyFingerprint,omitempty"`
+	VerifiedAt          time.Time `json:"verifiedAt,omitempty"`
+	Message             string    `json:"message,omitempty"`
 }
 
 const (
@@ -147,15 +192,16 @@ type HelmChartDependency struct {
 
 type HelmChartDetail struct {
 	HelmChartSummary
-	Home         string                `json:"home,omitempty"`
-	Sources      []string              `json:"sources,omitempty"`
-	Maintainers  []HelmChartMaintainer `json:"maintainers,omitempty"`
-	Readme       string                `json:"readme,omitempty"`
-	Values       string                `json:"values"`
-	Schema       string                `json:"schema,omitempty"`
-	Dependencies []HelmChartDependency `json:"dependencies,omitempty"`
-	Versions     []HelmChartVersion    `json:"versions"`
-	Warnings     []string              `json:"warnings,omitempty"`
+	Home         string                 `json:"home,omitempty"`
+	Sources      []string               `json:"sources,omitempty"`
+	Maintainers  []HelmChartMaintainer  `json:"maintainers,omitempty"`
+	Readme       string                 `json:"readme,omitempty"`
+	Values       string                 `json:"values"`
+	Schema       string                 `json:"schema,omitempty"`
+	Dependencies []HelmChartDependency  `json:"dependencies,omitempty"`
+	Versions     []HelmChartVersion     `json:"versions"`
+	Warnings     []string               `json:"warnings,omitempty"`
+	SupplyChain  *HelmSupplyChainStatus `json:"supplyChain,omitempty"`
 }
 
 type HelmChartRef struct {
@@ -297,6 +343,7 @@ type HelmChartPlan struct {
 	Warnings        []string                `json:"warnings,omitempty"`
 	PlanDigest      string                  `json:"planDigest"`
 	Options         HelmExecutionOptions    `json:"options"`
+	SupplyChain     *HelmSupplyChainStatus  `json:"supplyChain,omitempty"`
 }
 
 type HelmChartPlanTemplate struct {
@@ -316,19 +363,22 @@ type HelmReleaseUpgradeOperationRequest struct {
 	Confirmation    string                     `json:"confirmation"`
 	CurrentRevision int                        `json:"currentRevision,omitempty"`
 	Options         *HelmExecutionOptionsInput `json:"options,omitempty"`
+	IdempotencyKey  string                     `json:"idempotencyKey,omitempty"`
 }
 
 type HelmChartOperationRequest struct {
 	HelmChartPlanRequest
-	PlanDigest   string `json:"planDigest"`
-	Confirmation string `json:"confirmation"`
+	PlanDigest     string `json:"planDigest"`
+	Confirmation   string `json:"confirmation"`
+	IdempotencyKey string `json:"idempotencyKey,omitempty"`
 }
 
 type HelmChartUninstallRequest struct {
-	Namespace    string                     `json:"namespace"`
-	ReleaseName  string                     `json:"releaseName"`
-	Confirmation string                     `json:"confirmation"`
-	Options      *HelmExecutionOptionsInput `json:"options,omitempty"`
+	Namespace      string                     `json:"namespace"`
+	ReleaseName    string                     `json:"releaseName"`
+	Confirmation   string                     `json:"confirmation"`
+	Options        *HelmExecutionOptionsInput `json:"options,omitempty"`
+	IdempotencyKey string                     `json:"idempotencyKey,omitempty"`
 }
 
 type HelmChartRollbackRequest struct {
@@ -337,6 +387,7 @@ type HelmChartRollbackRequest struct {
 	TargetRevision int                        `json:"targetRevision"`
 	Confirmation   string                     `json:"confirmation"`
 	Options        *HelmExecutionOptionsInput `json:"options,omitempty"`
+	IdempotencyKey string                     `json:"idempotencyKey,omitempty"`
 }
 
 type HelmChartOperation struct {
@@ -358,6 +409,8 @@ type HelmChartOperation struct {
 	FinishedAt      time.Time               `json:"finishedAt,omitempty"`
 	HeartbeatAt     time.Time               `json:"heartbeatAt,omitempty"`
 	CancelRequested bool                    `json:"cancelRequested,omitempty"`
+	IdempotencyKey  string                  `json:"idempotencyKey,omitempty"`
+	RequestDigest   string                  `json:"requestDigest,omitempty"`
 }
 
 // HelmOperationResource is the live status of one resource rendered by a Helm
@@ -386,8 +439,10 @@ const (
 )
 
 type HelmOperationFilter struct {
-	Limit       int
-	Status      string
-	Namespace   string
-	ReleaseName string
+	Limit          int
+	Action         string
+	Status         string
+	Namespace      string
+	ReleaseName    string
+	IdempotencyKey string
 }

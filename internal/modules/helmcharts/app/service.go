@@ -87,6 +87,13 @@ type ChartRefresher interface {
 	RefreshChart(ctx context.Context, repository domain.HelmRepository, chartName string) (domain.HelmChartDetail, error)
 }
 
+// SupplyChainVerifier validates an OCI Chart against the trust policy stored on
+// its repository. Verification is enforced before a plan or Release mutation;
+// callers never receive an installable plan for an untrusted signature.
+type SupplyChainVerifier interface {
+	VerifySupplyChain(ctx context.Context, repository domain.HelmRepository, chartName, version string) (domain.HelmSupplyChainStatus, error)
+}
+
 type Executor interface {
 	PlanHelmChart(ctx context.Context, actor domain.Actor, archive []byte, request domain.HelmChartPlanRequest) (domain.HelmChartPlanTemplate, error)
 	InstallHelmChart(ctx context.Context, actor domain.Actor, archive []byte, request domain.HelmChartPlanRequest, options domain.HelmExecutionOptions) (int, error)
@@ -125,13 +132,22 @@ type Service struct {
 	operationMu      sync.Mutex
 	operationCancels map[string]context.CancelFunc
 	operationLocks   map[string]string
+
+	idempotencyMu    sync.Mutex
+	idempotencyLocks map[string]*idempotencyMutex
 }
 
 func New(repository Repository, source Source, executor Executor, authorizer domain.Authorizer, auditor domain.Auditor) *Service {
 	return &Service{
 		repository: repository, source: source, executor: executor, authorizer: authorizer, auditor: auditor,
 		syncInFlight: map[string]bool{}, operationCancels: map[string]context.CancelFunc{}, operationLocks: map[string]string{},
+		idempotencyLocks: map[string]*idempotencyMutex{},
 	}
+}
+
+type idempotencyMutex struct {
+	mu   sync.Mutex
+	refs int
 }
 
 func (s *Service) SetCacheLimit(maxBytes int64) {
@@ -304,6 +320,17 @@ func (s *Service) Chart(ctx context.Context, actor domain.Actor, repositoryID, c
 	if strings.HasPrefix(strings.ToLower(repository.URL), "http://") {
 		detail.Warnings = append(detail.Warnings, "该仓库使用明文 HTTP，传输内容可能被篡改；生产环境请使用 HTTPS")
 	}
+	if verifier, ok := s.source.(SupplyChainVerifier); ok {
+		status, verifyErr := verifier.VerifySupplyChain(ctx, repository, chartName, detail.Version)
+		if verifyErr != nil {
+			detail.Warnings = append(detail.Warnings, "OCI Chart 供应链校验失败："+verifyErr.Error())
+		} else if status.Policy != "" && status.Policy != domain.HelmSupplyChainDisabled {
+			detail.SupplyChain = &status
+			if err := verifyChartDigestBinding(status, detail.Digest); err != nil {
+				detail.Warnings = append(detail.Warnings, err.Error())
+			}
+		}
+	}
 	s.audit(ctx, actor, "get-helm-chart", chartName, nil)
 	return detail, nil
 }
@@ -348,6 +375,17 @@ func (s *Service) SyncChart(ctx context.Context, actor domain.Actor, repositoryI
 	if strings.HasPrefix(strings.ToLower(repository.URL), "http://") {
 		detail.Warnings = append(detail.Warnings, "该仓库使用明文 HTTP，传输内容可能被篡改；生产环境请使用 HTTPS")
 	}
+	if verifier, ok := s.source.(SupplyChainVerifier); ok {
+		status, verifyErr := verifier.VerifySupplyChain(ctx, repository, chartName, detail.Version)
+		if verifyErr != nil {
+			detail.Warnings = append(detail.Warnings, "OCI Chart 供应链校验失败："+verifyErr.Error())
+		} else if status.Policy != "" && status.Policy != domain.HelmSupplyChainDisabled {
+			detail.SupplyChain = &status
+			if err := verifyChartDigestBinding(status, detail.Digest); err != nil {
+				detail.Warnings = append(detail.Warnings, err.Error())
+			}
+		}
+	}
 	locked = false
 	releaseCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
 	defer cancel()
@@ -361,6 +399,29 @@ func (s *Service) Plan(ctx context.Context, actor domain.Actor, input domain.Hel
 	return plan, err
 }
 
+// VerifyChartSupplyChain performs an on-demand verification for a specific
+// Chart version. Install and upgrade plans run the same check internally.
+func (s *Service) VerifyChartSupplyChain(ctx context.Context, actor domain.Actor, repositoryID, chartName, version string) (domain.HelmSupplyChainStatus, error) {
+	if err := s.requireRead(ctx, actor); err != nil {
+		return domain.HelmSupplyChainStatus{}, err
+	}
+	repository, chartName, err := s.repositoryAndChart(ctx, repositoryID, chartName)
+	if err != nil {
+		return domain.HelmSupplyChainStatus{}, err
+	}
+	version = strings.TrimSpace(version)
+	if version == "" || len(version) > 128 || strings.ContainsAny(version, "/ \t\r\n") {
+		return domain.HelmSupplyChainStatus{}, fmt.Errorf("%w: a valid Chart version is required", domain.ErrInvalid)
+	}
+	verifier, ok := s.source.(SupplyChainVerifier)
+	if !ok {
+		return domain.HelmSupplyChainStatus{}, fmt.Errorf("%w: OCI supply-chain verification is unavailable", domain.ErrUnsupported)
+	}
+	status, err := verifier.VerifySupplyChain(ctx, repository, chartName, version)
+	s.audit(ctx, actor, "verify-helm-chart-supply-chain", chartName, err)
+	return status, err
+}
+
 func (s *Service) Install(ctx context.Context, actor domain.Actor, input domain.HelmChartOperationRequest) (domain.HelmChartOperation, error) {
 	if err := requireConfirmation(input.Confirmation, input.ReleaseName); err != nil {
 		return domain.HelmChartOperation{}, err
@@ -372,8 +433,47 @@ func (s *Service) Install(ctx context.Context, actor domain.Actor, input domain.
 		return domain.HelmChartOperation{}, err
 	}
 	input.HelmChartPlanRequest = normalized
+	idempotencyKey, err := normalizeIdempotencyKey(input.IdempotencyKey)
+	if err != nil {
+		s.audit(ctx, actor, "install-helm-chart", input.ReleaseName, err)
+		return domain.HelmChartOperation{}, err
+	}
+	requestDigest, err := operationRequestDigest("install", map[string]any{
+		"repositoryId": normalized.RepositoryID, "chartName": normalized.ChartName, "version": normalized.Version,
+		"namespace": normalized.Namespace, "releaseName": normalized.ReleaseName, "planDigest": input.PlanDigest,
+	})
+	if err != nil {
+		return domain.HelmChartOperation{}, err
+	}
+	if idempotencyKey == "" {
+		idempotencyKey = idempotencyInput("install", "", requestDigest, normalized.Namespace, normalized.ReleaseName)
+	}
+	unlockIdempotency := s.beginIdempotentRequest(idempotencyKey)
+	defer unlockIdempotency()
+	if existing, lookupErr := s.idempotentOperation(ctx, "install", normalized.Namespace, normalized.ReleaseName, idempotencyKey, requestDigest); lookupErr != nil {
+		return domain.HelmChartOperation{}, lookupErr
+	} else if existing != nil {
+		if err := s.requireReleaseRead(ctx, actor, existing.Namespace); err != nil {
+			return domain.HelmChartOperation{}, err
+		}
+		if err := s.requireReleaseWrite(ctx, actor, existing.Namespace, "create"); err != nil {
+			return domain.HelmChartOperation{}, err
+		}
+		return *existing, nil
+	}
 	operationID := newOperationID()
 	if err := s.acquireOperationLock(ctx, normalized.Namespace, normalized.ReleaseName, operationID); err != nil {
+		if existing, waitErr := s.waitForIdempotentOperation(ctx, "install", normalized.Namespace, normalized.ReleaseName, idempotencyKey, requestDigest); waitErr != nil {
+			return domain.HelmChartOperation{}, waitErr
+		} else if existing != nil {
+			if err := s.requireReleaseRead(ctx, actor, existing.Namespace); err != nil {
+				return domain.HelmChartOperation{}, err
+			}
+			if err := s.requireReleaseWrite(ctx, actor, existing.Namespace, "create"); err != nil {
+				return domain.HelmChartOperation{}, err
+			}
+			return *existing, nil
+		}
 		s.audit(ctx, actor, "install-helm-chart", input.ReleaseName, err)
 		return domain.HelmChartOperation{}, err
 	}
@@ -386,6 +486,20 @@ func (s *Service) Install(ctx context.Context, actor domain.Actor, input domain.
 		defer cancel()
 		s.releaseOperationLock(releaseCtx, normalized.Namespace, normalized.ReleaseName, operationID)
 	}()
+	// Re-check after obtaining the Release lease. A concurrent request may have
+	// completed and released the lease between the first lookup and acquisition;
+	// without this second check the same idempotency key could execute twice.
+	if existing, lookupErr := s.idempotentOperation(ctx, "install", normalized.Namespace, normalized.ReleaseName, idempotencyKey, requestDigest); lookupErr != nil {
+		return domain.HelmChartOperation{}, lookupErr
+	} else if existing != nil {
+		if err := s.requireReleaseRead(ctx, actor, existing.Namespace); err != nil {
+			return domain.HelmChartOperation{}, err
+		}
+		if err := s.requireReleaseWrite(ctx, actor, existing.Namespace, "create"); err != nil {
+			return domain.HelmChartOperation{}, err
+		}
+		return *existing, nil
+	}
 	plan, archive, err := s.plan(ctx, actor, input.HelmChartPlanRequest)
 	if err != nil {
 		return domain.HelmChartOperation{}, err
@@ -397,6 +511,8 @@ func (s *Service) Install(ctx context.Context, actor domain.Actor, input domain.
 	input.ExpectedRevision = plan.CurrentRevision
 	operation := s.newOperation("install", input.HelmChartPlanRequest, plan)
 	operation.ID = operationID
+	operation.IdempotencyKey = idempotencyKey
+	operation.RequestDigest = requestDigest
 	if err := s.saveOperation(ctx, &operation); err != nil {
 		return domain.HelmChartOperation{}, err
 	}
@@ -418,8 +534,47 @@ func (s *Service) Upgrade(ctx context.Context, actor domain.Actor, input domain.
 		return domain.HelmChartOperation{}, err
 	}
 	input.HelmChartPlanRequest = normalized
+	idempotencyKey, err := normalizeIdempotencyKey(input.IdempotencyKey)
+	if err != nil {
+		s.audit(ctx, actor, "upgrade-helm-chart", input.ReleaseName, err)
+		return domain.HelmChartOperation{}, err
+	}
+	requestDigest, err := operationRequestDigest("upgrade", map[string]any{
+		"repositoryId": normalized.RepositoryID, "chartName": normalized.ChartName, "version": normalized.Version,
+		"namespace": normalized.Namespace, "releaseName": normalized.ReleaseName, "planDigest": input.PlanDigest,
+	})
+	if err != nil {
+		return domain.HelmChartOperation{}, err
+	}
+	if idempotencyKey == "" {
+		idempotencyKey = idempotencyInput("upgrade", "", requestDigest, normalized.Namespace, normalized.ReleaseName)
+	}
+	unlockIdempotency := s.beginIdempotentRequest(idempotencyKey)
+	defer unlockIdempotency()
+	if existing, lookupErr := s.idempotentOperation(ctx, "upgrade", normalized.Namespace, normalized.ReleaseName, idempotencyKey, requestDigest); lookupErr != nil {
+		return domain.HelmChartOperation{}, lookupErr
+	} else if existing != nil {
+		if err := s.requireReleaseRead(ctx, actor, existing.Namespace); err != nil {
+			return domain.HelmChartOperation{}, err
+		}
+		if err := s.requireReleaseWrite(ctx, actor, existing.Namespace, "update"); err != nil {
+			return domain.HelmChartOperation{}, err
+		}
+		return *existing, nil
+	}
 	operationID := newOperationID()
 	if err := s.acquireOperationLock(ctx, normalized.Namespace, normalized.ReleaseName, operationID); err != nil {
+		if existing, waitErr := s.waitForIdempotentOperation(ctx, "upgrade", normalized.Namespace, normalized.ReleaseName, idempotencyKey, requestDigest); waitErr != nil {
+			return domain.HelmChartOperation{}, waitErr
+		} else if existing != nil {
+			if err := s.requireReleaseRead(ctx, actor, existing.Namespace); err != nil {
+				return domain.HelmChartOperation{}, err
+			}
+			if err := s.requireReleaseWrite(ctx, actor, existing.Namespace, "update"); err != nil {
+				return domain.HelmChartOperation{}, err
+			}
+			return *existing, nil
+		}
 		s.audit(ctx, actor, "upgrade-helm-chart", input.ReleaseName, err)
 		return domain.HelmChartOperation{}, err
 	}
@@ -432,6 +587,17 @@ func (s *Service) Upgrade(ctx context.Context, actor domain.Actor, input domain.
 		defer cancel()
 		s.releaseOperationLock(releaseCtx, normalized.Namespace, normalized.ReleaseName, operationID)
 	}()
+	if existing, lookupErr := s.idempotentOperation(ctx, "upgrade", normalized.Namespace, normalized.ReleaseName, idempotencyKey, requestDigest); lookupErr != nil {
+		return domain.HelmChartOperation{}, lookupErr
+	} else if existing != nil {
+		if err := s.requireReleaseRead(ctx, actor, existing.Namespace); err != nil {
+			return domain.HelmChartOperation{}, err
+		}
+		if err := s.requireReleaseWrite(ctx, actor, existing.Namespace, "update"); err != nil {
+			return domain.HelmChartOperation{}, err
+		}
+		return *existing, nil
+	}
 	plan, archive, err := s.plan(ctx, actor, input.HelmChartPlanRequest)
 	if err != nil {
 		return domain.HelmChartOperation{}, err
@@ -443,6 +609,8 @@ func (s *Service) Upgrade(ctx context.Context, actor domain.Actor, input domain.
 	input.ExpectedRevision = plan.CurrentRevision
 	operation := s.newOperation("upgrade", input.HelmChartPlanRequest, plan)
 	operation.ID = operationID
+	operation.IdempotencyKey = idempotencyKey
+	operation.RequestDigest = requestDigest
 	if err := s.saveOperation(ctx, &operation); err != nil {
 		return domain.HelmChartOperation{}, err
 	}
@@ -483,9 +651,36 @@ func (s *Service) StartHelmReleaseUpgrade(ctx context.Context, actor domain.Acto
 		s.audit(ctx, actor, "upgrade-helm-release", input.ReleaseName, err)
 		return domain.HelmChartOperation{}, err
 	}
+	idempotencyKey, err := normalizeIdempotencyKey(input.IdempotencyKey)
+	if err != nil {
+		s.audit(ctx, actor, "upgrade-helm-release", input.ReleaseName, err)
+		return domain.HelmChartOperation{}, err
+	}
+	requestDigest, err := operationRequestDigest("upgrade-release", map[string]any{
+		"namespace": input.Namespace, "releaseName": input.ReleaseName, "values": input.Values,
+		"currentRevision": input.CurrentRevision, "options": input.Options,
+	})
+	if err != nil {
+		return domain.HelmChartOperation{}, err
+	}
+	if idempotencyKey == "" {
+		idempotencyKey = idempotencyInput("upgrade", "", requestDigest, input.Namespace, input.ReleaseName)
+	}
+	unlockIdempotency := s.beginIdempotentRequest(idempotencyKey)
+	defer unlockIdempotency()
+	if existing, lookupErr := s.idempotentOperation(ctx, "upgrade", input.Namespace, input.ReleaseName, idempotencyKey, requestDigest); lookupErr != nil {
+		return domain.HelmChartOperation{}, lookupErr
+	} else if existing != nil {
+		return *existing, nil
+	}
 
 	operationID := newOperationID()
 	if err := s.acquireOperationLock(ctx, input.Namespace, input.ReleaseName, operationID); err != nil {
+		if existing, waitErr := s.waitForIdempotentOperation(ctx, "upgrade", input.Namespace, input.ReleaseName, idempotencyKey, requestDigest); waitErr != nil {
+			return domain.HelmChartOperation{}, waitErr
+		} else if existing != nil {
+			return *existing, nil
+		}
 		s.audit(ctx, actor, "upgrade-helm-release", input.ReleaseName, err)
 		return domain.HelmChartOperation{}, err
 	}
@@ -497,6 +692,11 @@ func (s *Service) StartHelmReleaseUpgrade(ctx context.Context, actor domain.Acto
 			s.releaseOperationLock(releaseCtx, input.Namespace, input.ReleaseName, operationID)
 		}
 	}()
+	if existing, lookupErr := s.idempotentOperation(ctx, "upgrade", input.Namespace, input.ReleaseName, idempotencyKey, requestDigest); lookupErr != nil {
+		return domain.HelmChartOperation{}, lookupErr
+	} else if existing != nil {
+		return *existing, nil
+	}
 
 	plan, err := upgrader.PlanHelmReleaseUpgrade(ctx, actor, input.Namespace, input.ReleaseName, input.Values)
 	if err != nil {
@@ -520,6 +720,8 @@ func (s *Service) StartHelmReleaseUpgrade(ctx context.Context, actor domain.Acto
 	operation.ID = operationID
 	operation.ChartName = plan.ChartName
 	operation.ChartVersion = plan.ChartVersion
+	operation.IdempotencyKey = idempotencyKey
+	operation.RequestDigest = requestDigest
 	operation.Options = &executionOptions
 	operation.Warnings = append(operation.Warnings, "使用 Helm 原生升级执行：将运行 Hook、清理目标清单中已移除的对象，并保留原子回滚语义")
 	if err := s.saveOperation(ctx, &operation); err != nil {
@@ -545,18 +747,51 @@ func (s *Service) Uninstall(ctx context.Context, actor domain.Actor, input domai
 		s.audit(ctx, actor, "uninstall-helm-chart", input.ReleaseName, err)
 		return domain.HelmChartOperation{}, err
 	}
+	idempotencyKey, err := normalizeIdempotencyKey(input.IdempotencyKey)
+	if err != nil {
+		s.audit(ctx, actor, "uninstall-helm-chart", input.ReleaseName, err)
+		return domain.HelmChartOperation{}, err
+	}
+	requestDigest, err := operationRequestDigest("uninstall", map[string]any{
+		"namespace": input.Namespace, "releaseName": input.ReleaseName, "options": input.Options,
+	})
+	if err != nil {
+		return domain.HelmChartOperation{}, err
+	}
+	if idempotencyKey == "" {
+		idempotencyKey = idempotencyInput("uninstall", "", requestDigest, input.Namespace, input.ReleaseName)
+	}
+	unlockIdempotency := s.beginIdempotentRequest(idempotencyKey)
+	defer unlockIdempotency()
+	if existing, lookupErr := s.idempotentOperation(ctx, "uninstall", input.Namespace, input.ReleaseName, idempotencyKey, requestDigest); lookupErr != nil {
+		return domain.HelmChartOperation{}, lookupErr
+	} else if existing != nil {
+		return *existing, nil
+	}
 	operation := domain.HelmChartOperation{
 		ID: newOperationID(), Type: "uninstall", Status: domain.HelmOperationRunning,
 		Namespace: input.Namespace, ReleaseName: input.ReleaseName, StartedAt: time.Now().UTC(), HeartbeatAt: time.Now().UTC(),
-		Options:  &executionOptions,
+		Options: &executionOptions, IdempotencyKey: idempotencyKey, RequestDigest: requestDigest,
 		Warnings: []string{"卸载会删除 Helm 管理的资源；默认保留的 PVC、CRD 和外部资源需要单独清理"},
 	}
 	if executionOptions.KeepHistory {
 		operation.Warnings = append(operation.Warnings, "保留 Helm 历史：Release 记录会以 uninstalled 状态保留，后续可审计和恢复")
 	}
 	if err := s.acquireOperationLock(ctx, operation.Namespace, operation.ReleaseName, operation.ID); err != nil {
+		if existing, waitErr := s.waitForIdempotentOperation(ctx, "uninstall", input.Namespace, input.ReleaseName, idempotencyKey, requestDigest); waitErr != nil {
+			return domain.HelmChartOperation{}, waitErr
+		} else if existing != nil {
+			return *existing, nil
+		}
 		s.audit(ctx, actor, "uninstall-helm-chart", input.ReleaseName, err)
 		return domain.HelmChartOperation{}, err
+	}
+	if existing, lookupErr := s.idempotentOperation(ctx, "uninstall", input.Namespace, input.ReleaseName, idempotencyKey, requestDigest); lookupErr != nil {
+		s.releaseOperationLock(ctx, operation.Namespace, operation.ReleaseName, operation.ID)
+		return domain.HelmChartOperation{}, lookupErr
+	} else if existing != nil {
+		s.releaseOperationLock(ctx, operation.Namespace, operation.ReleaseName, operation.ID)
+		return *existing, nil
 	}
 	if err := s.saveOperation(ctx, &operation); err != nil {
 		s.releaseOperationLock(ctx, operation.Namespace, operation.ReleaseName, operation.ID)
@@ -584,14 +819,47 @@ func (s *Service) Rollback(ctx context.Context, actor domain.Actor, input domain
 		s.audit(ctx, actor, "rollback-helm-chart", input.ReleaseName, err)
 		return domain.HelmChartOperation{}, err
 	}
+	idempotencyKey, err := normalizeIdempotencyKey(input.IdempotencyKey)
+	if err != nil {
+		s.audit(ctx, actor, "rollback-helm-chart", input.ReleaseName, err)
+		return domain.HelmChartOperation{}, err
+	}
+	requestDigest, err := operationRequestDigest("rollback", map[string]any{
+		"namespace": input.Namespace, "releaseName": input.ReleaseName, "targetRevision": input.TargetRevision, "options": input.Options,
+	})
+	if err != nil {
+		return domain.HelmChartOperation{}, err
+	}
+	if idempotencyKey == "" {
+		idempotencyKey = idempotencyInput("rollback", "", requestDigest, input.Namespace, input.ReleaseName)
+	}
+	unlockIdempotency := s.beginIdempotentRequest(idempotencyKey)
+	defer unlockIdempotency()
+	if existing, lookupErr := s.idempotentOperation(ctx, "rollback", input.Namespace, input.ReleaseName, idempotencyKey, requestDigest); lookupErr != nil {
+		return domain.HelmChartOperation{}, lookupErr
+	} else if existing != nil {
+		return *existing, nil
+	}
 	operation := domain.HelmChartOperation{
 		ID: newOperationID(), Type: "rollback", Status: domain.HelmOperationRunning,
 		Namespace: input.Namespace, ReleaseName: input.ReleaseName, StartedAt: time.Now().UTC(), HeartbeatAt: time.Now().UTC(),
-		Options: &executionOptions,
+		Options: &executionOptions, IdempotencyKey: idempotencyKey, RequestDigest: requestDigest,
 	}
 	if err := s.acquireOperationLock(ctx, operation.Namespace, operation.ReleaseName, operation.ID); err != nil {
+		if existing, waitErr := s.waitForIdempotentOperation(ctx, "rollback", input.Namespace, input.ReleaseName, idempotencyKey, requestDigest); waitErr != nil {
+			return domain.HelmChartOperation{}, waitErr
+		} else if existing != nil {
+			return *existing, nil
+		}
 		s.audit(ctx, actor, "rollback-helm-chart", input.ReleaseName, err)
 		return domain.HelmChartOperation{}, err
+	}
+	if existing, lookupErr := s.idempotentOperation(ctx, "rollback", input.Namespace, input.ReleaseName, idempotencyKey, requestDigest); lookupErr != nil {
+		s.releaseOperationLock(ctx, operation.Namespace, operation.ReleaseName, operation.ID)
+		return domain.HelmChartOperation{}, lookupErr
+	} else if existing != nil {
+		s.releaseOperationLock(ctx, operation.Namespace, operation.ReleaseName, operation.ID)
+		return *existing, nil
 	}
 	if err := s.saveOperation(ctx, &operation); err != nil {
 		s.releaseOperationLock(ctx, operation.Namespace, operation.ReleaseName, operation.ID)
@@ -752,6 +1020,21 @@ func (s *Service) plan(ctx context.Context, actor domain.Actor, input domain.Hel
 		return domain.HelmChartPlan{}, nil, err
 	}
 	normalized.Digest = actualDigest
+	var supplyChain *domain.HelmSupplyChainStatus
+	if verifier, ok := s.source.(SupplyChainVerifier); ok {
+		status, verifyErr := verifier.VerifySupplyChain(ctx, repository, normalized.ChartName, normalized.Version)
+		if verifyErr != nil {
+			s.audit(ctx, actor, "plan-helm-chart", normalized.ReleaseName, verifyErr)
+			return domain.HelmChartPlan{}, nil, verifyErr
+		}
+		if status.Policy != "" && status.Policy != domain.HelmSupplyChainDisabled {
+			if err := verifyChartDigestBinding(status, actualDigest); err != nil {
+				s.audit(ctx, actor, "plan-helm-chart", normalized.ReleaseName, err)
+				return domain.HelmChartPlan{}, nil, err
+			}
+			supplyChain = &status
+		}
+	}
 	if err := s.authorizeReleasePlan(ctx, actor, normalized, repository); err != nil {
 		s.audit(ctx, actor, "plan-helm-chart", normalized.ReleaseName, err)
 		return domain.HelmChartPlan{}, nil, err
@@ -772,6 +1055,7 @@ func (s *Service) plan(ctx context.Context, actor domain.Actor, input domain.Hel
 		CurrentRevision: template.CurrentRevision, Manifest: redactManifest(template.Manifest),
 		Values: redactValues(template.Values), Resources: template.Resources,
 		Warnings: append([]string(nil), template.Warnings...), PlanDigest: computePlanDigest(normalized, repository, actualDigest, template, executionOptions), Options: executionOptions,
+		SupplyChain: supplyChain,
 	}
 	for _, resource := range template.Resources {
 		if resource.Hook {
@@ -814,7 +1098,22 @@ func (s *Service) refreshRepository(ctx context.Context, repository domain.HelmR
 	if !s.beginRepositorySync(repository.ID) {
 		return decorateRepository(repository), fmt.Errorf("%w: repository %s is already synchronizing", domain.ErrConflict, repository.Name)
 	}
+	lockID := newOperationID()
+	lockName := helmRepositorySyncLockName(repository.ID)
+	if err := s.acquireOperationLock(ctx, "dosh-internal", lockName, lockID); err != nil {
+		s.endRepositorySync(repository.ID)
+		return decorateRepository(repository), fmt.Errorf("%w: repository %s synchronization is owned by another Dosh replica", domain.ErrConflict, repository.Name)
+	}
+	defer func() {
+		releaseCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
+		defer cancel()
+		s.releaseOperationLock(releaseCtx, "dosh-internal", lockName, lockID)
+	}()
 	return s.refreshRepositoryClaimed(ctx, repository, trigger)
+}
+
+func helmRepositorySyncLockName(repositoryID string) string {
+	return "helm-repository-sync-" + repositoryID
 }
 
 func (s *Service) refreshRepositoryClaimed(ctx context.Context, repository domain.HelmRepository, trigger string) (domain.HelmRepository, error) {
@@ -996,22 +1295,23 @@ func (s *Service) syncDueRepositories(ctx context.Context) int {
 		}
 		if locker, ok := s.repository.(OperationLocker); ok {
 			token := newOperationID()
-			if err := locker.AcquireHelmOperationLock(ctx, "dosh-internal", "helm-sync-"+repository.ID, token, 10*time.Minute); err != nil {
+			lockName := helmRepositorySyncLockName(repository.ID)
+			if err := locker.AcquireHelmOperationLock(ctx, "dosh-internal", lockName, token, 10*time.Minute); err != nil {
 				continue
 			}
 			attempted++
-			go func(item domain.HelmRepository, lockToken string) {
+			go func(item domain.HelmRepository, lockToken, syncLockName string) {
 				runCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 				defer cancel()
 				defer func() {
 					releaseCtx, releaseCancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
 					defer releaseCancel()
-					_ = locker.ReleaseHelmOperationLock(releaseCtx, "dosh-internal", "helm-sync-"+item.ID, lockToken)
+					_ = locker.ReleaseHelmOperationLock(releaseCtx, "dosh-internal", syncLockName, lockToken)
 				}()
 				if s.beginRepositorySync(item.ID) {
 					_, _ = s.refreshRepositoryClaimed(runCtx, item, domain.HelmRepositorySyncTriggerScheduled)
 				}
-			}(repository, token)
+			}(repository, token, lockName)
 			continue
 		}
 		if s.beginRepositorySync(repository.ID) {
@@ -1224,11 +1524,16 @@ func normalizeRepository(input domain.HelmRepositoryUpsert, current domain.HelmR
 	if err := validateHelmCredentials(credentials); err != nil {
 		return domain.HelmRepository{}, err
 	}
+	supplyChain, err := normalizeSupplyChainPolicy(parsed.Scheme == "oci", current.SupplyChain, input.SupplyChain)
+	if err != nil {
+		return domain.HelmRepository{}, err
+	}
 	return domain.HelmRepository{
 		Name: name, URL: parsed.String(), Description: strings.TrimSpace(input.Description), Default: input.Default,
 		Enabled: enabled, SyncEnabled: syncEnabled, SyncIntervalSec: syncIntervalSec,
 		InsecureSkipTLS: input.InsecureSkipTLS, AuthType: authType, Credentials: credentials,
-		CreatedAt: current.CreatedAt,
+		SupplyChain: supplyChain,
+		CreatedAt:   current.CreatedAt,
 	}, nil
 }
 

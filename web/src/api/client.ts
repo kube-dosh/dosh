@@ -57,6 +57,7 @@ import type {
   HelmReleaseUpgradePreview,
   HelmReleaseUpgradeRequest,
   HelmReleaseTestResult,
+  HelmSupplyChainStatus,
   ListParams,
   ListResponse,
   NamespaceItem,
@@ -82,6 +83,7 @@ import type {
   PodEphemeralContainerInput,
   PodEphemeralContainerResult,
   PodSummary,
+  PortForwardCreateInput,
   PortForwardSession,
   Problem,
   ResourceCapabilities,
@@ -112,6 +114,8 @@ import type {
   VolumeSnapshot,
   VolumeSnapshotCreateInput,
   VolumeSnapshotFeature,
+  VerticalAutoscalerInput,
+  VerticalAutoscalerSummary,
   UserPreferences,
   CronJobRunInput,
   WorkloadDetail,
@@ -163,6 +167,7 @@ const problemMessages: Record<string, string> = {
 };
 
 function localizedProblemMessage(problem: Partial<Problem>, status: number): string {
+  if (problem.code === "not_supported" && problem.message) return problem.message;
   if (problem.code && problemMessages[problem.code]) return problemMessages[problem.code];
   return problem.message || `请求失败（HTTP ${status}）`;
 }
@@ -541,6 +546,17 @@ export const api = {
     }),
   deleteDisruptionBudget: (namespace: string, name: string, resourceVersion?: string) =>
     request<{ status: string }>(`/api/v1/resilience/disruption-budgets/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}${resourceVersion ? `?resourceVersion=${encodeURIComponent(resourceVersion)}` : ""}`, { method: "DELETE" }),
+  verticalAutoscalers: (namespace: string, params?: ListParams) =>
+    listRequest<VerticalAutoscalerSummary>(`/api/v1/resilience/verticalpodautoscalers${query({ ...params, namespace })}`),
+  upsertVerticalAutoscaler: (input: VerticalAutoscalerInput) =>
+    request<VerticalAutoscalerSummary>(input.resourceVersion
+      ? `/api/v1/resilience/verticalpodautoscalers/${encodeURIComponent(input.namespace)}/${encodeURIComponent(input.name)}`
+      : "/api/v1/resilience/verticalpodautoscalers", {
+      method: input.resourceVersion ? "PUT" : "POST",
+      body: JSON.stringify(input),
+    }),
+  deleteVerticalAutoscaler: (namespace: string, name: string, resourceVersion: string) =>
+    request<{ status: string }>(`/api/v1/resilience/verticalpodautoscalers/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}?resourceVersion=${encodeURIComponent(resourceVersion)}`, { method: "DELETE" }),
   scaleWorkload: (kind: string, namespace: string, name: string, replicas: number) =>
     request<{ status: string }>(`/api/v1/workloads/${kind}/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}/scale`, {
       method: "POST",
@@ -586,18 +602,22 @@ export const api = {
       method: "DELETE",
     }),
   pods: (params?: ListParams) => listRequest<PodSummary>(`/api/v1/pods${query(params)}`),
+  serviceTunnelTargets: (namespace: string, name: string) =>
+    listRequest<PodSummary>(`/api/v1/services/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}/tunnel-targets`),
   pod: async (namespace: string, name: string) => normalizePodDetail(await request<PodDetail>(`/api/v1/pods/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}`)),
-  createPodTunnel: (namespace: string, name: string, port: number) =>
+  createPodTunnel: (namespace: string, name: string, input: PortForwardCreateInput) =>
     request<PortForwardSession>(`/api/v1/pods/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}/tunnels`, {
       method: "POST",
-      body: JSON.stringify({ port }),
+      body: JSON.stringify(input),
     }),
-  createServiceTunnel: (namespace: string, name: string, port: number) =>
+  createServiceTunnel: (namespace: string, name: string, input: PortForwardCreateInput) =>
     request<PortForwardSession>(`/api/v1/services/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}/tunnels`, {
       method: "POST",
-      body: JSON.stringify({ port }),
+      body: JSON.stringify(input),
     }),
   closeTunnel: (id: string) => request<void>(`/api/v1/tunnels/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  listTunnels: () => listRequest<PortForwardSession>("/api/v1/tunnels"),
+  closeAllTunnels: () => request<{ closed: number }>("/api/v1/tunnels", { method: "DELETE" }),
   createPodEphemeralContainer: (namespace: string, name: string, input: PodEphemeralContainerInput) =>
     request<PodEphemeralContainerResult>(`/api/v1/pods/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}/ephemeral-containers`, {
       method: "POST",
@@ -629,6 +649,8 @@ export const api = {
     request<HelmChartDetail>(`/api/v1/helm/charts/${encodeURIComponent(repositoryId)}/${encodeURIComponent(chartName)}`),
   syncHelmChart: (repositoryId: string, chartName: string) =>
     request<HelmChartDetail>(`/api/v1/helm/charts/${encodeURIComponent(repositoryId)}/${encodeURIComponent(chartName)}/sync`, { method: "POST" }),
+  verifyHelmChartSupplyChain: (repositoryId: string, chartName: string, version: string) =>
+    request<HelmSupplyChainStatus>(`/api/v1/helm/charts/${encodeURIComponent(repositoryId)}/${encodeURIComponent(chartName)}/supply-chain?${new URLSearchParams({ version })}`),
   planHelmChart: (input: HelmChartPlanInput) =>
     request<HelmChartPlan>("/api/v1/helm/charts/plan", { method: "POST", body: JSON.stringify(input) }),
   installHelmChart: (input: HelmChartOperationInput) =>

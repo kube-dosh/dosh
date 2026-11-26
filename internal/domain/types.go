@@ -765,19 +765,22 @@ func DefaultTerminalLimits() TerminalLimits {
 type PortForwardLimits struct {
 	MaxDuration        time.Duration
 	MaxSessionsPerUser int
+	MaxPortsPerSession int
 }
 
 func DefaultPortForwardLimits() PortForwardLimits {
-	return PortForwardLimits{MaxDuration: 30 * time.Minute, MaxSessionsPerUser: 4}
+	return PortForwardLimits{MaxDuration: 30 * time.Minute, MaxSessionsPerUser: 4, MaxPortsPerSession: 8}
 }
 
 // PortForwardTarget identifies the Pod or Service port selected by the user.
 // Service targets are resolved to one ready backing Pod before authorization.
 type PortForwardTarget struct {
-	Kind      string `json:"kind"`
-	Namespace string `json:"namespace"`
-	Name      string `json:"name"`
-	Port      int32  `json:"port"`
+	Kind      string  `json:"kind"`
+	Namespace string  `json:"namespace"`
+	Name      string  `json:"name"`
+	Port      int32   `json:"port"`
+	Ports     []int32 `json:"ports,omitempty"`
+	PodName   string  `json:"podName,omitempty"`
 }
 
 // PortForwardPod is the resolved Pod and container port behind a direct Pod or
@@ -789,18 +792,49 @@ type PortForwardPod struct {
 	Port      int32  `json:"port"`
 }
 
-// PortForwardSession is a short-lived, user-bound HTTP tunnel to one Pod port.
-// LocalAddress is intentionally omitted from JSON because it is a loopback
-// implementation detail consumed only by the HTTP tunnel adapter.
+// PortForwardPort is one independently addressable HTTP tunnel in a session.
+// The browser receives only a same-origin path; loopback addresses never leave
+// the server process.
+type PortForwardPort struct {
+	ID            string    `json:"id"`
+	Namespace     string    `json:"namespace"`
+	Pod           string    `json:"pod"`
+	Service       string    `json:"service,omitempty"`
+	RequestedPort int32     `json:"requestedPort"`
+	Port          int32     `json:"port"`
+	Protocol      string    `json:"protocol"`
+	Path          string    `json:"path"`
+	ExpiresAt     time.Time `json:"expiresAt"`
+}
+
+// PortForwardSession is a short-lived, user-bound tunnel to one or more ports
+// on a fixed Pod. LocalAddress is intentionally omitted from JSON because it is
+// a loopback implementation detail consumed only by the HTTP tunnel adapter.
 type PortForwardSession struct {
-	ID           string    `json:"id"`
-	Namespace    string    `json:"namespace"`
-	Pod          string    `json:"pod"`
-	Service      string    `json:"service,omitempty"`
-	Port         int32     `json:"port"`
-	Path         string    `json:"path"`
-	ExpiresAt    time.Time `json:"expiresAt"`
-	LocalAddress string    `json:"-"`
+	ID           string            `json:"id"`
+	Namespace    string            `json:"namespace"`
+	Pod          string            `json:"pod"`
+	Service      string            `json:"service,omitempty"`
+	Port         int32             `json:"port"`
+	Ports        []PortForwardPort `json:"ports,omitempty"`
+	Path         string            `json:"path"`
+	CreatedAt    time.Time         `json:"createdAt"`
+	ExpiresAt    time.Time         `json:"expiresAt"`
+	LocalAddress string            `json:"-"`
+}
+
+// PortForwardEndpoint resolves one port of a session for the HTTP tunnel
+// adapter. LocalAddress remains server-only.
+type PortForwardEndpoint struct {
+	ID            string
+	Namespace     string
+	Pod           string
+	Service       string
+	RequestedPort int32
+	Port          int32
+	Path          string
+	ExpiresAt     time.Time
+	LocalAddress  string
 }
 
 // PodEphemeralContainerRequest creates a short-lived debug container. The

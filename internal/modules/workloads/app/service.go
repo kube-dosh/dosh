@@ -45,18 +45,23 @@ type Repository interface {
 	OpenPodPortForward(ctx context.Context, namespace, name string, port int32) (string, io.Closer, error)
 }
 
+// PortForwardBackendLister is optional so focused repositories that only test
+// Pod port-forwarding do not need to implement Service selector discovery.
+type PortForwardBackendLister interface {
+	ListPortForwardBackendPods(ctx context.Context, namespace, serviceName string) ([]domain.PodSummary, error)
+}
+
 type Service struct {
-	repository    Repository
-	authorizer    domain.Authorizer
-	auditor       domain.Auditor
-	registry      ImageRegistryResolver
-	terminal      domain.TerminalLimits
-	terminalMu    sync.Mutex
-	active        map[string]int
-	forward       domain.PortForwardLimits
-	forwardMu     sync.Mutex
-	forwards      map[string]*portForwardRecord
-	forwardCounts map[string]int
+	repository     Repository
+	authorizer     domain.Authorizer
+	auditor        domain.Auditor
+	registry       ImageRegistryResolver
+	terminal       domain.TerminalLimits
+	terminalMu     sync.Mutex
+	active         map[string]int
+	forward        domain.PortForwardLimits
+	forwardMu      sync.Mutex
+	memoryForwards *memoryPortForwardStore
 }
 
 func New(repository Repository, authorizer domain.Authorizer, auditor domain.Auditor, limits ...domain.TerminalLimits) *Service {
@@ -67,7 +72,7 @@ func New(repository Repository, authorizer domain.Authorizer, auditor domain.Aud
 	return &Service{
 		repository: repository, authorizer: authorizer, auditor: auditor,
 		terminal: terminal, active: make(map[string]int),
-		forward: domain.DefaultPortForwardLimits(), forwards: make(map[string]*portForwardRecord), forwardCounts: make(map[string]int),
+		forward: domain.DefaultPortForwardLimits(), memoryForwards: newMemoryPortForwardStore(),
 	}
 }
 
@@ -118,14 +123,17 @@ func (s *Service) applyWorkloadImagePullSecrets(ctx context.Context, actor domai
 	return nil
 }
 
-// SetPortForwardLimits applies startup configuration to the in-memory tunnel
-// registry. It must be called during composition before requests are served.
+// SetPortForwardLimits applies startup configuration to the tunnel service. It
+// must be called during composition before requests are served.
 func (s *Service) SetPortForwardLimits(limits domain.PortForwardLimits) {
 	if limits.MaxDuration <= 0 {
 		limits.MaxDuration = domain.DefaultPortForwardLimits().MaxDuration
 	}
 	if limits.MaxSessionsPerUser <= 0 {
 		limits.MaxSessionsPerUser = domain.DefaultPortForwardLimits().MaxSessionsPerUser
+	}
+	if limits.MaxPortsPerSession <= 0 {
+		limits.MaxPortsPerSession = domain.DefaultPortForwardLimits().MaxPortsPerSession
 	}
 	s.forwardMu.Lock()
 	s.forward = limits

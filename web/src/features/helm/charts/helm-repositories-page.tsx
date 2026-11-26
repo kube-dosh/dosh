@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Archive, CalendarClock, CheckCircle2, CircleAlert, Database, Loader2, LockKeyhole, Pencil, Plus, RefreshCw, Star, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/api/client";
-import type { HelmRepository, HelmRepositoryUpsertInput } from "@/api/types";
+import type { HelmRepository, HelmRepositoryUpsertInput, HelmSupplyChainIdentity } from "@/api/types";
 import { EmptyState, ErrorState, LoadingState } from "@/components/feedback/states";
 import { PageHeader } from "@/components/layout/page-header";
 import {
@@ -24,6 +24,9 @@ import { formatDate } from "@/lib/utils";
 
 type AuthType = "anonymous" | "basic" | "bearer";
 type RepositoryProtocol = "http" | "oci";
+type SupplyChainMode = "disabled" | "key" | "keyless";
+
+type IdentityDraft = HelmSupplyChainIdentity;
 
 type FormState = {
   protocol: RepositoryProtocol;
@@ -42,11 +45,17 @@ type FormState = {
   insecureSkipTLSVerify: boolean;
   replaceCredentials: boolean;
   clearCredentials: boolean;
+  supplyChainMode: SupplyChainMode;
+  publicKeys: string[];
+  identities: IdentityDraft[];
+  requireAttestation: boolean;
+  attestationPredicateType: string;
 };
 
 const emptyForm: FormState = {
   protocol: "http", name: "", url: "https://", description: "", authType: "anonymous", username: "", password: "", token: "", caPEM: "",
   default: false, enabled: true, syncEnabled: false, syncIntervalHours: "3", insecureSkipTLSVerify: false, replaceCredentials: false, clearCredentials: false,
+  supplyChainMode: "disabled", publicKeys: [], identities: [], requireAttestation: false, attestationPredicateType: "",
 };
 
 function formFor(repository?: HelmRepository): FormState {
@@ -65,6 +74,11 @@ function formFor(repository?: HelmRepository): FormState {
     insecureSkipTLSVerify: repository.insecureSkipTLSVerify,
     replaceCredentials: false,
     clearCredentials: false,
+    supplyChainMode: repository.supplyChain?.mode ?? "disabled",
+    publicKeys: repository.supplyChain?.publicKeys?.length ? [...repository.supplyChain.publicKeys] : [],
+    identities: repository.supplyChain?.identities?.length ? repository.supplyChain.identities.map((item) => ({ ...item })) : [],
+    requireAttestation: repository.supplyChain?.requireAttestation ?? false,
+    attestationPredicateType: repository.supplyChain?.attestationPredicateType ?? "",
   };
 }
 
@@ -183,7 +197,7 @@ export function HelmRepositoriesPage() {
       setFormError("HTTP Chart 仓库地址必须以 http:// 或 https:// 开头");
       return;
     }
-    const replace = !editing || form.replaceCredentials;
+    const authenticationEditable = !editing || !editing.hasCredentials || form.replaceCredentials;
     const syncIntervalHours = Number(form.syncIntervalHours);
     if (form.syncEnabled && (!Number.isFinite(syncIntervalHours) || syncIntervalHours < 1 || syncIntervalHours > 168)) {
       setFormError("定时同步间隔必须在 1 到 168 小时之间");
@@ -201,13 +215,43 @@ export function HelmRepositoriesPage() {
       clearCredentials: form.clearCredentials,
       revision: editing?.revision,
     };
-    if (!form.clearCredentials && replace && form.authType !== "anonymous") {
+    if (form.protocol === "oci") {
+      const publicKeys = form.publicKeys.map((item) => item.trim()).filter(Boolean);
+      const identities = form.identities
+        .map((item) => ({
+          issuer: item.issuer?.trim() || undefined,
+          subject: item.subject?.trim() || undefined,
+          issuerRegExp: item.issuerRegExp?.trim() || undefined,
+          subjectRegExp: item.subjectRegExp?.trim() || undefined,
+        }))
+        .filter((item) => item.issuer || item.subject || item.issuerRegExp || item.subjectRegExp);
+      if (form.supplyChainMode === "key" && publicKeys.length === 0) {
+        setFormError("公钥验证模式至少需要一份 PEM 公钥");
+        return;
+      }
+      if (form.supplyChainMode === "keyless" && identities.length === 0) {
+        setFormError("Keyless 模式至少需要一个签发方或主题身份");
+        return;
+      }
+      if (form.requireAttestation && !form.attestationPredicateType.trim()) {
+        setFormError("要求 in-toto 证明时必须填写 predicate type");
+        return;
+      }
+      input.supplyChain = {
+        mode: form.supplyChainMode,
+        publicKeys: form.supplyChainMode === "key" ? publicKeys : undefined,
+        identities: form.supplyChainMode === "keyless" ? identities : undefined,
+        requireAttestation: form.supplyChainMode === "disabled" ? false : form.requireAttestation,
+        attestationPredicateType: form.supplyChainMode === "disabled" ? undefined : form.attestationPredicateType.trim() || undefined,
+      };
+    }
+    if (!form.clearCredentials && authenticationEditable && form.authType !== "anonymous") {
       input.authType = form.authType;
       input.username = form.authType === "basic" ? form.username : "";
       input.password = form.authType === "basic" ? form.password : "";
       input.token = form.authType === "bearer" ? form.token : "";
       input.caPEM = form.caPEM;
-    } else if (!form.clearCredentials && replace) {
+    } else if (!form.clearCredentials && authenticationEditable) {
       input.authType = "anonymous";
       input.caPEM = form.caPEM;
     }
@@ -222,6 +266,7 @@ export function HelmRepositoriesPage() {
   if (repositories.isError) return <ErrorState error={repositories.error} onRetry={() => void repositories.refetch()} />;
   const canWrite = Boolean(capabilities.helmChartWrite);
   const failedRepositories = (repositories.data ?? []).filter((item) => item.enabled && item.lastSync?.ok === false);
+  const authenticationEditable = !editing || !editing.hasCredentials || form.replaceCredentials;
 
   return (
     <>
@@ -279,6 +324,12 @@ export function HelmRepositoriesPage() {
                   {repository.insecureSkipTLSVerify ? <Badge variant="warning">跳过 TLS 校验</Badge> : null}
                   {repository.url.startsWith("http://") ? <Badge variant="destructive">明文 HTTP</Badge> : null}
                   {repository.url.startsWith("oci://") ? <Badge variant="outline">OCI</Badge> : null}
+                  {repository.url.startsWith("oci://") ? (
+                    repository.supplyChain?.mode === "key" ? <Badge variant="success">Cosign 公钥</Badge>
+                      : repository.supplyChain?.mode === "keyless" ? <Badge variant="success">Sigstore Keyless</Badge>
+                        : <Badge variant="secondary">未启用签名校验</Badge>
+                  ) : null}
+                  {repository.supplyChain?.requireAttestation ? <Badge variant="outline">in-toto 证明</Badge> : null}
                   {(repository.syncFailureCount ?? 0) > 0 ? <Badge variant="destructive">连续失败 {repository.syncFailureCount} 次</Badge> : null}
                 </div>
                 <div className={`rounded-md border px-3 py-2 text-xs ${repository.lastSync?.ok ? "border-success/25 bg-success/5" : "border-warning/30 bg-warning/5"}`}>
@@ -380,9 +431,9 @@ export function HelmRepositoriesPage() {
               <div className="min-w-0 space-y-3 rounded-md border p-3">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <p className="text-sm font-medium">仓库认证</p>
-                  {editing?.hasCredentials || editing?.hasCustomCA ? <label className="flex items-center gap-2 text-xs text-muted-foreground"><input type="checkbox" checked={form.replaceCredentials} onChange={(event) => update("replaceCredentials", event.target.checked)} />替换已保存认证或 CA</label> : null}
+                  {editing?.hasCredentials ? <label className="flex items-center gap-2 text-xs text-muted-foreground"><input type="checkbox" checked={form.replaceCredentials} onChange={(event) => update("replaceCredentials", event.target.checked)} />替换已保存认证或 CA</label> : null}
                 </div>
-                {!editing || form.replaceCredentials ? (
+                {authenticationEditable ? (
                   <>
                     <div className="min-w-0 space-y-1.5">
                       <Label htmlFor="helm-repo-auth">认证方式</Label>
@@ -406,10 +457,58 @@ export function HelmRepositoriesPage() {
                     <span className="w-full text-xs text-muted-foreground">敏感内容不会返回浏览器。勾选“替换已保存认证或 CA”后才能更新。</span>
                   </div>
                 )}
-                {!editing || form.replaceCredentials ? (
+                {authenticationEditable ? (
                   <div className="min-w-0 space-y-1.5">
                     <Label htmlFor="helm-repo-ca">自定义 CA（PEM，可选）</Label>
                     <Textarea id="helm-repo-ca" value={form.caPEM} onChange={(event) => update("caPEM", event.target.value)} placeholder="-----BEGIN CERTIFICATE-----" className="min-h-24 font-mono text-xs" spellCheck={false} />
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+
+            {form.protocol === "oci" ? (
+              <div className="min-w-0 space-y-3 rounded-md border p-3" data-testid="helm-supply-chain-policy">
+                <div className="min-w-0 space-y-1.5">
+                  <p className="text-sm font-medium">OCI 供应链验证</p>
+                  <p className="break-words text-xs text-muted-foreground">生成安装/升级计划前强制校验签名；校验失败不会产生可执行计划。</p>
+                  <Select value={form.supplyChainMode} onValueChange={(value) => update("supplyChainMode", value as SupplyChainMode)}>
+                    <SelectTrigger id="helm-supply-chain-mode" aria-label="OCI 供应链验证模式"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="disabled">不启用（仅摘要校验）</SelectItem>
+                      <SelectItem value="key">Cosign 公钥</SelectItem>
+                      <SelectItem value="keyless">Sigstore Keyless</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                {form.supplyChainMode === "key" ? (
+                  <div className="min-w-0 space-y-2">
+                    {form.publicKeys.map((key, index) => (
+                      <div key={index} className="min-w-0 space-y-1.5 rounded-md border bg-muted/15 p-2.5">
+                        <div className="flex items-center justify-between gap-2"><Label htmlFor={`helm-public-key-${index}`}>公钥 {index + 1}</Label><Button type="button" size="sm" variant="ghost" onClick={() => update("publicKeys", form.publicKeys.filter((_, itemIndex) => itemIndex !== index))}>移除</Button></div>
+                        <Textarea id={`helm-public-key-${index}`} value={key} onChange={(event) => update("publicKeys", form.publicKeys.map((item, itemIndex) => itemIndex === index ? event.target.value : item))} placeholder="-----BEGIN PUBLIC KEY-----" className="min-h-28 font-mono text-xs" spellCheck={false} />
+                      </div>
+                    ))}
+                    <Button type="button" size="sm" variant="outline" onClick={() => update("publicKeys", [...form.publicKeys, ""])}><Plus className="h-3.5 w-3.5" />添加公钥</Button>
+                  </div>
+                ) : null}
+                {form.supplyChainMode === "keyless" ? (
+                  <div className="min-w-0 space-y-2">
+                    {form.identities.map((identity, index) => (
+                      <div key={index} className="grid min-w-0 gap-2 rounded-md border bg-muted/15 p-2.5 sm:grid-cols-2">
+                        <div className="min-w-0 space-y-1"><Label htmlFor={`helm-keyless-issuer-${index}`}>Issuer</Label><Input id={`helm-keyless-issuer-${index}`} value={identity.issuer ?? ""} onChange={(event) => update("identities", form.identities.map((item, itemIndex) => itemIndex === index ? { ...item, issuer: event.target.value } : item))} placeholder="https://token.actions.githubusercontent.com" /></div>
+                        <div className="min-w-0 space-y-1"><Label htmlFor={`helm-keyless-subject-${index}`}>Subject</Label><Input id={`helm-keyless-subject-${index}`} value={identity.subject ?? ""} onChange={(event) => update("identities", form.identities.map((item, itemIndex) => itemIndex === index ? { ...item, subject: event.target.value } : item))} placeholder="https://github.com/org/repo/.github/workflows/release.yml@refs/heads/main" /></div>
+                        <div className="min-w-0 space-y-1"><Label htmlFor={`helm-keyless-issuer-regexp-${index}`}>Issuer RegExp（可选）</Label><Input id={`helm-keyless-issuer-regexp-${index}`} value={identity.issuerRegExp ?? ""} onChange={(event) => update("identities", form.identities.map((item, itemIndex) => itemIndex === index ? { ...item, issuerRegExp: event.target.value } : item))} /></div>
+                        <div className="min-w-0 space-y-1"><Label htmlFor={`helm-keyless-subject-regexp-${index}`}>Subject RegExp（可选）</Label><Input id={`helm-keyless-subject-regexp-${index}`} value={identity.subjectRegExp ?? ""} onChange={(event) => update("identities", form.identities.map((item, itemIndex) => itemIndex === index ? { ...item, subjectRegExp: event.target.value } : item))} /></div>
+                        <div className="sm:col-span-2"><Button type="button" size="sm" variant="ghost" onClick={() => update("identities", form.identities.filter((_, itemIndex) => itemIndex !== index))}>移除身份</Button></div>
+                      </div>
+                    ))}
+                    <Button type="button" size="sm" variant="outline" onClick={() => update("identities", [...form.identities, {}])}><Plus className="h-3.5 w-3.5" />添加 Keyless 身份</Button>
+                  </div>
+                ) : null}
+                {form.supplyChainMode !== "disabled" ? (
+                  <div className="min-w-0 space-y-2 rounded-md bg-muted/25 p-2.5">
+                    <label className="flex items-start gap-2 text-sm"><input type="checkbox" className="mt-1" checked={form.requireAttestation} onChange={(event) => update("requireAttestation", event.target.checked)} /><span>要求 in-toto Attestation</span></label>
+                    {form.requireAttestation ? <div className="min-w-0 space-y-1.5"><Label htmlFor="helm-attestation-predicate">Predicate Type</Label><Input id="helm-attestation-predicate" value={form.attestationPredicateType} onChange={(event) => update("attestationPredicateType", event.target.value)} placeholder="https://slsa.dev/provenance/v1" className="font-mono text-xs" /></div> : null}
                   </div>
                 ) : null}
               </div>
@@ -452,6 +551,7 @@ function toInput(repository: HelmRepository, overrides: Partial<HelmRepositoryUp
     syncIntervalSeconds: repository.syncIntervalSeconds,
     insecureSkipTLSVerify: repository.insecureSkipTLSVerify,
     revision: repository.revision,
+    supplyChain: repository.supplyChain,
     ...overrides,
   };
 }

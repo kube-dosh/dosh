@@ -27,6 +27,65 @@ type lockingMemoryHelmRepository struct {
 	lastTTL      time.Duration
 }
 
+type rejectingSyncLockRepository struct{ *memoryHelmRepository }
+
+type sharedLockMemoryHelmRepository struct {
+	*memoryHelmRepository
+	mu   sync.Mutex
+	held map[string]string
+}
+
+func (r *sharedLockMemoryHelmRepository) AcquireHelmOperationLock(_ context.Context, namespace, releaseName, operationID string, _ time.Duration) error {
+	key := namespace + "/" + releaseName
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.held == nil {
+		r.held = map[string]string{}
+	}
+	if existing := r.held[key]; existing != "" && existing != operationID {
+		return domain.ErrConflict
+	}
+	r.held[key] = operationID
+	return nil
+}
+
+func (r *sharedLockMemoryHelmRepository) ReleaseHelmOperationLock(_ context.Context, namespace, releaseName, operationID string) error {
+	key := namespace + "/" + releaseName
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.held[key] == operationID {
+		delete(r.held, key)
+	}
+	return nil
+}
+
+type missFirstIdempotencyLookupRepository struct {
+	*sharedLockMemoryHelmRepository
+	mu              sync.Mutex
+	missesRemaining int
+}
+
+func (r *missFirstIdempotencyLookupRepository) ListHelmChartOperations(ctx context.Context, filter domain.HelmOperationFilter) ([]domain.HelmChartOperation, error) {
+	if filter.IdempotencyKey != "" {
+		r.mu.Lock()
+		if r.missesRemaining > 0 {
+			r.missesRemaining--
+			r.mu.Unlock()
+			return []domain.HelmChartOperation{}, nil
+		}
+		r.mu.Unlock()
+	}
+	return r.sharedLockMemoryHelmRepository.ListHelmChartOperations(ctx, filter)
+}
+
+func (r *rejectingSyncLockRepository) AcquireHelmOperationLock(context.Context, string, string, string, time.Duration) error {
+	return domain.ErrConflict
+}
+
+func (r *rejectingSyncLockRepository) ReleaseHelmOperationLock(context.Context, string, string, string) error {
+	return nil
+}
+
 func (r *lockingMemoryHelmRepository) AcquireHelmOperationLock(_ context.Context, _, _, _ string, ttl time.Duration) error {
 	r.acquireCalls++
 	r.lastTTL = ttl
@@ -108,6 +167,9 @@ func (r *memoryHelmRepository) ListHelmChartOperations(_ context.Context, filter
 	defer r.mu.Unlock()
 	items := make([]domain.HelmChartOperation, 0, len(r.operations))
 	for _, operation := range r.operations {
+		if filter.Action != "" && operation.Type != filter.Action {
+			continue
+		}
 		if filter.Status != "" && operation.Status != filter.Status {
 			continue
 		}
@@ -115,6 +177,9 @@ func (r *memoryHelmRepository) ListHelmChartOperations(_ context.Context, filter
 			continue
 		}
 		if filter.ReleaseName != "" && operation.ReleaseName != filter.ReleaseName {
+			continue
+		}
+		if filter.IdempotencyKey != "" && operation.IdempotencyKey != filter.IdempotencyKey {
 			continue
 		}
 		items = append(items, operation)
@@ -207,6 +272,7 @@ func (s fakeHelmSource) Download(context.Context, domain.HelmRepository, string,
 type fakeHelmExecutor struct {
 	template           domain.HelmChartPlanTemplate
 	installs           int
+	installErr         error
 	lastInstallRequest domain.HelmChartPlanRequest
 	lastUpgradeRequest domain.HelmChartPlanRequest
 	onPlan             func()
@@ -245,6 +311,9 @@ func (e *fakeHelmExecutor) PlanHelmChart(context.Context, domain.Actor, []byte, 
 func (e *fakeHelmExecutor) InstallHelmChart(_ context.Context, _ domain.Actor, _ []byte, request domain.HelmChartPlanRequest, _ domain.HelmExecutionOptions) (int, error) {
 	e.installs++
 	e.lastInstallRequest = request
+	if e.installErr != nil {
+		return 0, e.installErr
+	}
 	return 1, nil
 }
 
@@ -436,6 +505,25 @@ func TestScheduledSyncFailureUsesBackoffAndResetsAfterSuccess(t *testing.T) {
 	if recovered.NextSyncAt == nil || recovered.NextSyncAt.Sub(recovered.LastSync.SyncedAt) != 3*time.Hour {
 		t.Fatalf("recovered next sync = %v, last sync = %v", recovered.NextSyncAt, recovered.LastSync)
 	}
+}
+
+func TestRepositorySyncHonorsCrossReplicaLock(t *testing.T) {
+	t.Parallel()
+	repository := &rejectingSyncLockRepository{memoryHelmRepository: &memoryHelmRepository{items: []domain.HelmRepository{{
+		ID: "repo-1", Name: "Public", URL: "https://charts.example.com", Enabled: true,
+	}}}}
+	source := &countingHelmSource{}
+	service := New(repository, source, &fakeHelmExecutor{}, authz.NewLocal(false), nil)
+	if _, err := service.refreshRepository(context.Background(), repository.items[0], domain.HelmRepositorySyncTriggerManual); !errors.Is(err, domain.ErrConflict) {
+		t.Fatalf("refreshRepository() error = %v, want conflict", err)
+	}
+	if source.chartsCalls.Load() != 0 {
+		t.Fatalf("cross-replica lock allowed %d source calls", source.chartsCalls.Load())
+	}
+	if !service.beginRepositorySync("repo-1") {
+		t.Fatal("repository local sync guard was not released after lock conflict")
+	}
+	service.endRepositorySync("repo-1")
 }
 
 func TestReconcileOperationsFailsOnlyStaleHeartbeats(t *testing.T) {
@@ -874,5 +962,105 @@ func TestInstallAcceptsPlanWhenGeneratedManifestChanges(t *testing.T) {
 	}
 	if executor.planCalls != 2 || executor.installs != 1 {
 		t.Fatalf("executor calls = plan %d, install %d", executor.planCalls, executor.installs)
+	}
+}
+
+func TestInstallRechecksIdempotencyAfterAcquiringReleaseLease(t *testing.T) {
+	t.Parallel()
+	request := domain.HelmChartPlanRequest{HelmChartRef: domain.HelmChartRef{
+		RepositoryID: "repo-1", ChartName: "demo", Version: "1.0.0",
+	}, Mode: "install", Namespace: "default", ReleaseName: "demo", Values: "replicas: 1\n"}
+	digest, err := operationRequestDigest("install", map[string]any{
+		"repositoryId": request.RepositoryID, "chartName": request.ChartName, "version": request.Version,
+		"namespace": request.Namespace, "releaseName": request.ReleaseName, "planDigest": "sha256:plan",
+	})
+	if err != nil {
+		t.Fatalf("operationRequestDigest() error = %v", err)
+	}
+	base := &sharedLockMemoryHelmRepository{
+		memoryHelmRepository: &memoryHelmRepository{
+			items: []domain.HelmRepository{{ID: "repo-1", Name: "Public", URL: "https://charts.example.com", Enabled: true}},
+			operations: map[string]domain.HelmChartOperation{
+				"existing": {ID: "existing", Type: "install", Status: domain.HelmOperationSuccess, Namespace: "default", ReleaseName: "demo", IdempotencyKey: "same-key", RequestDigest: digest, StartedAt: time.Now().UTC()},
+			},
+		},
+	}
+	repository := &missFirstIdempotencyLookupRepository{sharedLockMemoryHelmRepository: base, missesRemaining: 1}
+	executor := &fakeHelmExecutor{template: domain.HelmChartPlanTemplate{Resources: []domain.HelmChartPlanResource{{APIVersion: "v1", Kind: "ConfigMap", Name: "demo"}}}}
+	service := New(repository, fakeHelmSource{archive: []byte("chart"), digest: "sha256:abc"}, executor, authz.NewLocal(false), nil)
+	operation, err := service.Install(context.Background(), testHelmActor(), domain.HelmChartOperationRequest{
+		HelmChartPlanRequest: request, PlanDigest: "sha256:plan", Confirmation: "demo", IdempotencyKey: "same-key",
+	})
+	if err != nil || operation.ID != "existing" {
+		t.Fatalf("Install() = %#v, %v; want existing operation", operation, err)
+	}
+	if executor.installs != 0 {
+		t.Fatalf("duplicate idempotent request executed %d installs", executor.installs)
+	}
+	base.mu.Lock()
+	defer base.mu.Unlock()
+	if len(base.held) != 0 {
+		t.Fatalf("release lease was not released: %#v", base.held)
+	}
+}
+
+func TestConcurrentIdenticalInstallAcrossReplicasExecutesOnce(t *testing.T) {
+	t.Parallel()
+	repository := &sharedLockMemoryHelmRepository{memoryHelmRepository: &memoryHelmRepository{
+		items: []domain.HelmRepository{{ID: "repo-1", Name: "Public", URL: "https://charts.example.com", Enabled: true}},
+	}}
+	source := fakeHelmSource{archive: []byte("chart"), digest: "sha256:abc"}
+	planning := make(chan struct{})
+	continuePlanning := make(chan struct{})
+	var planningOnce sync.Once
+	executor := &fakeHelmExecutor{template: domain.HelmChartPlanTemplate{Resources: []domain.HelmChartPlanResource{{APIVersion: "v1", Kind: "ConfigMap", Name: "demo"}}}}
+	first := New(repository, source, executor, authz.NewLocal(false), nil)
+	second := New(repository, source, executor, authz.NewLocal(false), nil)
+	request := domain.HelmChartPlanRequest{HelmChartRef: domain.HelmChartRef{
+		RepositoryID: "repo-1", ChartName: "demo", Version: "1.0.0",
+	}, Mode: "install", Namespace: "default", ReleaseName: "demo", Values: "replicas: 1\n"}
+	plan, err := first.Plan(context.Background(), testHelmActor(), request)
+	if err != nil {
+		t.Fatalf("Plan() error = %v", err)
+	}
+	executor.onPlan = func() {
+		planningOnce.Do(func() { close(planning) })
+		<-continuePlanning
+	}
+	operationRequest := domain.HelmChartOperationRequest{
+		HelmChartPlanRequest: request, PlanDigest: plan.PlanDigest, Confirmation: "demo", IdempotencyKey: "shared-key",
+	}
+	type result struct {
+		operation domain.HelmChartOperation
+		err       error
+	}
+	results := make(chan result, 2)
+	go func() {
+		operation, callErr := first.Install(context.Background(), testHelmActor(), operationRequest)
+		results <- result{operation: operation, err: callErr}
+	}()
+	select {
+	case <-planning:
+	case <-time.After(2 * time.Second):
+		t.Fatal("first replica did not enter planning")
+	}
+	go func() {
+		operation, callErr := second.Install(context.Background(), testHelmActor(), operationRequest)
+		results <- result{operation: operation, err: callErr}
+	}()
+	close(continuePlanning)
+	firstResult, secondResult := <-results, <-results
+	if firstResult.err != nil || secondResult.err != nil {
+		t.Fatalf("concurrent Install() errors = %v / %v", firstResult.err, secondResult.err)
+	}
+	if firstResult.operation.ID == "" || firstResult.operation.ID != secondResult.operation.ID {
+		t.Fatalf("concurrent operation ids = %q / %q", firstResult.operation.ID, secondResult.operation.ID)
+	}
+	finished := waitForHelmOperation(t, repository.memoryHelmRepository, firstResult.operation.ID)
+	if finished.Status != domain.HelmOperationSuccess {
+		t.Fatalf("operation status = %s", finished.Status)
+	}
+	if executor.installs != 1 {
+		t.Fatalf("concurrent identical installs = %d, want 1", executor.installs)
 	}
 }

@@ -843,11 +843,11 @@ const storageCenterFixture: StorageCenter = {
       chart: { repositoryId: "repo-1", repositoryName: "trusted", chartName: "local-path-provisioner", version: "0.0.30", digest: "sha256:abc", deprecated: false },
     },
     {
-      id: "nfs-subdir-external-provisioner", name: "NFS Subdir External Provisioner", vendor: "Kubernetes SIGs", project: "kubernetes-sigs/nfs-subdir-external-provisioner", category: "network-file",
-      description: "基于已有 NFS 服务动态创建子目录并供应 PV。", supportLevel: "verified", status: "chart-missing",
-      statusMessage: "已配置 Helm 仓库，但未找到 Chart nfs-subdir-external-provisioner。", defaultNamespace: "nfs-provisioning",
-      defaultReleaseName: "nfs-subdir-provisioner", provisioners: ["cluster.local/nfs-subdir-external-provisioner"], expectedStorageClasses: ["nfs-client"],
-      capabilities: ["动态供应", "ReadWriteMany"], prerequisites: ["可访问的 NFS Server"], installed: false,
+      id: "csi-driver-nfs", name: "CSI Driver for NFS", vendor: "Kubernetes CSI", project: "kubernetes-csi/csi-driver-nfs", category: "csi-network-file",
+      description: "通过 CSI 接口挂载外部 NFS 共享。", supportLevel: "verified", status: "chart-missing",
+      statusMessage: "已配置 Helm 仓库，但未找到 Chart csi-driver-nfs。", defaultNamespace: "kube-system",
+      defaultReleaseName: "csi-driver-nfs", provisioners: ["nfs.csi.k8s.io"], expectedStorageClasses: ["nfs-csi"],
+      capabilities: ["CSI Driver", "动态供应", "ReadWriteMany"], prerequisites: ["可访问的 NFS Server"], installed: false,
     },
   ],
   integrations: [
@@ -1470,6 +1470,7 @@ async function installApiMocks(page: Page, options: { authenticated?: boolean; a
       disruptionBudgets = disruptionBudgets.filter((item) => item.name !== "web-api");
       return json(route, { status: "deleting" }, 202);
     }
+    if (path === "/api/v1/resilience/verticalpodautoscalers" && method === "GET") return json(route, list([]));
     if (path === "/api/v1/capabilities/review" && method === "GET") {
       const params = new URL(request.url()).searchParams;
       const resource = params.get("resource") ?? "pods";
@@ -2007,13 +2008,28 @@ async function installApiMocks(page: Page, options: { authenticated?: boolean; a
         readme: "# NGINX\n\nSynced Chart package.",
       });
     }
+    if (path === "/api/v1/tunnels" && method === "GET") return json(route, list(tunnelSession ? [tunnelSession] : []));
+    if (path === "/api/v1/tunnels" && method === "DELETE") {
+      const closed = tunnelSession ? 1 : 0;
+      tunnelSession = null;
+      return json(route, { closed });
+    }
+    if (/^\/api\/v1\/services\/[^/]+\/[^/]+\/tunnel-targets$/.test(path) && method === "GET") return json(route, list([podSummary]));
     if (/^\/api\/v1\/(?:pods|services)\/[^/]+\/[^/]+\/tunnels$/.test(path) && method === "POST") {
-      const body = request.postDataJSON() as { port?: number };
-      const pod = path.startsWith("/api/v1/pods/") ? decodeURIComponent(path.split("/")[5]) : "web-abcdef-12345";
+      const body = request.postDataJSON() as { port?: number; ports?: number[]; pod?: string };
+      const isService = path.startsWith("/api/v1/services/");
+      const pod = body.pod ?? (path.startsWith("/api/v1/pods/") ? decodeURIComponent(path.split("/")[5]) : "web-abcdef-12345");
+      const requestedPorts = body.ports?.length ? body.ports : [body.port ?? 80];
+      const expiresAt = "2099-01-01T00:00:00Z";
       tunnelSession = {
-        id: "e2e-tunnel", namespace: "default", pod, port: body.port ?? 80,
-        path: "/api/v1/tunnels/e2e-tunnel/", expiresAt: "2099-01-01T00:00:00Z",
-        ...(path.startsWith("/api/v1/services/") ? { service: "web" } : {}),
+        id: "e2e-tunnel", namespace: "default", pod, port: requestedPorts[0],
+        path: "/api/v1/tunnels/e2e-tunnel/", createdAt: "2026-01-01T00:00:00Z", expiresAt,
+        ports: requestedPorts.map((requestedPort) => ({
+          id: `e2e-port-${requestedPort}`, namespace: "default", pod, requestedPort, port: requestedPort,
+          protocol: "TCP", path: `/api/v1/tunnels/e2e-tunnel/${requestedPort}/`, expiresAt,
+          ...(isService ? { service: "web" } : {}),
+        })),
+        ...(isService ? { service: "web" } : {}),
       };
       return json(route, tunnelSession, 201);
     }
@@ -2717,6 +2733,39 @@ test("Chart 仓库编辑保留凭据语义并支持显式替换", async ({ page 
   await createDialog.getByRole("button", { name: "添加仓库" }).click();
   expect((await createRequest).postDataJSON()).toMatchObject({ name: "Internal", authType: "basic", username: "robot", password: "secret" });
   await expect(page.getByText("Chart 仓库 Internal 已创建")).toBeVisible();
+});
+
+test("Chart 仓库编辑匿名仓库时可直接补充认证", async ({ page }) => {
+  await installApiMocks(page);
+  await page.goto("/helm/repositories");
+
+  await page.getByRole("button", { name: "添加仓库" }).click();
+  const createDialog = page.getByRole("dialog", { name: "添加 Chart 仓库" });
+  await createDialog.getByLabel("名称").fill("Anonymous OCI");
+  await createDialog.getByRole("combobox", { name: "仓库类型" }).click();
+  await page.getByRole("option", { name: "OCI Chart", exact: true }).click();
+  await createDialog.getByLabel("OCI Chart 地址").fill("oci://dp.apps.rancher.io/charts/local-path-provisioner");
+  await createDialog.getByRole("button", { name: "添加仓库" }).click();
+  await expect(page.getByText("Chart 仓库 Anonymous OCI 已创建")).toBeVisible();
+
+  await page.getByRole("button", { name: "编辑" }).last().click();
+  const dialog = page.getByRole("dialog", { name: "编辑 Chart 仓库" });
+  await expect(dialog.getByRole("combobox", { name: "认证方式" })).toBeVisible();
+  await expect(dialog.getByLabel("替换已保存认证或 CA")).toHaveCount(0);
+
+  await dialog.getByRole("combobox", { name: "认证方式" }).click();
+  await page.getByRole("option", { name: "用户名 / 密码", exact: true }).click();
+  await dialog.getByLabel("用户名").fill("rancher-user");
+  await dialog.getByLabel("密码").fill("access-token");
+  const updateRequest = page.waitForRequest((request) => request.method() === "PUT" && new URL(request.url()).pathname === "/api/v1/helm/repositories/repo-2");
+  await dialog.getByRole("button", { name: "保存修改" }).click();
+  expect((await updateRequest).postDataJSON()).toMatchObject({
+    name: "Anonymous OCI",
+    url: "oci://dp.apps.rancher.io/charts/local-path-provisioner",
+    authType: "basic",
+    username: "rancher-user",
+    password: "access-token",
+  });
 });
 
 test("Helm 仓库定时同步默认关闭且可配置间隔", async ({ page }) => {
@@ -4243,23 +4292,27 @@ test("资源关系支持摘要、方向和类型筛选", async ({ page }) => {
 test("Pod 与 Service 端口转发在桌面和移动端可用且无横向溢出", async ({ page }) => {
   await installApiMocks(page);
   for (const viewport of [{ width: 1280, height: 900 }, { width: 390, height: 844 }, { width: 320, height: 720 }]) {
+    const session = page.getByTestId("port-forward-session");
     await page.setViewportSize(viewport);
     await page.goto("/pods/default/web-abcdef-12345?tab=port-forward");
     await expect(page.getByRole("heading", { name: "新建临时隧道" })).toBeVisible();
     await expect(page.getByText("80", { exact: true }).first()).toBeVisible();
     await page.getByRole("button", { name: "建立隧道" }).click();
-    await expect(page.getByText("临时访问地址")).toBeVisible();
-    await expect(page.getByText("web-abcdef-12345", { exact: true }).last()).toBeVisible();
+    await expect(session).toContainText("请求端口 80");
+    await expect(session).toContainText("web-abcdef-12345");
     await expectNoPageOverflow(page, `${viewport.width}px pod port-forward`);
     await page.screenshot({ path: `test-results/mobile-interactions/pod-port-forward-${viewport.width}.png`, fullPage: true });
-    await page.getByRole("button", { name: "关闭隧道" }).click();
-    await expect(page.getByText("尚未创建端口转发。创建后会显示临时访问地址、后端 Pod 和到期时间。")).toBeVisible();
+    await session.getByRole("button", { name: "关闭", exact: true }).click();
+    await expect(page.getByText("尚未创建端口转发。创建后会显示每个端口的临时访问地址、后端 Pod 和到期时间。")).toBeVisible();
 
     await page.goto("/network/services/default/web?tab=port-forward");
     await expect(page.getByRole("heading", { name: "新建临时隧道" })).toBeVisible();
     await page.getByRole("button", { name: "建立隧道" }).click();
-    await expect(page.getByText("临时访问地址")).toBeVisible();
+    await expect(session).toContainText("Service web");
+    await expect(session).toContainText("请求端口 80");
     await expectNoPageOverflow(page, `${viewport.width}px service port-forward`);
+    await session.getByRole("button", { name: "关闭", exact: true }).click();
+    await expect(page.getByText("尚未创建端口转发。创建后会显示每个端口的临时访问地址、后端 Pod 和到期时间。")).toBeVisible();
   }
 });
 
@@ -5567,6 +5620,8 @@ test("存储中心在桌面与移动端完成目录、预检和存储验证", as
   await expect(page.getByRole("heading", { name: "存储中心", exact: true })).toBeVisible();
   await expect(page.getByRole("tab", { name: "存储中心" })).toHaveAttribute("aria-selected", "true");
   await expect(page.getByText("Local Path Provisioner", { exact: true }).first()).toBeVisible();
+  await expect(page.getByText("CSI Driver for NFS", { exact: true }).first()).toBeVisible();
+  await expect(page.getByText("NFS Subdir External Provisioner", { exact: true })).toHaveCount(0);
   await expect(page.getByText("rancher/local-path-provisioner", { exact: true }).first()).toBeVisible();
   await expect(page.getByText("CSI Example", { exact: true })).toBeVisible();
   await expectNoPageOverflow(page, "desktop storage center");

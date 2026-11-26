@@ -46,6 +46,10 @@ function isHelmTab(value: string | undefined): value is HelmTab {
   return helmTabs.includes(value as HelmTab);
 }
 
+function newIdempotencyKey(): string {
+  return `dosh-helm-${crypto.randomUUID()}`;
+}
+
 function DiffPanel({ title, diff }: { title: string; diff: string }) {
   return (
     <Card className="min-w-0">
@@ -75,14 +79,17 @@ export function HelmReleaseDetailPage() {
   const [rollbackTarget, setRollbackTarget] = useState<HelmReleaseSummary | null>(null);
   const [confirmation, setConfirmation] = useState("");
   const [rollbackOptions, setRollbackOptions] = useState<HelmExecutionOptionsInput>({ ...defaultHelmExecutionOptions });
+  const [rollbackIdempotencyKey, setRollbackIdempotencyKey] = useState("");
   const [upgradeValues, setUpgradeValues] = useState("");
   const [upgradeOptions, setUpgradeOptions] = useState<HelmExecutionOptionsInput>({ ...defaultHelmExecutionOptions });
   const [upgradeConfirmation, setUpgradeConfirmation] = useState("");
+  const [upgradeIdempotencyKey, setUpgradeIdempotencyKey] = useState("");
   const [upgradeOpen, setUpgradeOpen] = useState(false);
   const [chartUpgradeOpen, setChartUpgradeOpen] = useState(false);
   const [uninstallOpen, setUninstallOpen] = useState(false);
   const [uninstallConfirmation, setUninstallConfirmation] = useState("");
   const [uninstallOptions, setUninstallOptions] = useState<HelmExecutionOptionsInput>({ ...defaultHelmExecutionOptions });
+  const [uninstallIdempotencyKey, setUninstallIdempotencyKey] = useState("");
   const [testOpen, setTestOpen] = useState(false);
   const [testResult, setTestResult] = useState<HelmReleaseTestResult>();
   const tab = isHelmTab(search.tab) ? search.tab : "overview";
@@ -101,11 +108,12 @@ export function HelmReleaseDetailPage() {
     enabled: Boolean(capabilities?.helmReleases && diffRequest),
   });
   const rollback = useMutation({
-    mutationFn: () => api.rollbackHelmChart({ namespace: params.namespace, releaseName: params.name, targetRevision: rollbackTarget!.revision, confirmation, options: rollbackOptions }),
+    mutationFn: () => api.rollbackHelmChart({ namespace: params.namespace, releaseName: params.name, targetRevision: rollbackTarget!.revision, confirmation, options: rollbackOptions, idempotencyKey: rollbackIdempotencyKey }),
     onSuccess: async (operation) => {
       toast.success(`已提交 ${operation.releaseName} 的回滚操作`);
       setRollbackTarget(null);
       setConfirmation("");
+      setRollbackIdempotencyKey("");
       setRollbackOptions({ ...defaultHelmExecutionOptions });
       setDiffRequest(null);
       await queryClient.invalidateQueries({ queryKey: ["helm-releases"] });
@@ -118,11 +126,12 @@ export function HelmReleaseDetailPage() {
     onError: (error) => toast.error(error instanceof Error ? error.message : "Helm 升级预览失败"),
   });
   const upgrade = useMutation({
-    mutationFn: () => api.upgradeHelmRelease(params.namespace, params.name, { values: upgradeValues, confirmation: upgradeConfirmation, currentRevision: release.revision, options: upgradeOptions }),
+    mutationFn: () => api.upgradeHelmRelease(params.namespace, params.name, { values: upgradeValues, confirmation: upgradeConfirmation, currentRevision: release.revision, options: upgradeOptions, idempotencyKey: upgradeIdempotencyKey }),
     onSuccess: async (operation) => {
       toast.success(`已提交 ${operation.releaseName} 的升级操作`);
       setUpgradeOpen(false);
       setUpgradeConfirmation("");
+      setUpgradeIdempotencyKey("");
       setUpgradeValues("");
       setUpgradeOptions({ ...defaultHelmExecutionOptions });
       previewUpgrade.reset();
@@ -133,11 +142,12 @@ export function HelmReleaseDetailPage() {
     onError: (error) => toast.error(error instanceof Error ? error.message : "Helm 升级失败"),
   });
   const uninstall = useMutation({
-    mutationFn: () => api.uninstallHelmChart({ namespace: params.namespace, releaseName: params.name, confirmation: uninstallConfirmation, options: uninstallOptions }),
+    mutationFn: () => api.uninstallHelmChart({ namespace: params.namespace, releaseName: params.name, confirmation: uninstallConfirmation, options: uninstallOptions, idempotencyKey: uninstallIdempotencyKey }),
     onSuccess: async (operation) => {
       toast.success(`已提交 ${operation.releaseName} 的卸载操作`);
       setUninstallOpen(false);
       setUninstallConfirmation("");
+      setUninstallIdempotencyKey("");
       setUninstallOptions({ ...defaultHelmExecutionOptions });
       await queryClient.invalidateQueries({ queryKey: ["helm-releases"] });
       void navigate({ to: "/helm/operations", search: { q: operation.releaseName } });
@@ -174,7 +184,7 @@ export function HelmReleaseDetailPage() {
         breadcrumb={<><Link to="/helm/releases" search={{ namespace: release.namespace }} className="text-primary underline underline-offset-2">Helm Releases</Link> / {release.namespace} / {release.name}</>}
         title={<span className="flex min-w-0 items-center gap-2"><Package className="h-5 w-5 shrink-0 text-muted-foreground" /><span className="truncate">{release.name}</span></span>}
         description={<span className="flex flex-wrap items-center gap-2"><StatusBadge status={release.status} /><Badge variant="secondary" className="font-mono">revision #{release.revision}</Badge><span>{release.chart} {release.chartVersion}</span></span>}
-        actions={<div className="flex flex-wrap gap-2">{canSwitchChart ? <Button variant="outline" size="sm" onClick={() => setChartUpgradeOpen(true)}><PackageSearch className="h-4 w-4" />更换 Chart</Button> : null}{canUpgrade ? <Button variant="outline" size="sm" onClick={() => changeTab("upgrade")}><Upload className="h-4 w-4" />Values 升级</Button> : null}{canRollback ? <Button variant="outline" size="sm" disabled={!release.history.some((item) => item.revision < release.revision)} onClick={() => { setConfirmation(""); setRollbackOptions({ ...defaultHelmExecutionOptions }); setRollbackTarget(release.history.find((item) => item.revision < release.revision) ?? null); }}><RotateCcw className="h-4 w-4" />回滚</Button> : null}{canTest ? <Button variant="outline" size="sm" disabled={helmTest.isPending} onClick={() => helmTest.mutate()}>{helmTest.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}运行 test</Button> : null}{canUninstall ? <Button variant="destructive" size="sm" onClick={() => { setUninstallConfirmation(""); setUninstallOptions({ ...defaultHelmExecutionOptions }); setUninstallOpen(true); }}><Trash2 className="h-4 w-4" />卸载</Button> : null}</div>}
+        actions={<div className="flex flex-wrap gap-2">{canSwitchChart ? <Button variant="outline" size="sm" onClick={() => setChartUpgradeOpen(true)}><PackageSearch className="h-4 w-4" />更换 Chart</Button> : null}{canUpgrade ? <Button variant="outline" size="sm" onClick={() => changeTab("upgrade")}><Upload className="h-4 w-4" />Values 升级</Button> : null}{canRollback ? <Button variant="outline" size="sm" disabled={!release.history.some((item) => item.revision < release.revision)} onClick={() => { setConfirmation(""); setRollbackOptions({ ...defaultHelmExecutionOptions }); setRollbackIdempotencyKey(newIdempotencyKey()); setRollbackTarget(release.history.find((item) => item.revision < release.revision) ?? null); }}><RotateCcw className="h-4 w-4" />回滚</Button> : null}{canTest ? <Button variant="outline" size="sm" disabled={helmTest.isPending} onClick={() => helmTest.mutate()}>{helmTest.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}运行 test</Button> : null}{canUninstall ? <Button variant="destructive" size="sm" onClick={() => { setUninstallConfirmation(""); setUninstallOptions({ ...defaultHelmExecutionOptions }); setUninstallIdempotencyKey(newIdempotencyKey()); setUninstallOpen(true); }}><Trash2 className="h-4 w-4" />卸载</Button> : null}</div>}
       />
       {release.warnings?.length ? <div role="status" className="mb-3 flex items-start gap-2 rounded-md border border-warning/35 bg-warning/10 px-3 py-2 text-xs text-warning"><span className="min-w-0 break-words">{release.warnings.join("；")}</span></div> : null}
       <Tabs value={tab} onValueChange={changeTab}>
@@ -236,7 +246,7 @@ export function HelmReleaseDetailPage() {
               />
               <div className="flex min-w-0 flex-wrap gap-2">
                 <Button type="button" variant="outline" disabled={!canUpgrade || previewUpgrade.isPending} onClick={() => previewUpgrade.mutate()}>{previewUpgrade.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowRightLeft className="h-4 w-4" />}生成升级预览</Button>
-                <Button type="button" disabled={!canUpgrade || !previewUpgrade.data || previewUpgrade.isPending} onClick={() => { setUpgradeConfirmation(""); setUpgradeOpen(true); }}><Upload className="h-4 w-4" />执行升级</Button>
+                <Button type="button" disabled={!canUpgrade || !previewUpgrade.data || previewUpgrade.isPending} onClick={() => { setUpgradeConfirmation(""); setUpgradeIdempotencyKey(newIdempotencyKey()); setUpgradeOpen(true); }}><Upload className="h-4 w-4" />执行升级</Button>
               </div>
               {!canUpgrade ? <p role="note" className="text-sm text-muted-foreground">只有状态为 deployed、failed 或 superseded 且具备 Secrets create/update 权限时才能执行升级。</p> : null}
               {previewUpgrade.isError ? <p role="alert" className="break-words text-sm text-destructive-strong">{previewUpgrade.error instanceof Error ? previewUpgrade.error.message : "升级预览失败"}</p> : null}
@@ -253,7 +263,7 @@ export function HelmReleaseDetailPage() {
               historyColumn.accessor("chart", { header: "Chart", cell: (info) => <span className="break-all font-mono text-xs">{info.getValue()} {info.row.original.chartVersion}</span> }),
               historyColumn.accessor("description", { header: "说明", cell: (info) => <span className="block max-w-64 truncate text-xs text-muted-foreground" title={info.getValue()}>{info.getValue() || "—"}</span> }),
               historyColumn.accessor("updatedAt", { header: "更新时间", cell: (info) => <span className="whitespace-nowrap text-xs text-muted-foreground">{formatDate(info.getValue())}</span> }),
-              historyColumn.display({ id: "actions", header: "操作", cell: (info) => info.row.original.revision === release.revision ? <Badge variant="secondary">当前版本</Badge> : canRollback ? <Button variant="outline" size="sm" className="h-7" onClick={() => { setConfirmation(""); setRollbackTarget(info.row.original); }}><RotateCcw className="h-3.5 w-3.5" />回滚到此版本</Button> : <span className="text-xs text-muted-foreground">无权限</span> }),
+              historyColumn.display({ id: "actions", header: "操作", cell: (info) => info.row.original.revision === release.revision ? <Badge variant="secondary">当前版本</Badge> : canRollback ? <Button variant="outline" size="sm" className="h-7" onClick={() => { setConfirmation(""); setRollbackIdempotencyKey(newIdempotencyKey()); setRollbackTarget(info.row.original); }}><RotateCcw className="h-3.5 w-3.5" />回滚到此版本</Button> : <span className="text-xs text-muted-foreground">无权限</span> }),
             ]}
             data={release.history}
             stickyFirstColumn={false}
@@ -261,7 +271,7 @@ export function HelmReleaseDetailPage() {
           />
         </TabsContent>
       </Tabs>
-      <Dialog open={Boolean(rollbackTarget)} onOpenChange={(open) => { if (!open && !rollback.isPending) { setRollbackTarget(null); setConfirmation(""); } }}>
+      <Dialog open={Boolean(rollbackTarget)} onOpenChange={(open) => { if (!open && !rollback.isPending) { setRollbackTarget(null); setConfirmation(""); setRollbackIdempotencyKey(""); } }}>
         <DialogContent className="max-w-lg">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2"><RotateCcw className="h-5 w-5" />受控回滚 Helm Release</DialogTitle>
@@ -273,19 +283,19 @@ export function HelmReleaseDetailPage() {
               idPrefix="helm-rollback-options"
               mode="rollback"
               value={rollbackOptions}
-              onChange={setRollbackOptions}
+              onChange={(next) => { setRollbackOptions(next); setRollbackIdempotencyKey(newIdempotencyKey()); }}
               disabled={rollback.isPending}
             />
             <div><Label htmlFor="helm-rollback-confirmation">输入 Release 名称 <span className="font-mono">{release.name}</span> 以确认</Label><Input id="helm-rollback-confirmation" className="mt-1.5" value={confirmation} onChange={(event) => setConfirmation(event.target.value)} autoComplete="off" /></div>
             {rollback.isError ? <p role="alert" className="text-sm text-destructive">{rollback.error instanceof Error ? rollback.error.message : "回滚失败"}</p> : null}
           </div>
           <DialogFooter>
-            <Button variant="outline" disabled={rollback.isPending} onClick={() => { setRollbackTarget(null); setConfirmation(""); }}>取消</Button>
+            <Button variant="outline" disabled={rollback.isPending} onClick={() => { setRollbackTarget(null); setConfirmation(""); setRollbackIdempotencyKey(""); }}>取消</Button>
             <Button variant="destructive" disabled={!rollbackTarget || confirmation !== release.name || rollback.isPending} onClick={() => rollback.mutate()}>{rollback.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <RotateCcw className="h-4 w-4" />}确认回滚</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
-      <Dialog open={upgradeOpen} onOpenChange={(open) => { if (!open && !upgrade.isPending) setUpgradeOpen(false); }}>
+      <Dialog open={upgradeOpen} onOpenChange={(open) => { if (!open && !upgrade.isPending) { setUpgradeOpen(false); setUpgradeConfirmation(""); setUpgradeIdempotencyKey(""); } }}>
         <DialogContent className="max-w-lg">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2"><Upload className="h-5 w-5" />执行 Helm 升级</DialogTitle>
@@ -297,7 +307,7 @@ export function HelmReleaseDetailPage() {
             {upgrade.isError ? <p role="alert" className="break-words text-sm text-destructive-strong">{upgrade.error instanceof Error ? upgrade.error.message : "升级失败"}</p> : null}
           </div>
           <DialogFooter>
-            <Button variant="outline" disabled={upgrade.isPending} onClick={() => setUpgradeOpen(false)}>取消</Button>
+            <Button variant="outline" disabled={upgrade.isPending} onClick={() => { setUpgradeOpen(false); setUpgradeConfirmation(""); setUpgradeIdempotencyKey(""); }}>取消</Button>
             <Button disabled={upgradeConfirmation !== release.name || upgrade.isPending} onClick={() => upgrade.mutate()}>{upgrade.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}确认升级</Button>
           </DialogFooter>
         </DialogContent>
@@ -311,7 +321,7 @@ export function HelmReleaseDetailPage() {
           />
         </Suspense>
       ) : null}
-      <Dialog open={uninstallOpen} onOpenChange={(open) => { if (!open && !uninstall.isPending) { setUninstallOpen(false); setUninstallConfirmation(""); } }}>
+      <Dialog open={uninstallOpen} onOpenChange={(open) => { if (!open && !uninstall.isPending) { setUninstallOpen(false); setUninstallConfirmation(""); setUninstallIdempotencyKey(""); } }}>
         <DialogContent className="max-h-[calc(100dvh-1rem)] w-[calc(100vw-1rem)] max-w-lg overflow-y-auto p-4 sm:w-[calc(100%-2rem)] sm:p-6">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2"><Trash2 className="h-5 w-5 text-destructive" />卸载 Helm Release</DialogTitle>
@@ -325,7 +335,7 @@ export function HelmReleaseDetailPage() {
               idPrefix="helm-uninstall-options"
               mode="uninstall"
               value={uninstallOptions}
-              onChange={setUninstallOptions}
+              onChange={(next) => { setUninstallOptions(next); setUninstallIdempotencyKey(newIdempotencyKey()); }}
               disabled={uninstall.isPending}
             />
             <div className="min-w-0">
@@ -335,7 +345,7 @@ export function HelmReleaseDetailPage() {
             {uninstall.isError ? <p role="alert" className="break-words text-sm text-destructive-strong">{uninstall.error instanceof Error ? uninstall.error.message : "卸载失败"}</p> : null}
           </div>
           <DialogFooter className="gap-2">
-            <Button variant="outline" disabled={uninstall.isPending} onClick={() => { setUninstallOpen(false); setUninstallConfirmation(""); }}>取消</Button>
+            <Button variant="outline" disabled={uninstall.isPending} onClick={() => { setUninstallOpen(false); setUninstallConfirmation(""); setUninstallIdempotencyKey(""); }}>取消</Button>
             <Button variant="destructive" disabled={uninstallConfirmation !== release.name || uninstall.isPending} onClick={() => uninstall.mutate()}>
               {uninstall.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}确认卸载
             </Button>

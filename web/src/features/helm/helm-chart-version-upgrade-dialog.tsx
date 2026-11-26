@@ -57,6 +57,7 @@ export function HelmChartVersionUpgradeDialog({
   });
   const [plan, setPlan] = useState<HelmChartPlan>();
   const [confirmation, setConfirmation] = useState("");
+  const [idempotencyKey, setIdempotencyKey] = useState("");
   const [error, setError] = useState("");
 
   const charts = useQuery({
@@ -102,6 +103,7 @@ export function HelmChartVersionUpgradeDialog({
   const invalidatePlan = () => {
     setPlan(undefined);
     setConfirmation("");
+    setIdempotencyKey("");
     setError("");
   };
 
@@ -113,6 +115,7 @@ export function HelmChartVersionUpgradeDialog({
     setOptions({ ...defaultHelmExecutionOptions });
     setPlan(undefined);
     setConfirmation("");
+    setIdempotencyKey("");
     setError("");
   }, [open, release.name, release.revision]);
 
@@ -134,6 +137,7 @@ export function HelmChartVersionUpgradeDialog({
     setVersion(currentVersion?.version ?? detail.data.version);
     setPlan(undefined);
     setConfirmation("");
+    setIdempotencyKey("");
     setError("");
   }, [
     detailKey,
@@ -170,6 +174,7 @@ export function HelmChartVersionUpgradeDialog({
     onSuccess: (result) => {
       setPlan(result);
       setConfirmation("");
+      setIdempotencyKey(`dosh-helm-${crypto.randomUUID()}`);
       setError("");
     },
     onError: (mutationError) => setError(mutationError.message),
@@ -190,6 +195,7 @@ export function HelmChartVersionUpgradeDialog({
         options: plan.options,
         planDigest: plan.planDigest,
         confirmation,
+        idempotencyKey,
       });
     },
     onSuccess: async (operation) => {
@@ -436,6 +442,18 @@ export function HelmChartVersionUpgradeDialog({
                 {plan.options.atomic ? "原子回滚" : "非原子"}
               </p>
             </div>
+
+            {plan.supplyChain ? (
+              <div className="min-w-0 rounded-md border border-success/25 bg-success/5 px-3 py-2 text-xs text-muted-foreground">
+                <p className="font-medium text-success">OCI 供应链校验通过 · {plan.supplyChain.policy}</p>
+                <p className="mt-1 break-all font-mono">Manifest {plan.supplyChain.manifestDigest || "—"}</p>
+                <p className="break-all font-mono">Chart 包 {plan.supplyChain.chartDigest || "—"}</p>
+                {plan.supplyChain.issuer ? <p className="mt-1 break-all">Issuer：{plan.supplyChain.issuer}</p> : null}
+                {plan.supplyChain.subject ? <p className="mt-1 break-all">Subject：{plan.supplyChain.subject}</p> : null}
+                {plan.supplyChain.keyFingerprint ? <p className="mt-1 break-all font-mono">Key：{plan.supplyChain.keyFingerprint}</p> : null}
+                {plan.supplyChain.attestationVerified ? <p className="mt-1">in-toto Attestation 已验证</p> : null}
+              </div>
+            ) : null}
 
             {plan.warnings?.length ? (
               <div role="alert" className="space-y-1 rounded-md border border-warning/35 bg-warning/10 px-3 py-2 text-xs text-warning">

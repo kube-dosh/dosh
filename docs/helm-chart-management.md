@@ -32,6 +32,14 @@ Dosh 的 Helm 能力分为两条路径：
 - 更换仓库主机时，Dosh 拒绝静默沿用旧凭据。管理员必须重新录入凭据或显式清除。
 - 勾选“跳过 TLS 证书校验”会降低供应链安全性，仅建议用于临时隔离环境。
 
+### OCI 供应链验证
+
+- OCI 仓库可以配置 `key` 或 `keyless` 信任策略。`key` 使用一个或多个 Cosign 公钥；`keyless` 使用 Fulcio issuer/subject（支持精确值与正则）约束签名身份。
+- Keyless 的 Sigstore TUF 可信根、Fulcio 与 Rekor 访问统一经过 Dosh 的 Helm 出站网络策略，不会绕过管理员配置的代理、NoProxy 与代理 CA。
+- 校验先固定 Registry Tag 对应的 OCI Manifest digest，再对该 digest 执行签名、可选 in-toto attestation 与 predicate type 校验；随后从同一 Manifest 提取 Helm Chart layer digest。
+- 安装或升级计划必须证明“已验签 Manifest”中的 Chart layer digest 与本地待执行 `.tgz` 的 SHA-256 完全一致。Tag 在下载与验签之间被移动、缓存被替换或 registry 返回不同包时会以 `403` 拒绝生成可执行计划。
+- HTTP/HTTPS `index.yaml` 仓库不提供这套策略配置。若需要 Cosign 身份、attestation 与包摘要绑定，请把对应 Chart 登记为独立 OCI 仓库，而不是依赖 `index.yaml` 的 OCI URL。
+
 ### 仓库与操作存储
 
 控制面命名空间由 `preferencesNamespace` 配置。默认使用 Dosh 所在命名空间。
@@ -40,11 +48,20 @@ Dosh 的 Helm 能力分为两条路径：
 |---|---|---|
 | `dosh-helm-repositories` | ConfigMap | 仓库目录、默认仓库、启用状态、最近同步结果 |
 | `dosh-helm-repository-credentials` | Secret | Basic/Bearer Token 与自定义 CA PEM |
-| `dosh-helm-operation-<hash>` | ConfigMap | 每个安装、升级、卸载和回滚操作对应一条记录，最多保留 500 条 |
+| `dosh-helm-operation-<hash>` | ConfigMap | 每个安装、升级、卸载和回滚操作对应一条记录；常态保留 500 条，带显式幂等键的记录至少保留 30 天 |
 | `dosh-helm-operation-lock-<hash>` | ConfigMap | 每个 Release 或仓库同步任务独立的跨副本操作锁；正常释放后立即回收，崩溃遗留的过期锁由后台清理 |
 | `dosh-helm-chart-operations` | ConfigMap | 旧版本聚合操作记录的只读兼容入口 |
 
-仓库目录使用 Kubernetes `resourceVersion` 做乐观并发控制。多个管理员同时编辑时，过期页面会收到冲突而不是覆盖最新配置。操作记录超过 500 条时自动淘汰最旧的已完成记录，不会删除运行中或等待中的记录。
+仓库目录使用 Kubernetes `resourceVersion` 做乐观并发控制。多个管理员同时编辑时，过期页面会收到冲突而不是覆盖最新配置。操作记录超过 500 条时自动淘汰最旧的已完成记录，不会删除运行中、等待中或仍在 30 天幂等保留期内的记录。
+
+### Helm 并发与幂等
+
+- 安装、升级、卸载、回滚和 Helm test 对同一 `namespace/release` 使用跨副本控制面租约，冲突请求返回 `409`，不会并行修改同一 Release。
+- 仓库创建、编辑、手动同步和定时同步共享同一仓库级跨副本锁；任一副本正在同步时，其他副本不会重复拉取，也不会写入互相覆盖的同步结果。
+- 写操作支持 `idempotencyKey`（1–128 个字母、数字、点、下划线、冒号或短横线）。相同 key、相同请求摘要返回第一次操作；相同 key 但 Chart、Values、目标、计划摘要或操作类型不同会返回 `409`。
+- 幂等索引使用独立 ConfigMap 标签精确查询，不依赖最近 500 条操作记录。显式 key 保留 30 天；未提供 key 时服务端根据请求摘要生成内部 key，失败或取消后允许安全重试。
+- 请求在取得 Release 租约后、执行计划和 Helm 变更前会再次查询幂等索引，覆盖“首次查询未命中、另一个副本完成后释放租约”的跨副本竞态，同一请求最多执行一次。
+- 客户端应为一次表单提交生成稳定 key，并在网络超时、网关断开或浏览器重试时复用；开始一次新的业务操作时才生成新 key。
 
 ## 2. 权限要求
 
@@ -180,7 +197,7 @@ Chart 详情展示 README、默认 Values、Schema、依赖、维护者和来源
 - 当前不提供任意公开 Chart 市场搜索；仓库必须由管理员登记。
 - 当前不在 UI 中执行 CRD 升级或级联删除 PVC。
 - Chart 依赖必须在 Chart 包中已打包；Dosh 不会递归拉取任意依赖仓库。
-- OCI 仓库当前只指向单个 Chart，不聚合 namespace 下的多个 Chart，也不读取 OCI Referrers、Cosign 签名或 SBOM 证明。
+- OCI 仓库当前只指向单个 Chart，不聚合 namespace 下的多个 Chart；供应链验证读取 Cosign 签名和按策略要求的 in-toto attestation，不提供通用 SBOM 浏览器或任意 predicate 列表浏览。
 - Release 详情更换 Chart 版本要求目标 Chart 已存在于启用仓库并完成索引同步；当前 Chart 不在任何启用仓库时，只能继续使用增量 Values 升级或先登记对应仓库。
 - Release 详情增量 Values 升级仍无法处理 Release Secret 中未保留子 Chart 模板的依赖型 Release；这类 Release 应通过 Chart 目录升级到完整 Chart 包，或在后续版本中使用支持依赖恢复的升级路径。
 - Chart 目录与 Release 详情发起的安装、升级、卸载和回滚均使用跨副本 per-release 操作锁，并进入统一操作中心。
@@ -229,4 +246,4 @@ Chart、Values、目标资源或 Release revision 已变化。重新生成计划
 | 历史与恢复 | revision 历史、values/manifest Diff、受控回滚、卸载 |
 | 凭据与网络安全 | Basic/Bearer、自定义 CA、TLS 校验开关、HTTP 降级保护、凭据不回传浏览器 |
 
-不属于当前基线、但可作为后续增强的能力包括：OCI 签名与证明验证、仓库级 Chart 缓存预热，以及依赖仓库的在线递归解析。
+当前基线已包含 OCI Key/Keyless 签名、in-toto attestation、Manifest 与 Chart 包 digest 绑定、跨副本 Release/仓库同步锁以及 30 天幂等索引。尚未纳入基线的能力是仓库级 Chart 缓存预热和依赖仓库的在线递归解析。

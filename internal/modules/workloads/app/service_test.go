@@ -3,7 +3,9 @@ package app
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -76,8 +78,12 @@ type fakeRepository struct {
 	forwardAddress string
 	forwardErrOpen error
 	forwardCloser  io.Closer
+	forwardClosers map[int32]*fakeCloser
+	forwardOpenErr map[int32]error
+	resolvedPods   map[int32]domain.PortForwardPod
 	forwardCalls   int
 	lastForward    domain.PortForwardTarget
+	forwardTargets []domain.PortForwardTarget
 }
 
 func (f *fakeRepository) ListWorkloads(_ context.Context, query domain.ListQuery) ([]domain.WorkloadSummary, error) {
@@ -221,8 +227,15 @@ func (f *fakeRepository) AddPodEphemeralContainer(_ context.Context, _ string, _
 
 func (f *fakeRepository) ResolvePortForwardTarget(_ context.Context, target domain.PortForwardTarget) (domain.PortForwardPod, error) {
 	f.lastForward = target
+	f.forwardTargets = append(f.forwardTargets, target)
 	if f.forwardErr != nil {
 		return domain.PortForwardPod{}, f.forwardErr
+	}
+	if item, ok := f.resolvedPods[target.Port]; ok {
+		if target.PodName != "" && target.PodName != item.Pod {
+			return domain.PortForwardPod{}, domain.ErrConflict
+		}
+		return item, nil
 	}
 	if f.forwardPod.Pod != "" {
 		return f.forwardPod, nil
@@ -233,8 +246,14 @@ func (f *fakeRepository) ResolvePortForwardTarget(_ context.Context, target doma
 func (f *fakeRepository) OpenPodPortForward(_ context.Context, namespace, name string, port int32) (string, io.Closer, error) {
 	f.forwardCalls++
 	f.lastNamespace, f.lastName = namespace, name
+	if err := f.forwardOpenErr[port]; err != nil {
+		return "", nil, err
+	}
 	if f.forwardErrOpen != nil {
 		return "", nil, f.forwardErrOpen
+	}
+	if closer := f.forwardClosers[port]; closer != nil {
+		return fmt.Sprintf("127.0.0.1:%d", 42000+port), closer, nil
 	}
 	if f.forwardCloser != nil {
 		return f.forwardAddress, f.forwardCloser, nil
@@ -384,7 +403,7 @@ func TestOpenPortForwardAuthorizesPodSubresourceAndCloseRevokes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("OpenPortForward() error = %v", err)
 	}
-	if session.Pod != "api-0" || session.Port != 8080 || !strings.HasPrefix(session.Path, "/api/v1/tunnels/") || session.LocalAddress != "127.0.0.1:41000" {
+	if session.Pod != "api-0" || session.Port != 8080 || !strings.HasPrefix(session.Path, "/api/v1/tunnels/") || session.LocalAddress != "" || session.CreatedAt.IsZero() {
 		t.Fatalf("session = %#v", session)
 	}
 	if len(guard.accesses) != 1 || guard.accesses[0] != (domain.Access{Verb: "create", Resource: "pods", Subresource: "portforward", Namespace: "prod", Name: "api-0"}) {
@@ -393,17 +412,57 @@ func TestOpenPortForwardAuthorizesPodSubresourceAndCloseRevokes(t *testing.T) {
 	if _, err := service.GetPortForward(context.Background(), domain.Actor{Username: "bob"}, session.ID); !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("GetPortForward(other user) error = %v, want not found", err)
 	}
+	if closer.closed != 1 {
+		t.Fatalf("preflight closer calls = %d, want 1", closer.closed)
+	}
+	endpoint, endpointCloser, err := service.GetPortForwardEndpoint(context.Background(), actor, session.ID, 8080)
+	if err != nil || endpoint.LocalAddress != "127.0.0.1:41000" || endpointCloser == nil {
+		t.Fatalf("GetPortForwardEndpoint() = %#v, %#v, %v", endpoint, endpointCloser, err)
+	}
+	_ = endpointCloser.Close()
+	if closer.closed != 2 {
+		t.Fatalf("closer calls after endpoint = %d, want 2", closer.closed)
+	}
 	if err := service.ClosePortForward(context.Background(), actor, session.ID); err != nil {
 		t.Fatalf("ClosePortForward() error = %v", err)
-	}
-	if closer.closed != 1 {
-		t.Fatalf("closer calls = %d, want 1", closer.closed)
 	}
 	if _, err := service.GetPortForward(context.Background(), actor, session.ID); !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("GetPortForward(closed) error = %v, want not found", err)
 	}
 	if len(auditor.actions) < 2 || auditor.actions[0] != "open-port-forward" || auditor.actions[1] != "close-port-forward" {
 		t.Fatalf("audit actions = %#v", auditor.actions)
+	}
+}
+
+type backendPodRepository struct {
+	*fakeRepository
+	calls int
+}
+
+func (r *backendPodRepository) ListPortForwardBackendPods(_ context.Context, namespace, name string) ([]domain.PodSummary, error) {
+	r.calls++
+	r.lastNamespace, r.lastName = namespace, name
+	return []domain.PodSummary{{Name: "web-b", Namespace: namespace, Status: "Running", Ready: "2/2"}}, nil
+}
+
+func TestListPortForwardBackendPodsAuthorizesAndUsesSelectorScopedRepository(t *testing.T) {
+	t.Parallel()
+	repo := &backendPodRepository{fakeRepository: &fakeRepository{}}
+	guard := &recordingGuard{}
+	service := New(repo, guard, &fakeAuditor{})
+	items, err := service.ListPortForwardBackendPods(context.Background(), domain.Actor{Username: "alice"}, "prod", "web")
+	if err != nil || len(items) != 1 || items[0].Name != "web-b" || repo.calls != 1 {
+		t.Fatalf("ListPortForwardBackendPods() = %#v, %v; calls=%d", items, err, repo.calls)
+	}
+	want := []domain.Access{
+		{Verb: "get", Resource: "services", Namespace: "prod", Name: "web"},
+		{Verb: "list", Resource: "pods", Namespace: "prod"},
+	}
+	if !reflect.DeepEqual(guard.accesses, want) {
+		t.Fatalf("authorization = %#v, want %#v", guard.accesses, want)
+	}
+	if _, err := service.ListPortForwardBackendPods(context.Background(), domain.Actor{Username: "alice"}, "", "web"); !errors.Is(err, domain.ErrInvalid) {
+		t.Fatalf("empty namespace error = %v, want invalid", err)
 	}
 }
 
@@ -423,6 +482,145 @@ func TestOpenPortForwardEnforcesPerUserSessionLimit(t *testing.T) {
 	}
 	if _, err := service.OpenPortForward(context.Background(), domain.Actor{Username: "bob"}, domain.PortForwardTarget{Kind: "pod", Namespace: "prod", Name: "api-2", Port: 80}); err != nil {
 		t.Fatalf("OpenPortForward(other user) error = %v", err)
+	}
+}
+
+func TestListAndCloseAllPortForwardsIsUserBound(t *testing.T) {
+	closers := map[int32]*fakeCloser{80: {}, 443: {}}
+	repo := &fakeRepository{forwardClosers: closers}
+	auditor := &fakeAuditor{}
+	service := New(repo, fakeGuard{allow: true}, auditor)
+	service.SetPortForwardLimits(domain.PortForwardLimits{MaxDuration: time.Minute, MaxSessionsPerUser: 4})
+	alice := domain.Actor{Username: "alice"}
+	if _, err := service.OpenPortForward(context.Background(), alice, domain.PortForwardTarget{Kind: "pod", Namespace: "prod", Name: "api-0", Ports: []int32{80, 443}}); err != nil {
+		t.Fatalf("OpenPortForward(alice) error = %v", err)
+	}
+	bobSession, err := service.OpenPortForward(context.Background(), domain.Actor{Username: "bob"}, domain.PortForwardTarget{Kind: "pod", Namespace: "prod", Name: "api-1", Port: 80})
+	if err != nil {
+		t.Fatalf("OpenPortForward(bob) error = %v", err)
+	}
+	items, listErr := service.ListPortForwards(context.Background(), alice)
+	if listErr != nil {
+		t.Fatalf("ListPortForwards(alice) error = %v", listErr)
+	}
+	if len(items) != 1 || items[0].Pod != "api-0" || len(items[0].Ports) != 2 {
+		t.Fatalf("ListPortForwards(alice) = %#v", items)
+	}
+	closed, closeErr := service.CloseAllPortForwards(context.Background(), alice)
+	if closeErr != nil || closed != 1 {
+		t.Fatalf("CloseAllPortForwards(alice) = %d, %v; want 1", closed, closeErr)
+	}
+	if closers[80].closed != 2 || closers[443].closed != 1 {
+		t.Fatalf("preflight closes = %d/%d", closers[80].closed, closers[443].closed)
+	}
+	if remaining, err := service.ListPortForwards(context.Background(), alice); err != nil || len(remaining) != 0 {
+		t.Fatalf("alice sessions after close = %#v", remaining)
+	}
+	if _, err := service.GetPortForward(context.Background(), domain.Actor{Username: "bob"}, bobSession.ID); err != nil {
+		t.Fatalf("CloseAllPortForwards removed another user's session: %v", err)
+	}
+	if len(auditor.actions) == 0 || auditor.actions[len(auditor.actions)-1] != "close-all-port-forwards" {
+		t.Fatalf("audit actions = %#v", auditor.actions)
+	}
+}
+
+func TestOpenPortForwardMultiPortServicePinsOneReadyPod(t *testing.T) {
+	closers := map[int32]*fakeCloser{8080: {}, 8443: {}}
+	repo := &fakeRepository{
+		resolvedPods: map[int32]domain.PortForwardPod{
+			80:  {Namespace: "prod", Pod: "web-a", Service: "web", Port: 8080},
+			443: {Namespace: "prod", Pod: "web-a", Service: "web", Port: 8443},
+		},
+		forwardClosers: closers,
+	}
+	guard := &recordingGuard{}
+	service := New(repo, guard, &fakeAuditor{})
+	service.SetPortForwardLimits(domain.PortForwardLimits{MaxDuration: time.Minute, MaxSessionsPerUser: 2, MaxPortsPerSession: 4})
+
+	session, err := service.OpenPortForward(context.Background(), domain.Actor{Username: "alice"}, domain.PortForwardTarget{
+		Kind: "service", Namespace: "prod", Name: "web", Ports: []int32{443, 80, 443},
+	})
+	if err != nil {
+		t.Fatalf("OpenPortForward() error = %v", err)
+	}
+	if session.Pod != "web-a" || session.Service != "web" || len(session.Ports) != 2 {
+		t.Fatalf("session = %#v", session)
+	}
+	if session.Ports[0].RequestedPort != 80 || session.Ports[0].Port != 8080 || session.Ports[0].Namespace != "prod" || session.Ports[0].Pod != "web-a" || session.Ports[0].Service != "web" || session.Ports[0].ExpiresAt.IsZero() {
+		t.Fatalf("first port = %#v", session.Ports[0])
+	}
+	if session.Ports[1].RequestedPort != 443 || session.Ports[1].Port != 8443 || session.Ports[1].Path != fmt.Sprintf("/api/v1/tunnels/%s/ports/443/", session.ID) {
+		t.Fatalf("second port = %#v", session.Ports[1])
+	}
+	if len(repo.forwardTargets) != 2 || repo.forwardTargets[0].PodName != "" || repo.forwardTargets[1].PodName != "web-a" {
+		t.Fatalf("service resolution targets = %#v", repo.forwardTargets)
+	}
+	if len(guard.accesses) != 2 || guard.accesses[0].Resource != "services" || guard.accesses[1].Subresource != "portforward" || guard.accesses[1].Name != "web-a" {
+		t.Fatalf("authorization = %#v", guard.accesses)
+	}
+	endpoint, endpointCloser, err := service.GetPortForwardEndpoint(context.Background(), domain.Actor{Username: "alice"}, session.ID, 443)
+	if err != nil || endpoint.Port != 8443 || endpoint.RequestedPort != 443 || endpointCloser == nil {
+		t.Fatalf("GetPortForwardEndpoint() = %#v, %v", endpoint, err)
+	}
+	_ = endpointCloser.Close()
+	if _, otherCloser, err := service.GetPortForwardEndpoint(context.Background(), domain.Actor{Username: "bob"}, session.ID, 443); !errors.Is(err, domain.ErrNotFound) || otherCloser != nil {
+		t.Fatalf("other owner endpoint error = %v, want not found", err)
+	}
+	if err := service.ClosePortForward(context.Background(), domain.Actor{Username: "alice"}, session.ID); err != nil {
+		t.Fatalf("ClosePortForward() error = %v", err)
+	}
+	if closers[8080].closed != 1 || closers[8443].closed != 2 {
+		t.Fatalf("closer calls = %d/%d, want 1/2", closers[8080].closed, closers[8443].closed)
+	}
+}
+
+func TestOpenPortForwardMultiPortFailureRollsBackAndReleasesSlot(t *testing.T) {
+	openFailure := errors.New("backend refused")
+	closers := map[int32]*fakeCloser{8080: {}}
+	repo := &fakeRepository{
+		resolvedPods: map[int32]domain.PortForwardPod{
+			8080: {Namespace: "prod", Pod: "api-0", Port: 8080},
+			9090: {Namespace: "prod", Pod: "api-0", Port: 9090},
+		},
+		forwardClosers: closers,
+		forwardOpenErr: map[int32]error{9090: openFailure},
+	}
+	service := New(repo, fakeGuard{allow: true}, &fakeAuditor{})
+	service.SetPortForwardLimits(domain.PortForwardLimits{MaxDuration: time.Minute, MaxSessionsPerUser: 1, MaxPortsPerSession: 4})
+
+	if _, err := service.OpenPortForward(context.Background(), domain.Actor{Username: "alice"}, domain.PortForwardTarget{
+		Kind: "pod", Namespace: "prod", Name: "api-0", Ports: []int32{8080, 9090},
+	}); !errors.Is(err, openFailure) {
+		t.Fatalf("OpenPortForward() error = %v, want backend failure", err)
+	}
+	if closers[8080].closed != 1 {
+		t.Fatalf("partial preflight close calls = %d, want 1", closers[8080].closed)
+	}
+	if items, err := service.ListPortForwards(context.Background(), domain.Actor{Username: "alice"}); err != nil || len(items) != 0 {
+		t.Fatalf("failed session was persisted: %#v", items)
+	}
+	delete(repo.forwardOpenErr, 9090)
+	if _, err := service.OpenPortForward(context.Background(), domain.Actor{Username: "alice"}, domain.PortForwardTarget{
+		Kind: "pod", Namespace: "prod", Name: "api-0", Port: 8080,
+	}); err != nil {
+		t.Fatalf("OpenPortForward() after rollback error = %v; slot was not released", err)
+	}
+	if closers[8080].closed != 2 {
+		t.Fatalf("second preflight close calls = %d, want 2", closers[8080].closed)
+	}
+}
+
+func TestNormalizePortForwardPortsRejectsInvalidLimit(t *testing.T) {
+	t.Parallel()
+	if _, err := normalizePortForwardPorts(domain.PortForwardTarget{Ports: []int32{80, 81, 82}}, 2); !errors.Is(err, domain.ErrInvalid) {
+		t.Fatalf("limit error = %v, want invalid", err)
+	}
+	if _, err := normalizePortForwardPorts(domain.PortForwardTarget{Ports: []int32{80, 0}}, 8); !errors.Is(err, domain.ErrInvalid) {
+		t.Fatalf("range error = %v, want invalid", err)
+	}
+	ports, err := normalizePortForwardPorts(domain.PortForwardTarget{Ports: []int32{443, 80, 443}}, 8)
+	if err != nil || len(ports) != 2 || ports[0] != 80 || ports[1] != 443 {
+		t.Fatalf("normalizePortForwardPorts() = %#v, %v", ports, err)
 	}
 }
 

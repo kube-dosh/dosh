@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"path"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -59,6 +60,23 @@ func (c *Client) ResolvePortForwardTarget(ctx context.Context, target domain.Por
 		if service.Spec.Type == corev1.ServiceTypeExternalName || len(service.Spec.Selector) == 0 {
 			return domain.PortForwardPod{}, fmt.Errorf("%w: Service port-forward requires a selector-backed Service", domain.ErrUnsupported)
 		}
+		if target.PodName != "" {
+			pod, getErr := c.clientset.CoreV1().Pods(target.Namespace).Get(ctx, target.PodName, metav1.GetOptions{})
+			if getErr != nil {
+				return domain.PortForwardPod{}, mapKubeError(getErr)
+			}
+			if !podMatchesSelector(pod, service.Spec.Selector) {
+				return domain.PortForwardPod{}, fmt.Errorf("%w: Pod %s/%s is not a backend of Service %s", domain.ErrInvalid, target.Namespace, target.PodName, target.Name)
+			}
+			if pod.DeletionTimestamp != nil || pod.Status.Phase != corev1.PodRunning || !podReady(pod) {
+				return domain.PortForwardPod{}, fmt.Errorf("%w: Pod %s/%s is not ready", domain.ErrUnavailable, target.Namespace, target.PodName)
+			}
+			remotePort, portErr := resolvedTargetPort(servicePort, pod)
+			if portErr != nil {
+				return domain.PortForwardPod{}, portErr
+			}
+			return domain.PortForwardPod{Namespace: target.Namespace, Pod: pod.Name, Service: service.Name, Port: remotePort}, nil
+		}
 		pods, err := c.clientset.CoreV1().Pods(target.Namespace).List(ctx, metav1.ListOptions{
 			LabelSelector: selectorString(service.Spec.Selector), FieldSelector: "status.phase=Running", Limit: portForwardBackendScanLimit,
 		})
@@ -86,6 +104,42 @@ func (c *Client) ResolvePortForwardTarget(ctx context.Context, target domain.Por
 	default:
 		return domain.PortForwardPod{}, fmt.Errorf("%w: port-forward target kind must be pod or service", domain.ErrInvalid)
 	}
+}
+
+// ListPortForwardBackendPods returns every Pod currently selected by a Service.
+// The result is selector-scoped rather than a bounded slice of all namespace
+// Pods, so the UI can reliably pin a multi-port tunnel to any ready replica.
+func (c *Client) ListPortForwardBackendPods(ctx context.Context, namespace, serviceName string) ([]domain.PodSummary, error) {
+	if c.clientset == nil {
+		return nil, fmt.Errorf("%w: Kubernetes clientset is unavailable", domain.ErrUnavailable)
+	}
+	namespace, serviceName = strings.TrimSpace(namespace), strings.TrimSpace(serviceName)
+	if namespace == "" || serviceName == "" {
+		return nil, fmt.Errorf("%w: namespace and Service name are required", domain.ErrInvalid)
+	}
+	serviceCtx, cancel := c.withTimeout(ctx)
+	service, err := c.clientset.CoreV1().Services(namespace).Get(serviceCtx, serviceName, metav1.GetOptions{})
+	cancel()
+	if err != nil {
+		return nil, mapKubeError(err)
+	}
+	if service.Spec.Type == corev1.ServiceTypeExternalName || len(service.Spec.Selector) == 0 {
+		return nil, fmt.Errorf("%w: Service port-forward requires a selector-backed Service", domain.ErrUnsupported)
+	}
+	items, err := c.ListPodsBySelector(ctx, namespace, service.Spec.Selector, "")
+	if err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+func podMatchesSelector(pod *corev1.Pod, selector map[string]string) bool {
+	for key, expected := range selector {
+		if pod.Labels[key] != expected {
+			return false
+		}
+	}
+	return true
 }
 
 func serviceForwardPort(service *corev1.Service, port int32) (corev1.ServicePort, bool) {

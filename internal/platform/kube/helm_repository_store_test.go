@@ -106,6 +106,35 @@ func TestHelmRepositoryStoreReportsAnonymousForCustomCAOnly(t *testing.T) {
 	}
 }
 
+func TestHelmRepositoryStorePersistsOCISupplyChainPolicy(t *testing.T) {
+	t.Parallel()
+	client := NewForClients(k8sfake.NewSimpleClientset(), nil, nil, config.Config{
+		RequestTimeout:       time.Second,
+		PreferencesNamespace: "dosh",
+	})
+	saved, err := client.SaveHelmRepository(context.Background(), domain.HelmRepository{
+		ID: "repo-oci", Name: "OCI", URL: "oci://registry.example.com/team/demo", Enabled: true,
+		AuthType: domain.HelmRepositoryAuthAnonymous,
+		SupplyChain: &domain.HelmSupplyChainPolicy{
+			Mode: domain.HelmSupplyChainKeyless, RequireAttestation: true, AttestationPredicateType: "https://slsa.dev/provenance/v1",
+			Identities: []domain.HelmSupplyChainIdentity{{Issuer: "https://token.actions.githubusercontent.com", SubjectRegExp: "^repo:acme/charts:.*$"}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("SaveHelmRepository() error = %v", err)
+	}
+	if saved.SupplyChain == nil || saved.SupplyChain.Mode != domain.HelmSupplyChainKeyless || !saved.SupplyChain.RequireAttestation || len(saved.SupplyChain.Identities) != 1 {
+		t.Fatalf("saved supply chain = %#v", saved.SupplyChain)
+	}
+	loaded, err := client.GetHelmRepository(context.Background(), "repo-oci")
+	if err != nil {
+		t.Fatalf("GetHelmRepository() error = %v", err)
+	}
+	if loaded.SupplyChain == nil || loaded.SupplyChain.AttestationPredicateType != "https://slsa.dev/provenance/v1" || loaded.SupplyChain.Identities[0].SubjectRegExp != "^repo:acme/charts:.*$" {
+		t.Fatalf("loaded supply chain = %#v", loaded.SupplyChain)
+	}
+}
+
 func TestHelmOperationLockIsSharedAndIdempotent(t *testing.T) {
 	t.Parallel()
 	clientset := k8sfake.NewSimpleClientset()
@@ -267,6 +296,31 @@ func TestHelmChartOperationStoreReadsLegacyAggregate(t *testing.T) {
 	}
 	if len(items) != 1 || items[0].ID != operation.ID {
 		t.Fatalf("ListHelmChartOperations() = %#v", items)
+	}
+}
+
+func TestHelmChartOperationStoreIndexesIdempotencyKeys(t *testing.T) {
+	t.Parallel()
+	clientset := k8sfake.NewSimpleClientset()
+	client := NewForClients(clientset, nil, nil, config.Config{RequestTimeout: time.Second, PreferencesNamespace: "dosh"})
+	ctx := context.Background()
+	first := domain.HelmChartOperation{ID: "operation-key-1", Type: "install", Status: domain.HelmOperationSuccess, Namespace: "apps", ReleaseName: "web", IdempotencyKey: "retry-key-1", StartedAt: time.Now().UTC()}
+	second := domain.HelmChartOperation{ID: "operation-key-2", Type: "upgrade", Status: domain.HelmOperationSuccess, Namespace: "apps", ReleaseName: "web", IdempotencyKey: "retry-key-2", StartedAt: time.Now().UTC().Add(time.Second)}
+	for _, operation := range []domain.HelmChartOperation{first, second} {
+		if err := client.SaveHelmChartOperation(ctx, operation); err != nil {
+			t.Fatalf("SaveHelmChartOperation(%s) error = %v", operation.ID, err)
+		}
+	}
+	items, err := client.ListHelmChartOperations(ctx, domain.HelmOperationFilter{Namespace: "apps", ReleaseName: "web", IdempotencyKey: "retry-key-1", Limit: 10})
+	if err != nil {
+		t.Fatalf("ListHelmChartOperations(idempotency) error = %v", err)
+	}
+	if len(items) != 1 || items[0].ID != first.ID {
+		t.Fatalf("idempotency-indexed operations = %#v", items)
+	}
+	byAction, err := client.ListHelmChartOperations(ctx, domain.HelmOperationFilter{Action: "upgrade", Limit: 10})
+	if err != nil || len(byAction) != 1 || byAction[0].ID != second.ID {
+		t.Fatalf("action-filtered operations = %#v, err = %v", byAction, err)
 	}
 }
 

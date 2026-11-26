@@ -35,26 +35,6 @@ var builtinStorageCatalog = []storageCatalogDefinition{
 	},
 	{
 		Item: domain.StorageCatalogItem{
-			ID:                     "nfs-subdir-external-provisioner",
-			Name:                   "NFS Subdir External Provisioner",
-			Vendor:                 "Kubernetes SIGs",
-			Project:                "kubernetes-sigs/nfs-subdir-external-provisioner",
-			Category:               "network-file",
-			Description:            "基于已有 NFS 服务动态创建子目录并供应 PV，适合已有企业 NFS 基础设施的集群。",
-			SupportLevel:           domain.StorageSupportVerified,
-			DefaultNamespace:       "nfs-provisioning",
-			DefaultReleaseName:     "nfs-subdir-provisioner",
-			Provisioners:           []string{"cluster.local/nfs-subdir-external-provisioner", "k8s-sigs.io/nfs-subdir-external-provisioner", "nfs-subdir-external-provisioner"},
-			ExpectedStorageClasses: []string{"nfs-client"},
-			Capabilities:           []string{"动态供应", "ReadWriteMany", "子目录归档策略"},
-			Prerequisites:          []string{"可访问的 NFS Server 与导出路径", "节点具备 NFS 客户端挂载能力", "NFS 服务本身具备容量与高可用保障"},
-			Warnings:               []string{"Dosh 只安装 Provisioner，不负责创建或保障外部 NFS 服务。请在生产环境配置独立的高可用 NFS。"},
-		},
-		ChartName: "nfs-subdir-external-provisioner",
-		PodTokens: []string{"nfs-subdir", "nfs-client-provisioner"},
-	},
-	{
-		Item: domain.StorageCatalogItem{
 			ID:                     "csi-driver-nfs",
 			Name:                   "CSI Driver for NFS",
 			Vendor:                 "Kubernetes CSI",

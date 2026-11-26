@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useParams } from "@tanstack/react-router";
-import { ArrowLeft, ExternalLink, GitBranch, PackageCheck, PackageSearch, RefreshCw, ShieldAlert } from "lucide-react";
+import { ArrowLeft, ExternalLink, GitBranch, PackageCheck, PackageSearch, RefreshCw, ShieldAlert, ShieldCheck } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/api/client";
 import { EmptyState, ErrorState, LoadingState } from "@/components/feedback/states";
@@ -32,6 +32,14 @@ export function HelmChartDetailPage() {
       toast.success("Chart 包已重新同步，README、Values 与 Schema 已刷新");
     },
     onError: (error) => toast.error(`Chart 包同步失败：${error.message}`),
+  });
+  const verify = useMutation({
+    mutationFn: () => api.verifyHelmChartSupplyChain(params.repositoryId, params.chartName, chart?.version ?? ""),
+    onSuccess: (result) => {
+      queryClient.setQueryData(chartQueryKey, (current: typeof detail.data) => current ? { ...current, supplyChain: result } : current);
+      toast.success(result.message || "OCI Chart 供应链校验通过");
+    },
+    onError: (error) => toast.error(`OCI Chart 供应链校验失败：${error.message}`),
   });
 
   if (!capabilities) return <LoadingState label="正在检查 Helm Chart 能力" />;
@@ -93,6 +101,21 @@ export function HelmChartDetailPage() {
             <p className="break-words text-muted-foreground">Dosh 会校验 Chart 包 SHA-256，渲染资源并逐项检查目标命名空间的 create/update/patch 权限。</p>
             <p className="break-words text-xs text-muted-foreground">Chart 包按版本缓存在服务端；需要重新获取当前版本或刷新 README、Values 时，请使用“同步 Chart 包”。</p>
             <div className="flex flex-wrap gap-1.5"><Badge variant="outline">固定版本</Badge><Badge variant="outline">摘要校验</Badge><Badge variant="outline">RBAC 预检</Badge>{chart.schema ? <Badge variant="outline">Schema 校验</Badge> : null}<Badge variant="outline">操作审计</Badge></div>
+            {chart.supplyChain ? (
+              <div className="min-w-0 rounded-md border border-success/25 bg-success/5 p-3 text-xs">
+                <p className="flex items-center gap-1.5 font-medium text-success"><ShieldCheck className="h-3.5 w-3.5 shrink-0" />OCI 供应链已验证</p>
+                <dl className="mt-2 min-w-0 space-y-1 text-muted-foreground">
+                  <div className="min-w-0"><dt className="inline">模式：</dt><dd className="inline break-all font-mono">{chart.supplyChain.policy}</dd></div>
+                  <div className="min-w-0"><dt className="inline">Manifest：</dt><dd className="inline break-all font-mono">{chart.supplyChain.manifestDigest || "—"}</dd></div>
+                  <div className="min-w-0"><dt className="inline">Chart 包：</dt><dd className="inline break-all font-mono">{chart.supplyChain.chartDigest || "—"}</dd></div>
+                  {chart.supplyChain.issuer ? <div className="min-w-0"><dt className="inline">Issuer：</dt><dd className="inline break-all">{chart.supplyChain.issuer}</dd></div> : null}
+                  {chart.supplyChain.subject ? <div className="min-w-0"><dt className="inline">Subject：</dt><dd className="inline break-all">{chart.supplyChain.subject}</dd></div> : null}
+                  {chart.supplyChain.keyFingerprint ? <div className="min-w-0"><dt className="inline">Key：</dt><dd className="inline break-all font-mono">{chart.supplyChain.keyFingerprint}</dd></div> : null}
+                  <div><dt className="inline">Attestation：</dt><dd className="inline">{chart.supplyChain.attestationVerified ? "已验证" : "未配置"}</dd></div>
+                </dl>
+              </div>
+            ) : null}
+            <Button variant="outline" size="sm" className="w-full" onClick={() => verify.mutate()} disabled={verify.isPending || !chart.version}><ShieldCheck className="h-4 w-4" />{verify.isPending ? "校验中" : "重新验证供应链"}</Button>
             <Button className="mt-2 w-full" onClick={() => setInstallOpen(true)}><PackageSearch className="h-4 w-4" />打开安装计划</Button>
           </CardContent>
         </Card>

@@ -83,7 +83,7 @@ func TestStorageCenterDiscoversCatalogManagedAndAdoptedIntegrations(t *testing.T
 	if center.Summary.StorageClassCount != 2 || center.Summary.ManagedIntegrationCount != 1 || center.Summary.AdoptedIntegrationCount != 1 {
 		t.Fatalf("summary = %#v", center.Summary)
 	}
-	if len(center.Catalog) != 3 || center.Catalog[0].Status != domain.StorageCatalogAvailable {
+	if len(center.Catalog) != 2 || center.Catalog[0].Status != domain.StorageCatalogAvailable {
 		t.Fatalf("catalog = %#v", center.Catalog)
 	}
 	if center.Catalog[0].Project != "rancher/local-path-provisioner" {
@@ -91,6 +91,14 @@ func TestStorageCenterDiscoversCatalogManagedAndAdoptedIntegrations(t *testing.T
 	}
 	if len(center.Catalog[0].Provisioners) != 1 || center.Catalog[0].Provisioners[0] != "rancher.io/local-path" {
 		t.Fatalf("local path provisioner = %#v", center.Catalog[0].Provisioners)
+	}
+	if center.Catalog[1].ID != "csi-driver-nfs" {
+		t.Fatalf("NFS catalog entry = %#v", center.Catalog[1])
+	}
+	for _, item := range center.Catalog {
+		if item.ID == "nfs-subdir-external-provisioner" {
+			t.Fatal("retired NFS Subdir External Provisioner must not be recommended")
+		}
 	}
 	foundManaged, foundAdopted := false, false
 	for _, integration := range center.Integrations {

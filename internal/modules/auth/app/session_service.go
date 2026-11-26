@@ -147,6 +147,7 @@ func (s *SessionService) resourceActions(ctx context.Context, actor domain.Actor
 	add("namespaces", "", false, true, false, true)
 	add("horizontalpodautoscalers", "autoscaling", true, true, true, true)
 	add("poddisruptionbudgets", "policy", true, true, true, true)
+	add("verticalpodautoscalers", "autoscaling.k8s.io", true, true, true, true)
 	for _, resource := range []string{"deployments", "statefulsets"} {
 		caps := actions[resource]
 		caps.Scale = s.allowed(ctx, actor, domain.Access{Verb: "update", APIGroup: "apps", Resource: resource, Subresource: "scale", Namespace: namespace})

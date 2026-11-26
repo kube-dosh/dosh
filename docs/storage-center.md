@@ -16,8 +16,9 @@ Dosh 只为少量方案维护薄集成描述。上游仍负责 Chart、CRD、镜
 首期内置条目：
 
 - Local Path Provisioner
-- NFS Subdir External Provisioner
 - CSI Driver for NFS
+
+NFS 文件存储只推荐维护中的 CSI Driver for NFS。已停止维护的 NFS Subdir External Provisioner 不再作为内置方案推荐，也不会提供安装入口；集群中已有的相关 StorageClass 仍会按纳管资源只读展示。
 
 Verified 不等于厂商认证，也不代表存储后端具备高可用。它表示 Dosh 为该方案提供了完整的安装前预检和安装后验证路径。
 

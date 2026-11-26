@@ -743,6 +743,9 @@ func (h *Handler) Mount(r chi.Router) {
 	r.Get("/pods/{namespace}/{name}/terminal", h.Terminal)
 	r.Post("/pods/{namespace}/{name}/tunnels", h.CreatePodTunnel)
 	r.Post("/services/{namespace}/{name}/tunnels", h.CreateServiceTunnel)
+	r.Get("/services/{namespace}/{name}/tunnel-targets", h.ListServiceTunnelTargets)
+	r.Get("/tunnels", h.ListTunnels)
+	r.Delete("/tunnels", h.CloseAllTunnels)
 	r.Delete("/tunnels/{id}", h.CloseTunnel)
 }
 
@@ -753,11 +756,13 @@ func (h *Handler) Mount(r chi.Router) {
 // the security boundary.
 func (h *Handler) MountTunnels(r chi.Router) {
 	r.Get("/tunnels/{id}", h.RedirectTunnel)
+	r.Get("/tunnels/{id}/ports/{port}", h.RedirectTunnel)
 	for _, method := range []string{
 		stdhttp.MethodGet, stdhttp.MethodPost, stdhttp.MethodPut,
 		stdhttp.MethodPatch, stdhttp.MethodDelete,
 	} {
 		r.MethodFunc(method, "/tunnels/{id}/*", h.Tunnel)
+		r.MethodFunc(method, "/tunnels/{id}/ports/{port}/*", h.Tunnel)
 	}
 }
 

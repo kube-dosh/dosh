@@ -118,6 +118,16 @@ func (h *Handler) SyncChart(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	httpx.JSON(w, stdhttp.StatusOK, item)
 }
 
+func (h *Handler) VerifyChartSupplyChain(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	actor, _ := domain.ActorFromContext(r.Context())
+	item, err := h.service.VerifyChartSupplyChain(r.Context(), actor, chi.URLParam(r, "repositoryId"), chi.URLParam(r, "chartName"), httpx.Query(r, "version"))
+	if err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	httpx.JSON(w, stdhttp.StatusOK, item)
+}
+
 func (h *Handler) CacheStats(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	actor, _ := domain.ActorFromContext(r.Context())
 	item, err := h.service.CacheStats(r.Context(), actor)
@@ -259,6 +269,7 @@ func (h *Handler) Mount(r chi.Router) {
 	r.Post("/helm/charts/rollback", h.Rollback)
 	r.Get("/helm/charts/{repositoryId}/{chartName}", h.GetChart)
 	r.Post("/helm/charts/{repositoryId}/{chartName}/sync", h.SyncChart)
+	r.Get("/helm/charts/{repositoryId}/{chartName}/supply-chain", h.VerifyChartSupplyChain)
 	r.Get("/helm/operations", h.ListOperations)
 	r.Get("/helm/operations/{id}", h.Operation)
 	r.Post("/helm/operations/{id}/cancel", h.CancelOperation)

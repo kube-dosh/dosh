@@ -20,16 +20,18 @@ import (
 )
 
 const (
-	helmRepositoryConfigMapName  = "dosh-helm-repositories"
-	helmRepositorySecretName     = "dosh-helm-repository-credentials"
-	helmRepositoryCatalogKey     = "repositories.json"
-	helmRepositoryCredentialsKey = "credentials.json"
-	helmChartOperationsConfigMap = "dosh-helm-chart-operations"
-	helmOperationConfigMapPrefix = "dosh-helm-operation-"
-	helmOperationDataKey         = "operation.json"
-	helmOperationLockPrefix      = "dosh-helm-operation-lock-"
-	helmOperationLockDataKey     = "lock.json"
-	helmOperationMaxRecords      = 500
+	helmRepositoryConfigMapName   = "dosh-helm-repositories"
+	helmRepositorySecretName      = "dosh-helm-repository-credentials"
+	helmRepositoryCatalogKey      = "repositories.json"
+	helmRepositoryCredentialsKey  = "credentials.json"
+	helmChartOperationsConfigMap  = "dosh-helm-chart-operations"
+	helmOperationConfigMapPrefix  = "dosh-helm-operation-"
+	helmOperationDataKey          = "operation.json"
+	helmOperationLockPrefix       = "dosh-helm-operation-lock-"
+	helmOperationLockDataKey      = "lock.json"
+	helmOperationMaxRecords       = 500
+	helmOperationIdempotencyLabel = "dosh.io/idempotency"
+	helmIdempotencyRetention      = 30 * 24 * time.Hour
 )
 
 type helmOperationLockRecord struct {
@@ -261,7 +263,7 @@ func (c *Client) SaveHelmChartOperation(ctx context.Context, operation domain.He
 		if apierrors.IsNotFound(err) {
 			_, createErr := client.Create(ctx, &corev1.ConfigMap{
 				ObjectMeta: metav1.ObjectMeta{
-					Name: name, Namespace: c.preferencesNamespace, Labels: helmOperationLabels(),
+					Name: name, Namespace: c.preferencesNamespace, Labels: helmOperationLabelsFor(operation),
 				},
 				Data: map[string]string{helmOperationDataKey: string(encoded)},
 			}, metav1.CreateOptions{FieldManager: "dosh"})
@@ -292,7 +294,7 @@ func (c *Client) SaveHelmChartOperation(ctx context.Context, operation domain.He
 		if current.Labels == nil {
 			current.Labels = map[string]string{}
 		}
-		for key, value := range helmOperationLabels() {
+		for key, value := range helmOperationLabelsFor(operation) {
 			current.Labels[key] = value
 		}
 		_, err = client.Update(ctx, current, metav1.UpdateOptions{FieldManager: "dosh"})
@@ -352,8 +354,12 @@ func (c *Client) ListHelmChartOperations(ctx context.Context, filter domain.Helm
 	ctx, cancel := c.withTimeout(ctx)
 	defer cancel()
 	client := c.clientset.CoreV1().ConfigMaps(c.preferencesNamespace)
+	selector := labels.Set(helmOperationLabels()).AsSelector().String()
+	if filter.IdempotencyKey != "" {
+		selector += "," + helmOperationIdempotencyLabel + "=" + helmOperationIdempotencyValue(filter.Namespace, filter.ReleaseName, filter.IdempotencyKey)
+	}
 	configMaps, err := client.List(ctx, metav1.ListOptions{
-		LabelSelector: labels.Set(helmOperationLabels()).AsSelector().String(),
+		LabelSelector: selector,
 	})
 	if err != nil {
 		return nil, mapKubeError(err)
@@ -364,13 +370,7 @@ func (c *Client) ListHelmChartOperations(ctx context.Context, filter domain.Helm
 		if !ok {
 			continue
 		}
-		if filter.Status != "" && operation.Status != filter.Status {
-			continue
-		}
-		if filter.Namespace != "" && operation.Namespace != filter.Namespace {
-			continue
-		}
-		if filter.ReleaseName != "" && operation.ReleaseName != filter.ReleaseName {
+		if !operationMatchesFilter(operation, filter) {
 			continue
 		}
 		items = append(items, operation)
@@ -745,6 +745,19 @@ func helmOperationLabels() map[string]string {
 	return map[string]string{"app.kubernetes.io/managed-by": "dosh", "dosh.io/component": "helm-chart-operations"}
 }
 
+func helmOperationLabelsFor(operation domain.HelmChartOperation) map[string]string {
+	result := helmOperationLabels()
+	if operation.IdempotencyKey != "" {
+		result[helmOperationIdempotencyLabel] = helmOperationIdempotencyValue(operation.Namespace, operation.ReleaseName, operation.IdempotencyKey)
+	}
+	return result
+}
+
+func helmOperationIdempotencyValue(namespace, releaseName, key string) string {
+	sum := sha256.Sum256([]byte(strings.Join([]string{namespace, releaseName, key}, "\x00")))
+	return "sha256-" + hex.EncodeToString(sum[:16])
+}
+
 func helmOperationLockLabels() map[string]string {
 	return map[string]string{"app.kubernetes.io/managed-by": "dosh", "dosh.io/component": "helm-operation-locks"}
 }
@@ -772,6 +785,9 @@ func helmOperationFromConfigMap(configMap corev1.ConfigMap) (domain.HelmChartOpe
 }
 
 func operationMatchesFilter(operation domain.HelmChartOperation, filter domain.HelmOperationFilter) bool {
+	if filter.Action != "" && operation.Type != filter.Action {
+		return false
+	}
 	if filter.Status != "" && operation.Status != filter.Status {
 		return false
 	}
@@ -779,6 +795,9 @@ func operationMatchesFilter(operation domain.HelmChartOperation, filter domain.H
 		return false
 	}
 	if filter.ReleaseName != "" && operation.ReleaseName != filter.ReleaseName {
+		return false
+	}
+	if filter.IdempotencyKey != "" && operation.IdempotencyKey != filter.IdempotencyKey {
 		return false
 	}
 	return true
@@ -816,6 +835,9 @@ func (c *Client) pruneHelmOperationConfigMaps(ctx context.Context, keepID string
 			break
 		}
 		if item.operation.ID == keepID || item.operation.Status == domain.HelmOperationRunning || item.operation.Status == domain.HelmOperationPending {
+			continue
+		}
+		if item.operation.IdempotencyKey != "" && time.Since(item.startedAt) < helmIdempotencyRetention {
 			continue
 		}
 		if err := client.Delete(ctx, item.name, metav1.DeleteOptions{}); err == nil || apierrors.IsNotFound(err) {

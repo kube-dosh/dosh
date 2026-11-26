@@ -1067,7 +1067,31 @@ export interface PortForwardSession {
   service?: string;
   port: number;
   path: string;
+  createdAt: string;
   expiresAt: string;
+  ports?: PortForwardPort[];
+}
+
+export interface PortForwardSessionList {
+  items: PortForwardSession[];
+}
+
+export interface PortForwardPort {
+  id: string;
+  namespace: string;
+  pod: string;
+  service?: string;
+  requestedPort: number;
+  port: number;
+  protocol: "TCP";
+  path: string;
+  expiresAt: string;
+}
+
+export interface PortForwardCreateInput {
+  port?: number;
+  ports?: number[];
+  pod?: string;
 }
 
 export interface PodSummary {
@@ -1146,6 +1170,7 @@ export interface HelmReleaseUpgradeRequest {
   confirmation?: string;
   currentRevision?: number;
   options?: HelmExecutionOptionsInput;
+  idempotencyKey?: string;
 }
 
 export interface HelmReleaseUpgradePreview {
@@ -1210,8 +1235,40 @@ export interface HelmRepository {
   nextSyncAt?: string;
   chartCount: number;
   revision?: string;
+  supplyChain?: HelmSupplyChainPolicy;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface HelmSupplyChainIdentity {
+  issuer?: string;
+  subject?: string;
+  issuerRegExp?: string;
+  subjectRegExp?: string;
+}
+
+export interface HelmSupplyChainPolicy {
+  mode: "disabled" | "key" | "keyless";
+  publicKeys?: string[];
+  identities?: HelmSupplyChainIdentity[];
+  requireAttestation: boolean;
+  attestationPredicateType?: string;
+}
+
+export interface HelmSupplyChainStatus {
+  policy: "disabled" | "key" | "keyless";
+  verified: boolean;
+  signatureVerified: boolean;
+  attestationVerified: boolean;
+  reference?: string;
+  manifestDigest?: string;
+  chartDigest?: string;
+  signer?: string;
+  issuer?: string;
+  subject?: string;
+  keyFingerprint?: string;
+  verifiedAt?: string;
+  message?: string;
 }
 
 export interface HelmRepositoryUpsertInput {
@@ -1230,6 +1287,7 @@ export interface HelmRepositoryUpsertInput {
   caPEM?: string;
   clearCredentials?: boolean;
   revision?: string;
+  supplyChain?: HelmSupplyChainPolicy;
 }
 
 export interface HelmCacheStats {
@@ -1283,6 +1341,7 @@ export interface HelmChartDetail extends HelmChartSummary {
   dependencies?: Array<{ name: string; version: string; repository?: string; condition?: string; alias?: string }>;
   versions: HelmChartVersion[];
   warnings?: string[];
+  supplyChain?: HelmSupplyChainStatus;
 }
 
 export interface HelmChartPlanInput {
@@ -1355,11 +1414,13 @@ export interface HelmChartPlan {
   warnings?: string[];
   planDigest: string;
   options: HelmExecutionOptions;
+  supplyChain?: HelmSupplyChainStatus;
 }
 
 export interface HelmChartOperationInput extends HelmChartPlanInput {
   planDigest: string;
   confirmation: string;
+  idempotencyKey?: string;
 }
 
 export interface HelmChartOperation {
@@ -1381,6 +1442,8 @@ export interface HelmChartOperation {
   finishedAt?: string;
   heartbeatAt?: string;
   cancelRequested?: boolean;
+  idempotencyKey?: string;
+  requestDigest?: string;
 }
 
 export interface HelmOperationResource {
@@ -1402,6 +1465,7 @@ export interface HelmChartUninstallInput {
   releaseName: string;
   confirmation: string;
   options?: HelmExecutionOptionsInput;
+  idempotencyKey?: string;
 }
 
 export interface HelmChartRollbackInput extends HelmChartUninstallInput {
@@ -1964,6 +2028,53 @@ export interface AutoscalerInput {
   maxReplicas: number;
   cpuUtilization?: number;
   memoryUtilization?: number;
+  resourceVersion?: string;
+}
+
+export interface VPAContainerPolicy {
+  containerName: string;
+  mode?: "Off" | "Auto";
+  minAllowed?: Record<string, string>;
+  maxAllowed?: Record<string, string>;
+  controlledValues?: "RequestsAndLimits" | "RequestsOnly";
+  controlledResources?: Array<"cpu" | "memory">;
+}
+
+export interface VPARecommendation {
+  containerName: string;
+  lowerBound?: Record<string, string>;
+  target: Record<string, string>;
+  upperBound?: Record<string, string>;
+  uncappedTarget?: Record<string, string>;
+}
+
+export interface VerticalAutoscalerSummary {
+  name: string;
+  namespace: string;
+  resourceVersion?: string;
+  targetApiVersion: string;
+  targetKind: "Deployment" | "StatefulSet" | "DaemonSet" | "ReplicaSet" | string;
+  targetName: string;
+  updatePolicy: "Off" | "Initial" | "Recreate" | "Auto" | "InPlaceOrRecreate" | string;
+  minReplicas?: number;
+  containerPolicies: VPAContainerPolicy[];
+  recommendation: VPARecommendation[];
+  recommendationAge?: string;
+  conditions: Condition[];
+  status: "Ready" | "Pending" | "Degraded" | string;
+  message?: string;
+  createdAt: string;
+}
+
+export interface VerticalAutoscalerInput {
+  name: string;
+  namespace: string;
+  targetApiVersion?: string;
+  targetKind: "Deployment" | "StatefulSet" | "DaemonSet" | "ReplicaSet";
+  targetName: string;
+  updatePolicy: "Off" | "Initial" | "Recreate" | "Auto" | "InPlaceOrRecreate";
+  minReplicas?: number;
+  containerPolicies?: VPAContainerPolicy[];
   resourceVersion?: string;
 }
 

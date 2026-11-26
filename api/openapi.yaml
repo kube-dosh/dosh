@@ -1606,6 +1606,46 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "503": { $ref: "#/components/responses/DependencyUnavailable" }
+  /api/v1/tunnels:
+    get:
+      tags: [workloads]
+      summary: List active port-forward sessions owned by the current identity
+      description: >-
+        Returns live, unexpired sessions so the UI can recover tunnel management
+        after a page refresh. Sessions remain bound to the authenticated user.
+      security:
+        - cookieAuth: []
+      responses:
+        "200":
+          description: Active port-forward sessions
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/PortForwardSession" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    delete:
+      tags: [workloads]
+      summary: Close every active port-forward session owned by the current identity
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      responses:
+        "200":
+          description: All active sessions closed
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [closed]
+                properties:
+                  closed: { type: integer, minimum: 0 }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
   /api/v1/tunnels/{id}:
     get:
       tags: [workloads]
@@ -1635,6 +1675,89 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/tunnels/{id}/ports/{port}:
+    get:
+      tags: [workloads]
+      summary: Redirect a multi-port tunnel URL to its trailing-slash proxy path
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+        - name: port
+          in: path
+          required: true
+          schema: { type: integer, minimum: 1, maximum: 65535 }
+      responses:
+        "307": { description: Redirect to the active port-specific tunnel proxy path }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/tunnels/{id}/ports/{port}/{path}:
+    get:
+      tags: [workloads]
+      summary: Proxy GET requests through a specific multi-port tunnel endpoint
+      description: The tunnel session cookie is required. Dosh session and OIDC state cookies are filtered before forwarding.
+      security: [{ cookieAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+        - { name: port, in: path, required: true, schema: { type: integer, minimum: 1, maximum: 65535 } }
+        - { name: path, in: path, required: true, schema: { type: string } }
+      responses:
+        "200": { description: Upstream response }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
+    post:
+      tags: [workloads]
+      summary: Proxy POST requests through a specific multi-port tunnel endpoint
+      security: [{ cookieAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+        - { name: port, in: path, required: true, schema: { type: integer, minimum: 1, maximum: 65535 } }
+        - { name: path, in: path, required: true, schema: { type: string } }
+      responses:
+        "200": { description: Upstream response }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "413": { description: Request body exceeds the 16 MiB tunnel limit }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
+    put:
+      tags: [workloads]
+      summary: Proxy PUT requests through a specific multi-port tunnel endpoint
+      security: [{ cookieAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+        - { name: port, in: path, required: true, schema: { type: integer, minimum: 1, maximum: 65535 } }
+        - { name: path, in: path, required: true, schema: { type: string } }
+      responses:
+        "200": { description: Upstream response }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
+    patch:
+      tags: [workloads]
+      summary: Proxy PATCH requests through a specific multi-port tunnel endpoint
+      security: [{ cookieAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+        - { name: port, in: path, required: true, schema: { type: integer, minimum: 1, maximum: 65535 } }
+        - { name: path, in: path, required: true, schema: { type: string } }
+      responses:
+        "200": { description: Upstream response }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
+    delete:
+      tags: [workloads]
+      summary: Proxy DELETE requests through a specific multi-port tunnel endpoint
+      security: [{ cookieAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+        - { name: port, in: path, required: true, schema: { type: integer, minimum: 1, maximum: 65535 } }
+        - { name: path, in: path, required: true, schema: { type: string } }
+      responses:
+        "200": { description: Upstream response }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
   /api/v1/tunnels/{id}/{path}:
     get:
       tags: [workloads]
@@ -2078,6 +2201,34 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
         "409": { $ref: "#/components/responses/Conflict" }
         "503": { $ref: "#/components/responses/DependencyUnavailable" }
+  /api/v1/helm/charts/{repositoryId}/{chartName}/supply-chain:
+    get:
+      tags: [helm-charts]
+      summary: Verify an OCI Chart signature and optional in-toto attestation
+      description: >-
+        Runs the repository's configured cosign policy against the exact OCI
+        manifest digest. Public-key and Sigstore Keyless identities are
+        supported. HTTP index repositories return a disabled policy and cannot
+        be used for OCI supply-chain verification.
+      parameters:
+        - { name: repositoryId, in: path, required: true, schema: { type: string, maxLength: 128 } }
+        - { name: chartName, in: path, required: true, schema: { type: string, maxLength: 253 } }
+        - name: version
+          in: query
+          required: true
+          schema: { type: string, maxLength: 128 }
+      responses:
+        "200":
+          description: Supply-chain verification result
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/HelmSupplyChainStatus" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "501": { $ref: "#/components/responses/NotSupported" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
   /api/v1/helm/charts/plan:
     post:
       tags: [helm-charts]
@@ -2386,6 +2537,36 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "429": { $ref: "#/components/responses/RateLimited" }
+        "501": { $ref: "#/components/responses/NotSupported" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
+  /api/v1/services/{namespace}/{name}/tunnel-targets:
+    get:
+      tags: [network]
+      summary: List Service selector backend Pods for port-forward pinning
+      description: >-
+        Requires get Services and list Pods. Returns every Pod selected by the
+        Service, including readiness information. Selector-less and ExternalName
+        Services return 501 because they cannot be port-forwarded safely through
+        a stable backend Pod.
+      parameters:
+        - { $ref: "#/components/parameters/NamespacePath" }
+        - { $ref: "#/components/parameters/Name" }
+      responses:
+        "200":
+          description: Selector-backed backend Pods
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/PodSummary" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
         "501": { $ref: "#/components/responses/NotSupported" }
         "503": { $ref: "#/components/responses/DependencyUnavailable" }
   /api/v1/ingresses:
@@ -3728,6 +3909,108 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "409": { $ref: "#/components/responses/Conflict" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
+  /api/v1/resilience/verticalpodautoscalers:
+    get:
+      tags: [resilience]
+      summary: List VerticalPodAutoscalers with recommendations and container policies
+      description: Returns 501 with a safe message when the autoscaling.k8s.io/v1 VPA CRD is not installed.
+      parameters:
+        - $ref: "#/components/parameters/Namespace"
+      responses:
+        "200":
+          description: VerticalPodAutoscalers visible to the current identity
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, meta]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/VerticalAutoscalerSummary" }
+                  meta: { $ref: "#/components/schemas/ListMeta" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "501": { $ref: "#/components/responses/NotSupported" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
+    post:
+      tags: [resilience]
+      summary: Create a VerticalPodAutoscaler after API Server dry-run
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/VerticalAutoscalerInput" }
+      responses:
+        "201":
+          description: Created VerticalPodAutoscaler
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/VerticalAutoscalerSummary" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "501": { $ref: "#/components/responses/NotSupported" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
+  /api/v1/resilience/verticalpodautoscalers/{namespace}/{name}:
+    put:
+      tags: [resilience]
+      summary: Update a VerticalPodAutoscaler using resourceVersion conflict protection
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      parameters:
+        - { $ref: "#/components/parameters/NamespacePath" }
+        - { $ref: "#/components/parameters/Name" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/VerticalAutoscalerInput" }
+      responses:
+        "200":
+          description: Updated VerticalPodAutoscaler
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/VerticalAutoscalerSummary" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "501": { $ref: "#/components/responses/NotSupported" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
+    delete:
+      tags: [resilience]
+      summary: Delete a VerticalPodAutoscaler with resourceVersion precondition
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      parameters:
+        - { $ref: "#/components/parameters/NamespacePath" }
+        - { $ref: "#/components/parameters/Name" }
+        - name: resourceVersion
+          in: query
+          required: true
+          schema: { type: string, maxLength: 256 }
+      responses:
+        "202":
+          description: VerticalPodAutoscaler deletion accepted
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OperationStatus" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "501": { $ref: "#/components/responses/NotSupported" }
         "503": { $ref: "#/components/responses/DependencyUnavailable" }
   /api/v1/resilience/disruption-budgets:
     get:
@@ -5305,6 +5588,80 @@ components:
           maxProperties: 16
           additionalProperties: { type: string }
         resourceVersion: { type: string, maxLength: 256 }
+    VPAContainerPolicy:
+      type: object
+      required: [containerName]
+      properties:
+        containerName: { type: string, maxLength: 253, description: Container name, or "*" for all containers. }
+        mode: { type: string, enum: [Off, Auto] }
+        minAllowed:
+          type: object
+          additionalProperties: { type: string }
+        maxAllowed:
+          type: object
+          additionalProperties: { type: string }
+        controlledValues: { type: string, enum: [RequestsAndLimits, RequestsOnly] }
+        controlledResources:
+          type: array
+          items: { type: string, enum: [cpu, memory] }
+    VPARecommendation:
+      type: object
+      required: [containerName, target]
+      properties:
+        containerName: { type: string }
+        lowerBound:
+          type: object
+          additionalProperties: { type: string }
+        target:
+          type: object
+          additionalProperties: { type: string }
+        upperBound:
+          type: object
+          additionalProperties: { type: string }
+        uncappedTarget:
+          type: object
+          additionalProperties: { type: string }
+    VerticalAutoscalerSummary:
+      type: object
+      required: [name, namespace, targetApiVersion, targetKind, targetName, updatePolicy, containerPolicies, recommendation, conditions, status, createdAt]
+      properties:
+        name: { type: string }
+        namespace: { type: string }
+        resourceVersion: { type: string }
+        targetApiVersion: { type: string }
+        targetKind: { type: string, enum: [Deployment, StatefulSet, DaemonSet, ReplicaSet] }
+        targetName: { type: string }
+        updatePolicy: { type: string, enum: [Off, Initial, Recreate, Auto, InPlaceOrRecreate] }
+        minReplicas: { type: integer, format: int32, minimum: 1, maximum: 1000 }
+        containerPolicies:
+          type: array
+          items: { $ref: "#/components/schemas/VPAContainerPolicy" }
+        recommendation:
+          type: array
+          items: { $ref: "#/components/schemas/VPARecommendation" }
+        recommendationAge: { type: string, format: date-time }
+        conditions:
+          type: array
+          items: { $ref: "#/components/schemas/Condition" }
+        status: { type: string, enum: [Ready, Pending, Degraded] }
+        message: { type: string }
+        createdAt: { type: string, format: date-time }
+    VerticalAutoscalerInput:
+      type: object
+      required: [name, namespace, targetKind, targetName, updatePolicy]
+      properties:
+        name: { type: string, maxLength: 63 }
+        namespace: { type: string, maxLength: 63 }
+        targetApiVersion: { type: string, maxLength: 128 }
+        targetKind: { type: string, enum: [Deployment, StatefulSet, DaemonSet, ReplicaSet] }
+        targetName: { type: string, maxLength: 63 }
+        updatePolicy: { type: string, enum: [Off, Initial, Recreate, Auto, InPlaceOrRecreate] }
+        minReplicas: { type: integer, format: int32, minimum: 1, maximum: 1000 }
+        containerPolicies:
+          type: array
+          maxItems: 16
+          items: { $ref: "#/components/schemas/VPAContainerPolicy" }
+        resourceVersion: { type: string, maxLength: 256 }
     PodSummary:
       type: object
       required: [name, namespace, status, ready, restarts, ip, node, createdAt]
@@ -5353,20 +5710,46 @@ components:
         port: { type: integer, minimum: 1, maximum: 65535 }
     PortForwardRequest:
       type: object
-      required: [port]
+      description: Provide either port for compatibility or ports for an atomic multi-port session.
       properties:
         port: { type: integer, minimum: 1, maximum: 65535 }
-    PortForwardSession:
+        ports:
+          type: array
+          minItems: 1
+          maxItems: 8
+          items: { type: integer, minimum: 1, maximum: 65535 }
+        pod:
+          type: string
+          maxLength: 253
+          description: Optional ready Service backend Pod. Ignored for Pod targets.
+    PortForwardPort:
       type: object
-      required: [id, namespace, pod, port, path, expiresAt]
+      required: [id, namespace, pod, requestedPort, port, protocol, path, expiresAt]
       properties:
         id: { type: string }
         namespace: { type: string }
         pod: { type: string }
         service: { type: string }
-        port: { type: integer, minimum: 1, maximum: 65535 }
+        requestedPort: { type: integer, minimum: 1, maximum: 65535, description: Port requested on the Pod or Service. }
+        port: { type: integer, minimum: 1, maximum: 65535, description: Resolved target Pod port. }
+        protocol: { type: string, enum: [TCP] }
         path: { type: string }
         expiresAt: { type: string, format: date-time }
+    PortForwardSession:
+      type: object
+      required: [id, namespace, pod, port, path, createdAt, expiresAt, ports]
+      properties:
+        id: { type: string }
+        namespace: { type: string }
+        pod: { type: string }
+        service: { type: string }
+        port: { type: integer, minimum: 1, maximum: 65535, description: First resolved Pod port, retained for older clients. }
+        path: { type: string, description: First port's proxy path, retained for older clients. }
+        createdAt: { type: string, format: date-time }
+        expiresAt: { type: string, format: date-time }
+        ports:
+          type: array
+          items: { $ref: "#/components/schemas/PortForwardPort" }
     PodEphemeralContainerCreate:
       type: object
       required: [image]
@@ -5437,6 +5820,7 @@ components:
             warnings:
               type: array
               items: { type: string }
+            supplyChain: { $ref: "#/components/schemas/HelmSupplyChainStatus" }
     HelmReleaseDiff:
       type: object
       required: [namespace, name, from, to, valuesDiff, manifestDiff]
@@ -5490,6 +5874,7 @@ components:
           description: Optional revision reviewed by the caller. The apply endpoint rejects the request when the installed release has moved to another revision.
         options:
           $ref: "#/components/schemas/HelmExecutionOptionsInput"
+        idempotencyKey: { type: string, maxLength: 128, pattern: '^[A-Za-z0-9][A-Za-z0-9._:-]*$' }
     HelmReleaseUpgradePreview:
       type: object
       required: [namespace, name, currentRevision, nextRevision, valuesDiff, manifestDiff]
@@ -5570,6 +5955,7 @@ components:
         nextSyncAt: { type: string, format: date-time, description: Next scheduled synchronization or retry time. Failures use bounded exponential backoff instead of the normal interval. }
         chartCount: { type: integer, minimum: 0 }
         revision: { type: string }
+        supplyChain: { $ref: "#/components/schemas/HelmSupplyChainPolicy" }
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }
     HelmRepositorySync:
@@ -5583,6 +5969,46 @@ components:
         attempt: { type: integer, minimum: 0 }
         durationMs: { type: integer, minimum: 0 }
         syncedAt: { type: string, format: date-time }
+    HelmSupplyChainIdentity:
+      type: object
+      properties:
+        issuer: { type: string, maxLength: 2048 }
+        subject: { type: string, maxLength: 2048 }
+        issuerRegExp: { type: string, maxLength: 2048 }
+        subjectRegExp: { type: string, maxLength: 2048 }
+    HelmSupplyChainPolicy:
+      type: object
+      required: [mode]
+      description: OCI Chart trust policy. Key mode requires publicKeys; keyless mode requires at least one identity.
+      properties:
+        mode: { type: string, enum: [disabled, key, keyless] }
+        publicKeys:
+          type: array
+          maxItems: 16
+          items: { type: string, maxLength: 32768 }
+        identities:
+          type: array
+          maxItems: 32
+          items: { $ref: "#/components/schemas/HelmSupplyChainIdentity" }
+        requireAttestation: { type: boolean }
+        attestationPredicateType: { type: string, maxLength: 512 }
+    HelmSupplyChainStatus:
+      type: object
+      required: [policy, verified, signatureVerified, attestationVerified]
+      properties:
+        policy: { type: string, enum: [disabled, key, keyless] }
+        verified: { type: boolean }
+        signatureVerified: { type: boolean }
+        attestationVerified: { type: boolean }
+        reference: { type: string }
+        manifestDigest: { type: string, description: Digest of the signed OCI manifest. }
+        chartDigest: { type: string, description: Digest of the Helm chart package layer bound by the signed manifest. }
+        signer: { type: string }
+        issuer: { type: string }
+        subject: { type: string }
+        keyFingerprint: { type: string }
+        verifiedAt: { type: string, format: date-time }
+        message: { type: string }
     HelmRepositoryUpsert:
       type: object
       required: [name, url]
@@ -5609,6 +6035,7 @@ components:
         caPEM: { type: string }
         clearCredentials: { type: boolean }
         revision: { type: string }
+        supplyChain: { $ref: "#/components/schemas/HelmSupplyChainPolicy" }
     HelmCacheStats:
       type: object
       required: [root, limitBytes, totalBytes, indexBytes, packageBytes, indexCount, packageCount]
@@ -5785,6 +6212,7 @@ components:
           items: { type: string }
         planDigest: { type: string }
         options: { $ref: "#/components/schemas/HelmExecutionOptions" }
+        supplyChain: { $ref: "#/components/schemas/HelmSupplyChainStatus" }
     HelmChartOperationRequest:
       allOf:
         - { $ref: "#/components/schemas/HelmChartPlanRequest" }
@@ -5793,6 +6221,7 @@ components:
           properties:
             planDigest: { type: string }
             confirmation: { type: string }
+            idempotencyKey: { type: string, maxLength: 128, pattern: '^[A-Za-z0-9][A-Za-z0-9._:-]*$' }
     HelmChartUninstallRequest:
       type: object
       required: [namespace, releaseName, confirmation]
@@ -5802,6 +6231,7 @@ components:
         confirmation: { type: string }
         options:
           $ref: "#/components/schemas/HelmExecutionOptionsInput"
+        idempotencyKey: { type: string, maxLength: 128, pattern: '^[A-Za-z0-9][A-Za-z0-9._:-]*$' }
     HelmChartRollbackRequest:
       type: object
       required: [namespace, releaseName, targetRevision, confirmation]
@@ -5812,6 +6242,7 @@ components:
         confirmation: { type: string }
         options:
           $ref: "#/components/schemas/HelmExecutionOptionsInput"
+        idempotencyKey: { type: string, maxLength: 128, pattern: '^[A-Za-z0-9][A-Za-z0-9._:-]*$' }
     HelmChartOperation:
       type: object
       required: [id, type, status, namespace, releaseName, startedAt]
@@ -5839,6 +6270,8 @@ components:
         heartbeatAt: { type: string, format: date-time, description: Last execution heartbeat. Missing heartbeats cause the operation to be reconciled as failed after a restart or executor crash. }
         cancelRequested: { type: boolean, description: A cancellation was accepted. The owning replica observes this flag through its heartbeat loop and cancels the execution context. }
         options: { $ref: "#/components/schemas/HelmExecutionOptions" }
+        idempotencyKey: { type: string, description: Client-supplied or server-derived key that deduplicates repeated Helm mutations. }
+        requestDigest: { type: string, description: SHA-256 digest binding the idempotency key to the exact request payload. }
     HelmOperationResource:
       type: object
       required: [apiVersion, kind, name, hook, crd, action, resource, status]

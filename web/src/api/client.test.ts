@@ -44,6 +44,21 @@ describe("api request errors", () => {
     } satisfies Partial<ApiError>);
   });
 
+  it("keeps actionable not-supported guidance returned by the API", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      code: "not_supported",
+      message: "集群未安装 autoscaling.k8s.io/v1 VerticalPodAutoscaler CRD，请先安装 VPA 控制器与 CRD",
+      requestId: "req-501",
+    }), { status: 501, headers: { "Content-Type": "application/json" } })));
+
+    await expect(api.nodes()).rejects.toMatchObject({
+      status: 501,
+      code: "not_supported",
+      message: "集群未安装 autoscaling.k8s.io/v1 VerticalPodAutoscaler CRD，请先安装 VPA 控制器与 CRD",
+      requestId: "req-501",
+    } satisfies Partial<ApiError>);
+  });
+
   it("normalizes nullable certificate SAN arrays before rendering", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
       mode: "https", enabled: true, configured: true, status: "valid",

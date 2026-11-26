@@ -200,6 +200,7 @@ export function HelmInstallDialog({
   const [plan, setPlan] = useState<HelmChartPlan>();
   const [operation, setOperation] = useState<HelmChartOperation>();
   const [confirmation, setConfirmation] = useState("");
+  const [idempotencyKey, setIdempotencyKey] = useState("");
   const [error, setError] = useState("");
 
   useEffect(() => {
@@ -219,6 +220,7 @@ export function HelmInstallDialog({
     setPlan(undefined);
     setOperation(undefined);
     setConfirmation("");
+    setIdempotencyKey("");
     setError("");
   }, [open, chart.repositoryId, chart.name, chart.version, chart.values, initialCreateNamespace, initialNamespace, initialReleaseName]);
 
@@ -260,6 +262,7 @@ export function HelmInstallDialog({
     setPlan(undefined);
     setOperation(undefined);
     setConfirmation("");
+    setIdempotencyKey("");
     setError("");
   };
 
@@ -319,6 +322,7 @@ export function HelmInstallDialog({
       setPlan(result);
       setOperation(undefined);
       setConfirmation("");
+      setIdempotencyKey(`dosh-helm-${crypto.randomUUID()}`);
       setError("");
     },
     onError: (mutationError) => setError(mutationError.message),
@@ -359,6 +363,7 @@ export function HelmInstallDialog({
         options: plan.options,
         planDigest: plan.planDigest,
         confirmation,
+        idempotencyKey,
       };
       setError("");
       const started =
@@ -626,6 +631,18 @@ export function HelmInstallDialog({
                 {plan.planDigest}
               </p>
             </div>
+
+            {plan.supplyChain ? (
+              <div className="min-w-0 rounded-md border border-success/25 bg-success/5 px-3 py-2 text-xs text-muted-foreground">
+                <p className="font-medium text-success">OCI 供应链校验通过 · {plan.supplyChain.policy}</p>
+                <p className="mt-1 break-all font-mono">Manifest {plan.supplyChain.manifestDigest || "—"}</p>
+                <p className="break-all font-mono">Chart 包 {plan.supplyChain.chartDigest || "—"}</p>
+                {plan.supplyChain.issuer ? <p className="mt-1 break-all">Issuer：{plan.supplyChain.issuer}</p> : null}
+                {plan.supplyChain.subject ? <p className="mt-1 break-all">Subject：{plan.supplyChain.subject}</p> : null}
+                {plan.supplyChain.keyFingerprint ? <p className="mt-1 break-all font-mono">Key：{plan.supplyChain.keyFingerprint}</p> : null}
+                {plan.supplyChain.attestationVerified ? <p className="mt-1">in-toto Attestation 已验证</p> : null}
+              </div>
+            ) : null}
 
             {plan.warnings?.length ? (
               <div

@@ -3077,6 +3077,72 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/tunnels": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List active port-forward sessions owned by the current identity
+         * @description Returns live, unexpired sessions so the UI can recover tunnel management after a page refresh. Sessions remain bound to the authenticated user.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Active port-forward sessions */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            items: components["schemas"]["PortForwardSession"][];
+                        };
+                    };
+                };
+                401: components["responses"]["Unauthorized"];
+            };
+        };
+        put?: never;
+        post?: never;
+        /** Close every active port-forward session owned by the current identity */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description All active sessions closed */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            closed: number;
+                        };
+                    };
+                };
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+            };
+        };
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/tunnels/{id}": {
         parameters: {
             query?: never;
@@ -3136,6 +3202,197 @@ export interface paths {
         options?: never;
         head?: never;
         patch?: never;
+        trace?: never;
+    };
+    "/api/v1/tunnels/{id}/ports/{port}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Redirect a multi-port tunnel URL to its trailing-slash proxy path */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                    port: number;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Redirect to the active port-specific tunnel proxy path */
+                307: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                400: components["responses"]["BadRequest"];
+                401: components["responses"]["Unauthorized"];
+                404: components["responses"]["NotFound"];
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/tunnels/{id}/ports/{port}/{path}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Proxy GET requests through a specific multi-port tunnel endpoint
+         * @description The tunnel session cookie is required. Dosh session and OIDC state cookies are filtered before forwarding.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                    port: number;
+                    path: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Upstream response */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                401: components["responses"]["Unauthorized"];
+                404: components["responses"]["NotFound"];
+                503: components["responses"]["DependencyUnavailable"];
+            };
+        };
+        /** Proxy PUT requests through a specific multi-port tunnel endpoint */
+        put: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                    port: number;
+                    path: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Upstream response */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                401: components["responses"]["Unauthorized"];
+                404: components["responses"]["NotFound"];
+                503: components["responses"]["DependencyUnavailable"];
+            };
+        };
+        /** Proxy POST requests through a specific multi-port tunnel endpoint */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                    port: number;
+                    path: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Upstream response */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                401: components["responses"]["Unauthorized"];
+                404: components["responses"]["NotFound"];
+                /** @description Request body exceeds the 16 MiB tunnel limit */
+                413: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                503: components["responses"]["DependencyUnavailable"];
+            };
+        };
+        /** Proxy DELETE requests through a specific multi-port tunnel endpoint */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                    port: number;
+                    path: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Upstream response */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                401: components["responses"]["Unauthorized"];
+                404: components["responses"]["NotFound"];
+                503: components["responses"]["DependencyUnavailable"];
+            };
+        };
+        options?: never;
+        head?: never;
+        /** Proxy PATCH requests through a specific multi-port tunnel endpoint */
+        patch: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                    port: number;
+                    path: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Upstream response */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                401: components["responses"]["Unauthorized"];
+                404: components["responses"]["NotFound"];
+                503: components["responses"]["DependencyUnavailable"];
+            };
+        };
         trace?: never;
     };
     "/api/v1/tunnels/{id}/{path}": {
@@ -3968,6 +4225,56 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/helm/charts/{repositoryId}/{chartName}/supply-chain": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Verify an OCI Chart signature and optional in-toto attestation
+         * @description Runs the repository's configured cosign policy against the exact OCI manifest digest. Public-key and Sigstore Keyless identities are supported. HTTP index repositories return a disabled policy and cannot be used for OCI supply-chain verification.
+         */
+        get: {
+            parameters: {
+                query: {
+                    version: string;
+                };
+                header?: never;
+                path: {
+                    repositoryId: string;
+                    chartName: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Supply-chain verification result */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["HelmSupplyChainStatus"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+                404: components["responses"]["NotFound"];
+                501: components["responses"]["NotSupported"];
+                503: components["responses"]["DependencyUnavailable"];
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/helm/charts/plan": {
         parameters: {
             query?: never;
@@ -4567,6 +4874,56 @@ export interface paths {
                 503: components["responses"]["DependencyUnavailable"];
             };
         };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/services/{namespace}/{name}/tunnel-targets": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Service selector backend Pods for port-forward pinning
+         * @description Requires get Services and list Pods. Returns every Pod selected by the Service, including readiness information. Selector-less and ExternalName Services return 501 because they cannot be port-forwarded safely through a stable backend Pod.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    namespace: components["parameters"]["NamespacePath"];
+                    name: components["parameters"]["Name"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Selector-backed backend Pods */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            items: components["schemas"]["PodSummary"][];
+                        };
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+                404: components["responses"]["NotFound"];
+                501: components["responses"]["NotSupported"];
+                503: components["responses"]["DependencyUnavailable"];
+            };
+        };
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -6920,6 +7277,167 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/resilience/verticalpodautoscalers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List VerticalPodAutoscalers with recommendations and container policies
+         * @description Returns 501 with a safe message when the autoscaling.k8s.io/v1 VPA CRD is not installed.
+         */
+        get: {
+            parameters: {
+                query?: {
+                    namespace?: components["parameters"]["Namespace"];
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description VerticalPodAutoscalers visible to the current identity */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            items: components["schemas"]["VerticalAutoscalerSummary"][];
+                            meta: components["schemas"]["ListMeta"];
+                        };
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+                501: components["responses"]["NotSupported"];
+                503: components["responses"]["DependencyUnavailable"];
+            };
+        };
+        put?: never;
+        /** Create a VerticalPodAutoscaler after API Server dry-run */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["VerticalAutoscalerInput"];
+                };
+            };
+            responses: {
+                /** @description Created VerticalPodAutoscaler */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["VerticalAutoscalerSummary"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+                409: components["responses"]["Conflict"];
+                501: components["responses"]["NotSupported"];
+                503: components["responses"]["DependencyUnavailable"];
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/resilience/verticalpodautoscalers/{namespace}/{name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Update a VerticalPodAutoscaler using resourceVersion conflict protection */
+        put: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    namespace: components["parameters"]["NamespacePath"];
+                    name: components["parameters"]["Name"];
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["VerticalAutoscalerInput"];
+                };
+            };
+            responses: {
+                /** @description Updated VerticalPodAutoscaler */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["VerticalAutoscalerSummary"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+                404: components["responses"]["NotFound"];
+                409: components["responses"]["Conflict"];
+                501: components["responses"]["NotSupported"];
+                503: components["responses"]["DependencyUnavailable"];
+            };
+        };
+        post?: never;
+        /** Delete a VerticalPodAutoscaler with resourceVersion precondition */
+        delete: {
+            parameters: {
+                query: {
+                    resourceVersion: string;
+                };
+                header?: never;
+                path: {
+                    namespace: components["parameters"]["NamespacePath"];
+                    name: components["parameters"]["Name"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description VerticalPodAutoscaler deletion accepted */
+                202: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["OperationStatus"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+                404: components["responses"]["NotFound"];
+                409: components["responses"]["Conflict"];
+                501: components["responses"]["NotSupported"];
+                503: components["responses"]["DependencyUnavailable"];
+            };
+        };
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/resilience/disruption-budgets": {
         parameters: {
             query?: never;
@@ -8294,6 +8812,73 @@ export interface components {
             };
             resourceVersion?: string;
         };
+        VPAContainerPolicy: {
+            /** @description Container name */
+            containerName: string;
+            /** @enum {string} */
+            mode?: "Off" | "Auto";
+            minAllowed?: {
+                [key: string]: string;
+            };
+            maxAllowed?: {
+                [key: string]: string;
+            };
+            /** @enum {string} */
+            controlledValues?: "RequestsAndLimits" | "RequestsOnly";
+            controlledResources?: ("cpu" | "memory")[];
+        };
+        VPARecommendation: {
+            containerName: string;
+            lowerBound?: {
+                [key: string]: string;
+            };
+            target: {
+                [key: string]: string;
+            };
+            upperBound?: {
+                [key: string]: string;
+            };
+            uncappedTarget?: {
+                [key: string]: string;
+            };
+        };
+        VerticalAutoscalerSummary: {
+            name: string;
+            namespace: string;
+            resourceVersion?: string;
+            targetApiVersion: string;
+            /** @enum {string} */
+            targetKind: "Deployment" | "StatefulSet" | "DaemonSet" | "ReplicaSet";
+            targetName: string;
+            /** @enum {string} */
+            updatePolicy: "Off" | "Initial" | "Recreate" | "Auto" | "InPlaceOrRecreate";
+            /** Format: int32 */
+            minReplicas?: number;
+            containerPolicies: components["schemas"]["VPAContainerPolicy"][];
+            recommendation: components["schemas"]["VPARecommendation"][];
+            /** Format: date-time */
+            recommendationAge?: string;
+            conditions: components["schemas"]["Condition"][];
+            /** @enum {string} */
+            status: "Ready" | "Pending" | "Degraded";
+            message?: string;
+            /** Format: date-time */
+            createdAt: string;
+        };
+        VerticalAutoscalerInput: {
+            name: string;
+            namespace: string;
+            targetApiVersion?: string;
+            /** @enum {string} */
+            targetKind: "Deployment" | "StatefulSet" | "DaemonSet" | "ReplicaSet";
+            targetName: string;
+            /** @enum {string} */
+            updatePolicy: "Off" | "Initial" | "Recreate" | "Auto" | "InPlaceOrRecreate";
+            /** Format: int32 */
+            minReplicas?: number;
+            containerPolicies?: components["schemas"]["VPAContainerPolicy"][];
+            resourceVersion?: string;
+        };
         PodSummary: {
             name: string;
             namespace: string;
@@ -8340,18 +8925,42 @@ export interface components {
             protocol: "TCP" | "UDP" | "SCTP";
             port: number;
         };
+        /** @description Provide either port for compatibility or ports for an atomic multi-port session. */
         PortForwardRequest: {
+            port?: number;
+            ports?: number[];
+            /** @description Optional ready Service backend Pod. Ignored for Pod targets. */
+            pod?: string;
+        };
+        PortForwardPort: {
+            id: string;
+            namespace: string;
+            pod: string;
+            service?: string;
+            /** @description Port requested on the Pod or Service. */
+            requestedPort: number;
+            /** @description Resolved target Pod port. */
             port: number;
+            /** @enum {string} */
+            protocol: "TCP";
+            path: string;
+            /** Format: date-time */
+            expiresAt: string;
         };
         PortForwardSession: {
             id: string;
             namespace: string;
             pod: string;
             service?: string;
+            /** @description First resolved Pod port */
             port: number;
+            /** @description First port's proxy path */
             path: string;
             /** Format: date-time */
+            createdAt: string;
+            /** Format: date-time */
             expiresAt: string;
+            ports: components["schemas"]["PortForwardPort"][];
         };
         PodEphemeralContainerCreate: {
             /** @description Container image that contains the selected shell. */
@@ -8399,6 +9008,7 @@ export interface components {
             manifest: string;
             history: components["schemas"]["HelmReleaseSummary"][];
             warnings?: string[];
+            supplyChain?: components["schemas"]["HelmSupplyChainStatus"];
         };
         HelmReleaseDiff: {
             namespace: string;
@@ -8432,6 +9042,7 @@ export interface components {
             /** @description Optional revision reviewed by the caller. The apply endpoint rejects the request when the installed release has moved to another revision. */
             currentRevision?: number;
             options?: components["schemas"]["HelmExecutionOptionsInput"];
+            idempotencyKey?: string;
         };
         HelmReleaseUpgradePreview: {
             namespace: string;
@@ -8510,6 +9121,7 @@ export interface components {
             nextSyncAt?: string;
             chartCount: number;
             revision?: string;
+            supplyChain?: components["schemas"]["HelmSupplyChainPolicy"];
             /** Format: date-time */
             createdAt: string;
             /** Format: date-time */
@@ -8525,6 +9137,40 @@ export interface components {
             durationMs?: number;
             /** Format: date-time */
             syncedAt: string;
+        };
+        HelmSupplyChainIdentity: {
+            issuer?: string;
+            subject?: string;
+            issuerRegExp?: string;
+            subjectRegExp?: string;
+        };
+        /** @description OCI Chart trust policy. Key mode requires publicKeys; keyless mode requires at least one identity. */
+        HelmSupplyChainPolicy: {
+            /** @enum {string} */
+            mode: "disabled" | "key" | "keyless";
+            publicKeys?: string[];
+            identities?: components["schemas"]["HelmSupplyChainIdentity"][];
+            requireAttestation?: boolean;
+            attestationPredicateType?: string;
+        };
+        HelmSupplyChainStatus: {
+            /** @enum {string} */
+            policy: "disabled" | "key" | "keyless";
+            verified: boolean;
+            signatureVerified: boolean;
+            attestationVerified: boolean;
+            reference?: string;
+            /** @description Digest of the signed OCI manifest. */
+            manifestDigest?: string;
+            /** @description Digest of the Helm chart package layer bound by the signed manifest. */
+            chartDigest?: string;
+            signer?: string;
+            issuer?: string;
+            subject?: string;
+            keyFingerprint?: string;
+            /** Format: date-time */
+            verifiedAt?: string;
+            message?: string;
         };
         HelmRepositoryUpsert: {
             name: string;
@@ -8551,6 +9197,7 @@ export interface components {
             caPEM?: string;
             clearCredentials?: boolean;
             revision?: string;
+            supplyChain?: components["schemas"]["HelmSupplyChainPolicy"];
         };
         HelmCacheStats: {
             root: string;
@@ -8712,16 +9359,19 @@ export interface components {
             warnings?: string[];
             planDigest: string;
             options: components["schemas"]["HelmExecutionOptions"];
+            supplyChain?: components["schemas"]["HelmSupplyChainStatus"];
         };
         HelmChartOperationRequest: components["schemas"]["HelmChartPlanRequest"] & {
             planDigest: string;
             confirmation: string;
+            idempotencyKey?: string;
         };
         HelmChartUninstallRequest: {
             namespace: string;
             releaseName: string;
             confirmation: string;
             options?: components["schemas"]["HelmExecutionOptionsInput"];
+            idempotencyKey?: string;
         };
         HelmChartRollbackRequest: {
             namespace: string;
@@ -8729,6 +9379,7 @@ export interface components {
             targetRevision: number;
             confirmation: string;
             options?: components["schemas"]["HelmExecutionOptionsInput"];
+            idempotencyKey?: string;
         };
         HelmChartOperation: {
             id: string;
@@ -8759,6 +9410,10 @@ export interface components {
             /** @description A cancellation was accepted. The owning replica observes this flag through its heartbeat loop and cancels the execution context. */
             cancelRequested?: boolean;
             options?: components["schemas"]["HelmExecutionOptions"];
+            /** @description Client-supplied or server-derived key that deduplicates repeated Helm mutations. */
+            idempotencyKey?: string;
+            /** @description SHA-256 digest binding the idempotency key to the exact request payload. */
+            requestDigest?: string;
         };
         HelmOperationResource: {
             apiVersion: string;
