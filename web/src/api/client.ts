@@ -12,6 +12,8 @@ import type {
   ConfigMapCreateInput,
   ConfigMapSummary,
   ConfigMapUpdateInput,
+  ConnectivityDiagnosis,
+  ConnectivityRequest,
   ContainerRegistry,
   ContainerRegistryRepository,
   ContainerRegistryTag,
@@ -30,6 +32,7 @@ import type {
   GenericResourceMutationInput,
   GenericResourceSearch,
   GenericResourceSummary,
+  GatewayAPIOverview,
   IngressDetail,
   IngressCreateInput,
   IngressClassSummary,
@@ -63,6 +66,7 @@ import type {
   NamespaceItem,
   NamespaceCreateInput,
   NamespaceDetail,
+  NetworkPolicyOverview,
   NodeDetail,
   NodeDrainOptions,
   NodeDrainPlan,
@@ -727,6 +731,22 @@ export const api = {
   deleteIngress: (namespace: string, name: string, resourceVersion?: string) =>
     request<{ status: string }>(`/api/v1/ingresses/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}${resourceVersion ? `?resourceVersion=${encodeURIComponent(resourceVersion)}` : ""}`, { method: "DELETE" }),
   ingressClasses: (params?: ListParams) => listRequest<IngressClassSummary>(`/api/v1/ingressclasses${query(params)}`),
+  gatewayAPI: (params?: { namespace?: string; q?: string }) => request<GatewayAPIOverview>(`/api/v1/network/gateway-api${query(params)}`),
+  networkPolicies: (params?: { namespace?: string; q?: string }) => {
+    const value = request<NetworkPolicyOverview>(`/api/v1/network/policies${query(params)}`);
+    return value.then((overview) => ({ ...overview, items: list(overview.items), warnings: list(overview.warnings) }));
+  },
+  connectivityDiagnosis: (params: ConnectivityRequest) => {
+    const search = new URLSearchParams({
+      sourceNamespace: params.sourceNamespace,
+      sourcePod: params.sourcePod,
+      destinationNamespace: params.destinationNamespace,
+      destinationService: params.destinationService,
+      port: String(params.port),
+      protocol: params.protocol,
+    });
+    return request<ConnectivityDiagnosis>(`/api/v1/network/connectivity?${search.toString()}`);
+  },
   configmaps: (params?: ListParams) => listRequest<ConfigMapSummary>(`/api/v1/configmaps${query(params)}`),
   configmap: async (namespace: string, name: string) => normalizeConfigMapDetail(await request<ConfigMapDetail>(`/api/v1/configmaps/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}`)),
   createConfigMap: async (input: ConfigMapCreateInput) => normalizeConfigMapDetail(await request<ConfigMapDetail>("/api/v1/configmaps", {

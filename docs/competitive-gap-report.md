@@ -214,6 +214,7 @@ Devtron 的参考价值主要在 Helm、发布历史、回滚和应用生命周�
 | GAP-07 | 结构化工作负载与存储表单 | ✅ Deployment、StatefulSet、DaemonSet、Job、CronJob、PV、StorageClass、PVC 等结构化表单与 YAML 回退已实现 | Headlamp 通用编辑；平台产品有向导 | 常规工作负载和存储对象不再强制依赖 YAML | 后续补更细字段联动与模板复用 | 已完成主体 |
 | GAP-08 | 节点排空与故障拓扑 | ✅ 已实现 PDB 感知排空，以及 Pod/工作负载/Service/Ingress/Node/PVC/PV/CronJob 高频关系拓扑 | Lens/Headlamp 有更完整资源关系和排障入口 | 常规维护和故障对象跳转已有闭环；超大关系图与分批策略仍可增强 | 后续补关系图可视化、跨节点影响面和更细分批排空 | 已完成主体 |
 | GAP-09 | RBAC、网络策略、弹性资源视图 | ✅ 治理入口覆盖 ServiceAccount、Role、Binding、NetworkPolicy、HPA、PDB、Quota、LimitRange、PriorityClass；已支持当前身份 can-i 解释 | Headlamp、Lens、平台产品 | 已可查看高频治理对象、关键关系并解释访问拒绝 | 后续补 VPA 和更深的关联导航 | 已完成主体 |
+| GAP-21 | Gateway API 与网络连通性诊断 | ✅ 动态发现 GatewayClass/Gateway/HTTPRoute/GRPCRoute；NetworkPolicy 双向规则、默认拒绝、DNS 风险与匹配 Pod 解释；Pod → Service 的 DNS、端口、EndpointSlice 和策略静态推演；Istio/Linkerd 只读发现入口 | Headlamp、Lens 及云厂商控制台提供网关或网络策略视图，但深度连通性解释通常依赖专有产品 | 已覆盖日常网关发布、策略排障和 Service 不可达定位的主要路径 | 后续评估真实探测、Mesh 数据面拓扑和多集群诊断；不得以静态结果宣称真实网络必然可达 | 已完成主体 |
 
 按当前实现重新估算，P0 主体已闭环；剩余主要是超大集群索引、更深关系图、更细分批排空、Release 并发操作锁和 OCI 供应链证明验证，约 4–8 人周。该区间仍只用于量级判断，实际排期需要结合安全评审和真实集群验证。
 

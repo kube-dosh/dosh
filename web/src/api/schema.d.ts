@@ -7826,6 +7826,149 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/network/gateway-api": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Discover Gateway API classes, gateways and routes
+         * @description Uses runtime API Discovery for gateway.networking.k8s.io. Missing CRDs return available=false instead of 404. This endpoint is read-only and performs no writes or network probes.
+         */
+        get: {
+            parameters: {
+                query?: {
+                    namespace?: components["parameters"]["Namespace"];
+                    q?: components["parameters"]["Search"];
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Gateway API inventory with conditions, listeners, parent references and backend rules */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["GatewayAPIOverview"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+                503: components["responses"]["DependencyUnavailable"];
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/network/policies": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Explain NetworkPolicy selectors, rules, isolation and DNS warnings
+         * @description Returns transport-neutral policy rules, matched Pod counts when a namespace is selected, default-deny warnings and DNS egress checks. No policy is modified.
+         */
+        get: {
+            parameters: {
+                query?: {
+                    namespace?: components["parameters"]["Namespace"];
+                    q?: components["parameters"]["Search"];
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description NetworkPolicy overview */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["NetworkPolicyOverview"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+                503: components["responses"]["DependencyUnavailable"];
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/network/connectivity": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Statically diagnose Pod to Service connectivity
+         * @description Resolves Service DNS and ports, inspects EndpointSlices and evaluates source Egress and target Ingress NetworkPolicy. The result is a static API-object analysis and does not send probe packets. CNI enforcement differences must still be verified separately.
+         */
+        get: {
+            parameters: {
+                query: {
+                    sourceNamespace: string;
+                    sourcePod: string;
+                    destinationNamespace: string;
+                    destinationService: string;
+                    port: number;
+                    protocol?: "TCP" | "UDP" | "SCTP";
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Connectivity diagnosis */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ConnectivityDiagnosis"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+                404: components["responses"]["NotFound"];
+                503: components["responses"]["DependencyUnavailable"];
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -10439,6 +10582,227 @@ export interface components {
             notes?: string;
             message?: string;
             source?: string;
+        };
+        GatewayAPIAddress: {
+            type: string;
+            value: string;
+        };
+        GatewayAPIListener: {
+            name: string;
+            protocol: string;
+            /** Format: int32 */
+            port: number;
+            hostname?: string;
+            tlsMode?: string;
+            allowedRoutes?: string;
+            conditions?: components["schemas"]["Condition"][];
+        };
+        GatewayClassSummary: {
+            name: string;
+            controller: string;
+            status: string;
+            conditions?: components["schemas"]["Condition"][];
+            /** Format: date-time */
+            createdAt: string;
+            resourceVersion?: string;
+            apiVersion: string;
+            resource: string;
+        };
+        GatewaySummary: {
+            name: string;
+            namespace: string;
+            className: string;
+            addresses?: components["schemas"]["GatewayAPIAddress"][];
+            listeners?: components["schemas"]["GatewayAPIListener"][];
+            conditions?: components["schemas"]["Condition"][];
+            status: string;
+            /** Format: date-time */
+            createdAt: string;
+            resourceVersion?: string;
+            apiVersion: string;
+            resource: string;
+        };
+        GatewayParentReference: {
+            group?: string;
+            kind?: string;
+            namespace?: string;
+            name: string;
+            sectionName?: string;
+            /** Format: int32 */
+            port?: number;
+        };
+        GatewayRouteBackend: {
+            group?: string;
+            kind?: string;
+            namespace?: string;
+            name: string;
+            port?: string;
+            /** Format: int32 */
+            weight?: number;
+        };
+        GatewayRouteMatch: {
+            path?: string;
+            pathType?: string;
+            method?: string;
+            headers?: string[];
+            query?: string[];
+        };
+        GatewayRouteRule: {
+            matches?: components["schemas"]["GatewayRouteMatch"][];
+            filters?: string[];
+            backends?: components["schemas"]["GatewayRouteBackend"][];
+        };
+        GatewayRouteSummary: {
+            kind: string;
+            name: string;
+            namespace: string;
+            hostnames?: string[];
+            parentRefs?: components["schemas"]["GatewayParentReference"][];
+            rules?: components["schemas"]["GatewayRouteRule"][];
+            conditions?: components["schemas"]["Condition"][];
+            status: string;
+            /** Format: date-time */
+            createdAt: string;
+            resourceVersion?: string;
+            apiVersion: string;
+            resource: string;
+        };
+        GatewayAPIOverview: {
+            available: boolean;
+            version?: string;
+            warnings?: string[];
+            classes: components["schemas"]["GatewayClassSummary"][];
+            gateways: components["schemas"]["GatewaySummary"][];
+            routes: components["schemas"]["GatewayRouteSummary"][];
+            /** Format: date-time */
+            generatedAt: string;
+        };
+        LabelSelectorRequirement: {
+            key: string;
+            operator: string;
+            values?: string[];
+        };
+        NetworkPolicyIPBlock: {
+            cidr: string;
+            except?: string[];
+        };
+        NetworkPolicyPeer: {
+            podSelector?: {
+                [key: string]: string;
+            };
+            podSelectorExpressions?: components["schemas"]["LabelSelectorRequirement"][];
+            namespaceSelector?: {
+                [key: string]: string;
+            };
+            namespaceSelectorExpressions?: components["schemas"]["LabelSelectorRequirement"][];
+            ipBlock?: components["schemas"]["NetworkPolicyIPBlock"];
+        };
+        NetworkPolicyPort: {
+            protocol: string;
+            port?: string;
+            /** Format: int32 */
+            endPort?: number;
+        };
+        NetworkPolicyRule: {
+            peers?: components["schemas"]["NetworkPolicyPeer"][];
+            ports?: components["schemas"]["NetworkPolicyPort"][];
+        };
+        NetworkPolicySummary: {
+            name: string;
+            namespace: string;
+            podSelector: {
+                [key: string]: string;
+            };
+            podSelectorExpressions?: components["schemas"]["LabelSelectorRequirement"][];
+            policyTypes: string[];
+            ingress: components["schemas"]["NetworkPolicyRule"][];
+            egress: components["schemas"]["NetworkPolicyRule"][];
+            matchedPods: number;
+            warnings?: string[];
+            resourceVersion?: string;
+            /** Format: date-time */
+            createdAt: string;
+            apiVersion: string;
+            resource: string;
+        };
+        NetworkPolicyOverview: {
+            items: components["schemas"]["NetworkPolicySummary"][];
+            warnings?: string[];
+            /** Format: date-time */
+            generatedAt: string;
+        };
+        ConnectivitySource: {
+            name: string;
+            namespace: string;
+            ip?: string;
+            labels?: {
+                [key: string]: string;
+            };
+            status?: string;
+        };
+        ConnectivityDestination: {
+            name: string;
+            namespace: string;
+            type: string;
+            clusterIP: string;
+            headless: boolean;
+            externalName?: string;
+            selector?: {
+                [key: string]: string;
+            };
+        };
+        ConnectivityDNS: {
+            name: string;
+            clusterIP?: string;
+            externalName?: string;
+            headless: boolean;
+            explanation: string;
+        };
+        ConnectivityPortMapping: {
+            /** Format: int32 */
+            servicePort: number;
+            targetPort: string;
+            protocol: string;
+        };
+        ConnectivityCheck: {
+            id: string;
+            label: string;
+            status: string;
+            message: string;
+        };
+        ConnectivityPolicyDecision: {
+            name: string;
+            namespace: string;
+            direction: string;
+            selected: boolean;
+            allowed: boolean;
+            reason: string;
+        };
+        ConnectivityEndpoint: {
+            pod?: string;
+            podIP?: string;
+            ready: boolean;
+            egressAllowed?: boolean;
+            ingressAllowed?: boolean;
+            allowed: string;
+            reasons?: string[];
+        };
+        ConnectivityDiagnosis: {
+            /** @enum {string} */
+            verdict: "allowed" | "degraded" | "blocked" | "unknown";
+            summary: string;
+            source: components["schemas"]["ConnectivitySource"];
+            destination: components["schemas"]["ConnectivityDestination"];
+            dns: components["schemas"]["ConnectivityDNS"];
+            port: components["schemas"]["ConnectivityPortMapping"];
+            endpoints: components["schemas"]["ConnectivityEndpoint"][];
+            checks: components["schemas"]["ConnectivityCheck"][];
+            egressPolicies: components["schemas"]["ConnectivityPolicyDecision"][];
+            ingressPolicies: components["schemas"]["ConnectivityPolicyDecision"][];
+            findings: components["schemas"]["DiagnosisFinding"][];
+            warnings?: string[];
+            /** Format: date-time */
+            generatedAt: string;
         };
     };
     responses: {

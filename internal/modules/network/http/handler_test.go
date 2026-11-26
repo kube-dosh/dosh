@@ -38,6 +38,13 @@ type httpNetworkRepository struct {
 	lastCreate          domain.ServiceCreateSpec
 	lastUpdate          domain.ServiceUpdateSpec
 	lastDeleteResource  string
+	gatewayOverview     domain.GatewayAPIOverview
+	networkPolicies     []domain.NetworkPolicySummary
+	networkPolicyWarns  []string
+	namespaceMetadata   domain.Namespace
+	pod                 domain.PodDetail
+	pods                []domain.PodSummary
+	analysisErr         error
 }
 
 func (r *httpNetworkRepository) ListServices(_ context.Context, query domain.ListQuery) ([]domain.ServiceSummary, error) {
@@ -106,6 +113,26 @@ func (r *httpNetworkRepository) ListIngressClasses(_ context.Context, query doma
 func (r *httpNetworkRepository) ListIngressClassesPage(ctx context.Context, query domain.ListQuery, page domain.PageRequest) (domain.PageResult[domain.IngressClassSummary], error) {
 	items, err := r.ListIngressClasses(ctx, query)
 	return domain.PaginateSlice(items, page), err
+}
+
+func (r *httpNetworkRepository) GatewayAPIOverview(context.Context, string) (domain.GatewayAPIOverview, error) {
+	return r.gatewayOverview, r.analysisErr
+}
+
+func (r *httpNetworkRepository) ListNetworkPolicies(context.Context, string) ([]domain.NetworkPolicySummary, []string, error) {
+	return r.networkPolicies, r.networkPolicyWarns, r.analysisErr
+}
+
+func (r *httpNetworkRepository) GetNamespaceMetadata(context.Context, string) (domain.Namespace, error) {
+	return r.namespaceMetadata, r.analysisErr
+}
+
+func (r *httpNetworkRepository) GetPod(context.Context, string, string) (domain.PodDetail, error) {
+	return r.pod, r.analysisErr
+}
+
+func (r *httpNetworkRepository) ListPods(context.Context, domain.ListQuery) ([]domain.PodSummary, error) {
+	return r.pods, r.analysisErr
 }
 
 func networkTestRouter(repo *httpNetworkRepository) http.Handler {
@@ -268,5 +295,51 @@ func TestNetworkServiceWriteRoutesValidateAndRequirePermission(t *testing.T) {
 	response = networkRequestMethod(router, http.MethodDelete, "/services/prod/api", "")
 	if response.Code != http.StatusForbidden || repo.deleteCalls != 0 {
 		t.Fatalf("forbidden delete status = %d calls = %d body = %s", response.Code, repo.deleteCalls, response.Body.String())
+	}
+}
+
+func TestNetworkAnalysisRoutesExposeGatewayPoliciesAndConnectivity(t *testing.T) {
+	repo := &httpNetworkRepository{
+		gatewayOverview: domain.GatewayAPIOverview{
+			Available: true, Version: "v1", Classes: []domain.GatewayClassSummary{{Name: "public"}},
+			Gateways: []domain.GatewaySummary{{Name: "edge", Namespace: "prod", Status: "Ready"}},
+			Routes:   []domain.GatewayRouteSummary{{Kind: "HTTPRoute", Name: "web", Namespace: "prod", Status: "Ready"}},
+		},
+		networkPolicies:    []domain.NetworkPolicySummary{{Name: "allow-web", Namespace: "prod", PodSelector: map[string]string{"app": "api"}, PolicyTypes: []string{"Ingress"}}},
+		networkPolicyWarns: []string{"policy warning"},
+		namespaceMetadata:  domain.Namespace{Name: "prod", Labels: map[string]string{"team": "platform"}},
+		pod: domain.PodDetail{
+			PodSummary: domain.PodSummary{Name: "web-0", Namespace: "prod", IP: "10.0.0.20", Labels: map[string]string{"app": "web"}},
+			Containers: []domain.Container{{Name: "web", Ports: []domain.ContainerPort{{Name: "http", Protocol: "TCP", Port: 8080}}}},
+		},
+		service: domain.ServiceDetail{
+			ServiceSummary: domain.ServiceSummary{Name: "web", Namespace: "prod", Type: "ClusterIP", ClusterIP: "10.96.0.20", Ports: []domain.ServicePort{{Name: "http", Protocol: "TCP", Port: 80, TargetPort: "http"}}},
+			Endpoints:      []domain.ServiceEndpoint{{Addresses: []string{"10.0.0.20"}, Ready: true, TargetKind: "Pod", TargetName: "web-0", TargetNamespace: "prod"}},
+		},
+	}
+	router := networkTestRouter(repo)
+	response := networkRequest(router, "/network/gateway-api?namespace=prod&q=web")
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"name":"web"`) || !strings.Contains(response.Body.String(), `"available":true`) {
+		t.Fatalf("gateway-api status = %d body = %s", response.Code, response.Body.String())
+	}
+	response = networkRequest(router, "/network/policies?namespace=prod&q=allow")
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"name":"allow-web"`) || !strings.Contains(response.Body.String(), `"policy warning"`) {
+		t.Fatalf("policies status = %d body = %s", response.Code, response.Body.String())
+	}
+	response = networkRequest(router, "/network/connectivity?sourceNamespace=prod&sourcePod=web-0&destinationNamespace=prod&destinationService=web&port=80&protocol=TCP")
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"verdict":"allowed"`) || !strings.Contains(response.Body.String(), `"name":"web.prod.svc"`) {
+		t.Fatalf("connectivity status = %d body = %s", response.Code, response.Body.String())
+	}
+}
+
+func TestNetworkConnectivityRejectsInvalidPortAndMissingIdentity(t *testing.T) {
+	router := networkTestRouter(&httpNetworkRepository{})
+	response := networkRequest(router, "/network/connectivity?sourceNamespace=prod&sourcePod=web-0&destinationNamespace=prod&destinationService=web&port=not-a-port")
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("invalid port status = %d body = %s", response.Code, response.Body.String())
+	}
+	response = networkRequest(router, "/network/connectivity?sourceNamespace=prod&sourcePod=web-0&destinationNamespace=prod&destinationService=web&port=80&protocol=HTTP")
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("invalid protocol status = %d body = %s", response.Code, response.Body.String())
 	}
 }

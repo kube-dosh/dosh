@@ -115,7 +115,7 @@ func TestModuleRoutesAreScoped(t *testing.T) {
 		{name: "nodes", mount: deps.nodes.Mount, prefixes: []string{"/nodes", "/namespaces"}},
 		{name: "workloads", mount: deps.workloads.Mount, prefixes: []string{"/workloads", "/pods", "/services", "/tunnels"}},
 		{name: "events", mount: deps.events.Mount, prefixes: []string{"/events"}},
-		{name: "network", mount: deps.network.Mount, prefixes: []string{"/services", "/ingresses", "/ingressclasses"}},
+		{name: "network", mount: deps.network.Mount, prefixes: []string{"/services", "/ingresses", "/ingressclasses", "/network"}},
 		{name: "configuration", mount: deps.configuration.Mount, prefixes: []string{"/configmaps", "/secrets"}},
 		{name: "diagnostics", mount: deps.diagnostics.Mount, prefixes: []string{"/diagnostics"}},
 		{name: "certificates", mount: deps.certificates.Mount, prefixes: []string{"/certificate"}},

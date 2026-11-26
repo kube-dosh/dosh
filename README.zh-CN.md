@@ -56,7 +56,7 @@ Dosh 不替代 Kubernetes，也不绕过 Kubernetes。所有身份、权限和�
 | Helm | 管理员登记受控 HTTP/HTTPS 或 OCI Chart 仓库、可搜索目录、Chart 详情、固定版本与 SHA-256 校验、values.schema.json 预检、安装/升级计划审阅和操作记录；支持从 Chart 目录更换版本升级已有 Release，也支持从 Helm Secret 查看 Release、values、渲染清单、Notes、warning、revision 历史、任意两个 revision 间的 values/清单 Diff，以及受控回滚和增量 Values 升级。常见敏感键与 Secret 载荷在服务端遮蔽；安装、升级、卸载和回滚均强制输入 Release 名称确认，并经过 Kubernetes RBAC、只读模式、impersonation 和审计。 |
 | 权限检查 | 解释当前身份的 SubjectAccessReview 结果，区分 Dosh 只读模式与 RBAC 拒绝，并生成对应的 `kubectl auth can-i` 命令 |
 | 弹性与可用性 | 独立的 HPA 与 PDB 管理流程：CPU/内存扩缩目标、副本上下限、当前指标与 Condition 解释、minAvailable/maxUnavailable 中断预算、允许驱逐与健康副本说明、可搜索工作负载选择、创建前 Dry Run、基于 resourceVersion 的并发保护、按 RBAC 显隐操作，以及带审计的创建/更新/删除 |
-| 网络 | Service 与 Ingress 列表和详情；按权限创建、编辑、删除 ClusterIP、NodePort、LoadBalancer 和 Ingress |
+| 网络 | Service 与 Ingress 列表和详情；按权限创建、编辑、删除 ClusterIP、NodePort、LoadBalancer 和 Ingress；动态发现 GatewayClass、Gateway、HTTPRoute、GRPCRoute；解释 NetworkPolicy 的 selector、默认拒绝、DNS 风险与双向规则；静态推演 Pod → Service 的 DNS、端口、EndpointSlice 和 Egress/Ingress 策略路径；识别 Istio/Linkerd 并提供通用资源入口，不托管 Service Mesh 控制面 |
 | 配置与密钥 | ConfigMap、Secret 的查看、创建、编辑、删除、数据查看和 YAML；Secret 数据仅对有权限且经过审计的请求返回 |
 | 存储 | StorageClass、CSI PersistentVolume、PVC 的结构化创建/编辑/删除；PVC 扩容前置检查与进度、回收与绑定影响提示；CSI VolumeSnapshot 列表、创建、删除和快照恢复；未安装快照 CRD 时自动降级并给出明确说明 |
 | 命名空间 | 创建、详情、YAML 和受保护的级联删除；`default` 与 `kube-*` 始终拒绝删除 |

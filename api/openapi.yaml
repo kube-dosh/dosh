@@ -4202,6 +4202,82 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "503": { $ref: "#/components/responses/DependencyUnavailable" }
+  /api/v1/network/gateway-api:
+    get:
+      tags: [network]
+      summary: Discover Gateway API classes, gateways and routes
+      description: Uses runtime API Discovery for gateway.networking.k8s.io. Missing CRDs return available=false instead of 404. This endpoint is read-only and performs no writes or network probes.
+      parameters:
+        - { $ref: "#/components/parameters/Namespace" }
+        - { $ref: "#/components/parameters/Search" }
+      responses:
+        "200":
+          description: Gateway API inventory with conditions, listeners, parent references and backend rules
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/GatewayAPIOverview" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
+  /api/v1/network/policies:
+    get:
+      tags: [network]
+      summary: Explain NetworkPolicy selectors, rules, isolation and DNS warnings
+      description: Returns transport-neutral policy rules, matched Pod counts when a namespace is selected, default-deny warnings and DNS egress checks. No policy is modified.
+      parameters:
+        - { $ref: "#/components/parameters/Namespace" }
+        - { $ref: "#/components/parameters/Search" }
+      responses:
+        "200":
+          description: NetworkPolicy overview
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/NetworkPolicyOverview" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
+  /api/v1/network/connectivity:
+    get:
+      tags: [network]
+      summary: Statically diagnose Pod to Service connectivity
+      description: Resolves Service DNS and ports, inspects EndpointSlices and evaluates source Egress and target Ingress NetworkPolicy. The result is a static API-object analysis and does not send probe packets. CNI enforcement differences must still be verified separately.
+      parameters:
+        - name: sourceNamespace
+          in: query
+          required: true
+          schema: { type: string, maxLength: 63 }
+        - name: sourcePod
+          in: query
+          required: true
+          schema: { type: string, maxLength: 253 }
+        - name: destinationNamespace
+          in: query
+          required: true
+          schema: { type: string, maxLength: 63 }
+        - name: destinationService
+          in: query
+          required: true
+          schema: { type: string, maxLength: 253 }
+        - name: port
+          in: query
+          required: true
+          schema: { type: integer, minimum: 1, maximum: 65535 }
+        - name: protocol
+          in: query
+          schema: { type: string, enum: [TCP, UDP, SCTP], default: TCP }
+      responses:
+        "200":
+          description: Connectivity diagnosis
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ConnectivityDiagnosis" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
 components:
   securitySchemes:
     cookieAuth:
@@ -7620,3 +7696,333 @@ components:
         notes: { type: string }
         message: { type: string }
         source: { type: string }
+    GatewayAPIAddress:
+      type: object
+      required: [type, value]
+      properties:
+        type: { type: string }
+        value: { type: string }
+    GatewayAPIListener:
+      type: object
+      required: [name, protocol, port]
+      properties:
+        name: { type: string }
+        protocol: { type: string }
+        port: { type: integer, format: int32, minimum: 1, maximum: 65535 }
+        hostname: { type: string }
+        tlsMode: { type: string }
+        allowedRoutes: { type: string }
+        conditions:
+          type: array
+          items: { $ref: "#/components/schemas/Condition" }
+    GatewayClassSummary:
+      type: object
+      required: [name, controller, status, createdAt, apiVersion, resource]
+      properties:
+        name: { type: string }
+        controller: { type: string }
+        status: { type: string }
+        conditions:
+          type: array
+          items: { $ref: "#/components/schemas/Condition" }
+        createdAt: { type: string, format: date-time }
+        resourceVersion: { type: string }
+        apiVersion: { type: string }
+        resource: { type: string }
+    GatewaySummary:
+      type: object
+      required: [name, namespace, className, status, createdAt, apiVersion, resource]
+      properties:
+        name: { type: string }
+        namespace: { type: string }
+        className: { type: string }
+        addresses:
+          type: array
+          items: { $ref: "#/components/schemas/GatewayAPIAddress" }
+        listeners:
+          type: array
+          items: { $ref: "#/components/schemas/GatewayAPIListener" }
+        conditions:
+          type: array
+          items: { $ref: "#/components/schemas/Condition" }
+        status: { type: string }
+        createdAt: { type: string, format: date-time }
+        resourceVersion: { type: string }
+        apiVersion: { type: string }
+        resource: { type: string }
+    GatewayParentReference:
+      type: object
+      required: [name]
+      properties:
+        group: { type: string }
+        kind: { type: string }
+        namespace: { type: string }
+        name: { type: string }
+        sectionName: { type: string }
+        port: { type: integer, format: int32 }
+    GatewayRouteBackend:
+      type: object
+      required: [name]
+      properties:
+        group: { type: string }
+        kind: { type: string }
+        namespace: { type: string }
+        name: { type: string }
+        port: { type: string }
+        weight: { type: integer, format: int32 }
+    GatewayRouteMatch:
+      type: object
+      properties:
+        path: { type: string }
+        pathType: { type: string }
+        method: { type: string }
+        headers:
+          type: array
+          items: { type: string }
+        query:
+          type: array
+          items: { type: string }
+    GatewayRouteRule:
+      type: object
+      properties:
+        matches:
+          type: array
+          items: { $ref: "#/components/schemas/GatewayRouteMatch" }
+        filters:
+          type: array
+          items: { type: string }
+        backends:
+          type: array
+          items: { $ref: "#/components/schemas/GatewayRouteBackend" }
+    GatewayRouteSummary:
+      type: object
+      required: [kind, name, namespace, status, createdAt, apiVersion, resource]
+      properties:
+        kind: { type: string }
+        name: { type: string }
+        namespace: { type: string }
+        hostnames:
+          type: array
+          items: { type: string }
+        parentRefs:
+          type: array
+          items: { $ref: "#/components/schemas/GatewayParentReference" }
+        rules:
+          type: array
+          items: { $ref: "#/components/schemas/GatewayRouteRule" }
+        conditions:
+          type: array
+          items: { $ref: "#/components/schemas/Condition" }
+        status: { type: string }
+        createdAt: { type: string, format: date-time }
+        resourceVersion: { type: string }
+        apiVersion: { type: string }
+        resource: { type: string }
+    GatewayAPIOverview:
+      type: object
+      required: [available, classes, gateways, routes, generatedAt]
+      properties:
+        available: { type: boolean }
+        version: { type: string }
+        warnings:
+          type: array
+          items: { type: string }
+        classes:
+          type: array
+          items: { $ref: "#/components/schemas/GatewayClassSummary" }
+        gateways:
+          type: array
+          items: { $ref: "#/components/schemas/GatewaySummary" }
+        routes:
+          type: array
+          items: { $ref: "#/components/schemas/GatewayRouteSummary" }
+        generatedAt: { type: string, format: date-time }
+    LabelSelectorRequirement:
+      type: object
+      required: [key, operator]
+      properties:
+        key: { type: string }
+        operator: { type: string }
+        values:
+          type: array
+          items: { type: string }
+    NetworkPolicyIPBlock:
+      type: object
+      required: [cidr]
+      properties:
+        cidr: { type: string }
+        except:
+          type: array
+          items: { type: string }
+    NetworkPolicyPeer:
+      type: object
+      properties:
+        podSelector:
+          type: object
+          additionalProperties: { type: string }
+        podSelectorExpressions:
+          type: array
+          items: { $ref: "#/components/schemas/LabelSelectorRequirement" }
+        namespaceSelector:
+          type: object
+          additionalProperties: { type: string }
+        namespaceSelectorExpressions:
+          type: array
+          items: { $ref: "#/components/schemas/LabelSelectorRequirement" }
+        ipBlock: { $ref: "#/components/schemas/NetworkPolicyIPBlock" }
+    NetworkPolicyPort:
+      type: object
+      required: [protocol]
+      properties:
+        protocol: { type: string }
+        port: { type: string }
+        endPort: { type: integer, format: int32 }
+    NetworkPolicyRule:
+      type: object
+      properties:
+        peers:
+          type: array
+          items: { $ref: "#/components/schemas/NetworkPolicyPeer" }
+        ports:
+          type: array
+          items: { $ref: "#/components/schemas/NetworkPolicyPort" }
+    NetworkPolicySummary:
+      type: object
+      required: [name, namespace, podSelector, policyTypes, ingress, egress, matchedPods, createdAt, apiVersion, resource]
+      properties:
+        name: { type: string }
+        namespace: { type: string }
+        podSelector:
+          type: object
+          additionalProperties: { type: string }
+        podSelectorExpressions:
+          type: array
+          items: { $ref: "#/components/schemas/LabelSelectorRequirement" }
+        policyTypes:
+          type: array
+          items: { type: string }
+        ingress:
+          type: array
+          items: { $ref: "#/components/schemas/NetworkPolicyRule" }
+        egress:
+          type: array
+          items: { $ref: "#/components/schemas/NetworkPolicyRule" }
+        matchedPods: { type: integer, minimum: 0 }
+        warnings:
+          type: array
+          items: { type: string }
+        resourceVersion: { type: string }
+        createdAt: { type: string, format: date-time }
+        apiVersion: { type: string }
+        resource: { type: string }
+    NetworkPolicyOverview:
+      type: object
+      required: [items, generatedAt]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/NetworkPolicySummary" }
+        warnings:
+          type: array
+          items: { type: string }
+        generatedAt: { type: string, format: date-time }
+    ConnectivitySource:
+      type: object
+      required: [name, namespace]
+      properties:
+        name: { type: string }
+        namespace: { type: string }
+        ip: { type: string }
+        labels:
+          type: object
+          additionalProperties: { type: string }
+        status: { type: string }
+    ConnectivityDestination:
+      type: object
+      required: [name, namespace, type, clusterIP, headless]
+      properties:
+        name: { type: string }
+        namespace: { type: string }
+        type: { type: string }
+        clusterIP: { type: string }
+        headless: { type: boolean }
+        externalName: { type: string }
+        selector:
+          type: object
+          additionalProperties: { type: string }
+    ConnectivityDNS:
+      type: object
+      required: [name, headless, explanation]
+      properties:
+        name: { type: string }
+        clusterIP: { type: string }
+        externalName: { type: string }
+        headless: { type: boolean }
+        explanation: { type: string }
+    ConnectivityPortMapping:
+      type: object
+      required: [servicePort, targetPort, protocol]
+      properties:
+        servicePort: { type: integer, format: int32 }
+        targetPort: { type: string }
+        protocol: { type: string }
+    ConnectivityCheck:
+      type: object
+      required: [id, label, status, message]
+      properties:
+        id: { type: string }
+        label: { type: string }
+        status: { type: string }
+        message: { type: string }
+    ConnectivityPolicyDecision:
+      type: object
+      required: [name, namespace, direction, selected, allowed, reason]
+      properties:
+        name: { type: string }
+        namespace: { type: string }
+        direction: { type: string }
+        selected: { type: boolean }
+        allowed: { type: boolean }
+        reason: { type: string }
+    ConnectivityEndpoint:
+      type: object
+      required: [ready, allowed]
+      properties:
+        pod: { type: string }
+        podIP: { type: string }
+        ready: { type: boolean }
+        egressAllowed: { type: boolean }
+        ingressAllowed: { type: boolean }
+        allowed: { type: string }
+        reasons:
+          type: array
+          items: { type: string }
+    ConnectivityDiagnosis:
+      type: object
+      required: [verdict, summary, source, destination, dns, port, endpoints, checks, egressPolicies, ingressPolicies, findings, generatedAt]
+      properties:
+        verdict: { type: string, enum: [allowed, degraded, blocked, unknown] }
+        summary: { type: string }
+        source: { $ref: "#/components/schemas/ConnectivitySource" }
+        destination: { $ref: "#/components/schemas/ConnectivityDestination" }
+        dns: { $ref: "#/components/schemas/ConnectivityDNS" }
+        port: { $ref: "#/components/schemas/ConnectivityPortMapping" }
+        endpoints:
+          type: array
+          items: { $ref: "#/components/schemas/ConnectivityEndpoint" }
+        checks:
+          type: array
+          items: { $ref: "#/components/schemas/ConnectivityCheck" }
+        egressPolicies:
+          type: array
+          items: { $ref: "#/components/schemas/ConnectivityPolicyDecision" }
+        ingressPolicies:
+          type: array
+          items: { $ref: "#/components/schemas/ConnectivityPolicyDecision" }
+        findings:
+          type: array
+          items: { $ref: "#/components/schemas/DiagnosisFinding" }
+        warnings:
+          type: array
+          items: { type: string }
+        generatedAt: { type: string, format: date-time }

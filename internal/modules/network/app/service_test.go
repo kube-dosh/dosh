@@ -33,6 +33,16 @@ type networkRepository struct {
 	lastIngressUpdateNS   string
 	lastIngressUpdateName string
 	lastIngressDeleteRV   string
+	gatewayOverview       domain.GatewayAPIOverview
+	networkPolicies       []domain.NetworkPolicySummary
+	networkPolicyWarnings []string
+	namespaceMetadata     domain.Namespace
+	pod                   domain.PodDetail
+	pods                  []domain.PodSummary
+	podsByKey             map[string]domain.PodDetail
+	namespacesByKey       map[string]domain.Namespace
+	policiesByNamespace   map[string][]domain.NetworkPolicySummary
+	analysisErr           error
 }
 
 func (r *networkRepository) ListServices(context.Context, domain.ListQuery) ([]domain.ServiceSummary, error) {
@@ -98,6 +108,38 @@ func (r *networkRepository) ListIngressClasses(context.Context, domain.ListQuery
 func (r *networkRepository) ListIngressClassesPage(ctx context.Context, query domain.ListQuery, page domain.PageRequest) (domain.PageResult[domain.IngressClassSummary], error) {
 	items, err := r.ListIngressClasses(ctx, query)
 	return domain.PaginateSlice(items, page), err
+}
+
+func (r *networkRepository) GatewayAPIOverview(context.Context, string) (domain.GatewayAPIOverview, error) {
+	return r.gatewayOverview, r.analysisErr
+}
+
+func (r *networkRepository) ListNetworkPolicies(_ context.Context, namespace string) ([]domain.NetworkPolicySummary, []string, error) {
+	if r.policiesByNamespace != nil {
+		return r.policiesByNamespace[namespace], r.networkPolicyWarnings, r.analysisErr
+	}
+	return r.networkPolicies, r.networkPolicyWarnings, r.analysisErr
+}
+
+func (r *networkRepository) GetNamespaceMetadata(_ context.Context, name string) (domain.Namespace, error) {
+	if r.namespacesByKey != nil {
+		return r.namespacesByKey[name], r.analysisErr
+	}
+	return r.namespaceMetadata, r.analysisErr
+}
+
+func (r *networkRepository) GetPod(_ context.Context, namespace, name string) (domain.PodDetail, error) {
+	if r.podsByKey != nil {
+		if item, ok := r.podsByKey[namespace+"/"+name]; ok {
+			return item, r.analysisErr
+		}
+		return domain.PodDetail{}, domain.ErrNotFound
+	}
+	return r.pod, r.analysisErr
+}
+
+func (r *networkRepository) ListPods(context.Context, domain.ListQuery) ([]domain.PodSummary, error) {
+	return r.pods, r.analysisErr
 }
 
 func TestNetworkServiceListsResourcesAndFailures(t *testing.T) {
@@ -386,5 +428,112 @@ func TestNetworkIngressWritesValidateAuthAndResourceVersions(t *testing.T) {
 	}
 	if repo.ingressCreateCalls != before {
 		t.Fatalf("invalid ingress reached repository: %d -> %d", before, repo.ingressCreateCalls)
+	}
+}
+
+func TestGatewayAPIAndPolicyViewsFilterWithoutLosingWarnings(t *testing.T) {
+	t.Parallel()
+	repo := &networkRepository{
+		gatewayOverview: domain.GatewayAPIOverview{
+			Available: true, Version: "v1", Warnings: []string{"partial discovery"},
+			Classes:  []domain.GatewayClassSummary{{Name: "public", Controller: "example.net/gateway"}, {Name: "internal", Controller: "example.net/private"}},
+			Gateways: []domain.GatewaySummary{{Name: "public-gw", Namespace: "edge", ClassName: "public"}, {Name: "internal-gw", Namespace: "prod", ClassName: "internal"}},
+			Routes: []domain.GatewayRouteSummary{
+				{Kind: "HTTPRoute", Name: "web", Namespace: "edge", Hostnames: []string{"app.example.test"}},
+				{Kind: "HTTPRoute", Name: "api", Namespace: "prod", Hostnames: []string{"api.example.test"}},
+			},
+		},
+		networkPolicies: []domain.NetworkPolicySummary{{
+			Name: "allow-web", Namespace: "prod", PodSelector: map[string]string{"app": "web"}, PolicyTypes: []string{"Ingress"},
+			Ingress: []domain.NetworkPolicyRule{{Peers: []domain.NetworkPolicyPeer{{NamespaceSelector: map[string]string{"team": "platform"}}}}},
+		}},
+		networkPolicyWarnings: []string{"policy warning"},
+	}
+	service := New(repo, networkTestAuthorizer{}, networkTestAuditor{})
+	gateway, err := service.GatewayAPI(context.Background(), "prod", "api.example.test")
+	if err != nil {
+		t.Fatalf("GatewayAPI() error = %v", err)
+	}
+	if len(gateway.Classes) != 0 || len(gateway.Gateways) != 0 || len(gateway.Routes) != 1 || gateway.Routes[0].Name != "api" || len(gateway.Warnings) != 1 {
+		t.Fatalf("GatewayAPI() = %#v", gateway)
+	}
+	policies, err := service.NetworkPolicies(context.Background(), "prod", "team=platform")
+	if err != nil || len(policies.Items) != 1 || len(policies.Warnings) != 1 {
+		t.Fatalf("NetworkPolicies() = %#v, %v", policies, err)
+	}
+}
+
+func connectivityFixture() (*networkRepository, domain.ConnectivityRequest) {
+	source := domain.PodDetail{PodSummary: domain.PodSummary{Name: "client", Namespace: "dev", IP: "10.0.0.10", Labels: map[string]string{"app": "client"}}}
+	target := domain.PodDetail{
+		PodSummary: domain.PodSummary{Name: "web-0", Namespace: "prod", IP: "10.0.0.20", Labels: map[string]string{"app": "web"}},
+		Containers: []domain.Container{{Name: "web", Ports: []domain.ContainerPort{{Name: "http", Protocol: "TCP", Port: 8080}}}},
+	}
+	return &networkRepository{
+		podsByKey: map[string]domain.PodDetail{"dev/client": source, "prod/web-0": target},
+		namespacesByKey: map[string]domain.Namespace{
+			"dev":  {Name: "dev", Labels: map[string]string{"team": "dev"}},
+			"prod": {Name: "prod", Labels: map[string]string{"team": "platform"}},
+		},
+		service: domain.ServiceDetail{
+			ServiceSummary: domain.ServiceSummary{
+				Name: "web", Namespace: "prod", Type: "ClusterIP", ClusterIP: "10.96.0.20", Selector: map[string]string{"app": "web"},
+				Ports: []domain.ServicePort{{Name: "http", Protocol: "TCP", Port: 80, TargetPort: "http"}}, EndpointCount: 1,
+			},
+			Endpoints: []domain.ServiceEndpoint{{Addresses: []string{"10.0.0.20"}, Ready: true, TargetKind: "Pod", TargetName: "web-0", TargetNamespace: "prod"}},
+		},
+	}, domain.ConnectivityRequest{SourceNamespace: "dev", SourcePod: "client", DestinationNamespace: "prod", DestinationService: "web", Port: 80, Protocol: "TCP"}
+}
+
+func TestConnectivityDiagnosisAllowsWhenNoPolicySelectsEndpoints(t *testing.T) {
+	t.Parallel()
+	repo, request := connectivityFixture()
+	service := New(repo, networkTestAuthorizer{}, networkTestAuditor{})
+	result, err := service.DiagnoseConnectivity(context.Background(), domain.Actor{Username: "alice"}, request)
+	if err != nil {
+		t.Fatalf("DiagnoseConnectivity() error = %v", err)
+	}
+	if result.Verdict != "allowed" || len(result.Endpoints) != 1 || result.Endpoints[0].EgressAllowed == nil || !*result.Endpoints[0].EgressAllowed || result.Port.TargetPort != "http" || result.DNS.Name != "web.prod.svc" {
+		t.Fatalf("result = %#v", result)
+	}
+	if result.Port.ServicePort != 80 || result.Endpoints[0].PodIP != "10.0.0.20" {
+		t.Fatalf("result = %#v", result)
+	}
+}
+
+func TestConnectivityDiagnosisBlocksWhenIngressPolicySelectsTarget(t *testing.T) {
+	t.Parallel()
+	repo, request := connectivityFixture()
+	repo.policiesByNamespace = map[string][]domain.NetworkPolicySummary{
+		"prod": {{Name: "deny-web", Namespace: "prod", PodSelector: map[string]string{"app": "web"}, PolicyTypes: []string{"Ingress"}}},
+	}
+	service := New(repo, networkTestAuthorizer{}, networkTestAuditor{})
+	result, err := service.DiagnoseConnectivity(context.Background(), domain.Actor{Username: "alice"}, request)
+	if err != nil {
+		t.Fatalf("DiagnoseConnectivity() error = %v", err)
+	}
+	if result.Verdict != "blocked" || result.Endpoints[0].Allowed != "blocked" || len(result.IngressPolicies) != 1 || result.IngressPolicies[0].Allowed {
+		t.Fatalf("result = %#v", result)
+	}
+}
+
+func TestConnectivityPolicyCrossNamespaceRequiresNamespaceSelector(t *testing.T) {
+	t.Parallel()
+	repo, request := connectivityFixture()
+	repo.policiesByNamespace = map[string][]domain.NetworkPolicySummary{
+		"prod": {{
+			Name: "allow-client", Namespace: "prod", PodSelector: map[string]string{"app": "web"}, PolicyTypes: []string{"Ingress"},
+			Ingress: []domain.NetworkPolicyRule{{Peers: []domain.NetworkPolicyPeer{{PodSelector: map[string]string{"app": "client"}}}}},
+		}},
+	}
+	service := New(repo, networkTestAuthorizer{}, networkTestAuditor{})
+	blocked, err := service.DiagnoseConnectivity(context.Background(), domain.Actor{Username: "alice"}, request)
+	if err != nil || blocked.Verdict != "blocked" {
+		t.Fatalf("podSelector-only result = %#v, %v", blocked, err)
+	}
+	repo.policiesByNamespace["prod"][0].Ingress[0].Peers[0].NamespaceSelector = map[string]string{"team": "dev"}
+	allowed, err := service.DiagnoseConnectivity(context.Background(), domain.Actor{Username: "alice"}, request)
+	if err != nil || allowed.Verdict != "allowed" || !allowed.IngressPolicies[0].Allowed {
+		t.Fatalf("namespaceSelector result = %#v, %v", allowed, err)
 	}
 }

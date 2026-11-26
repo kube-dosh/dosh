@@ -288,6 +288,35 @@ const server = setupServer(
   http.get("/api/v1/ingresses", () => HttpResponse.json({ items: [], meta: { total: 0, page: 1, pageSize: 20, totalPages: 0, filters: {} } })),
   http.get("/api/v1/ingresses/default/web", () => HttpResponse.json(ingressDetail)),
   http.get("/api/v1/ingressclasses", () => HttpResponse.json({ items: [{ name: "nginx", controller: "k8s.io/ingress-nginx", default: true, createdAt: "2026-11-02T00:00:00Z" }], meta: { total: 1 } })),
+  http.get("/api/v1/network/gateway-api", () => HttpResponse.json({
+    available: true,
+    version: "v1",
+    classes: [{ name: "public", controller: "example.net/gateway", status: "Ready", conditions: [{ type: "Accepted", status: "True" }], createdAt: "2026-11-02T00:00:00Z", apiVersion: "gateway.networking.k8s.io/v1", resource: "gatewayclasses" }],
+    gateways: [{ name: "edge", namespace: "default", className: "public", addresses: [{ type: "IPAddress", value: "192.0.2.10" }], listeners: [{ name: "http", protocol: "HTTP", port: 80, hostname: "web.example.test" }], status: "Ready", createdAt: "2026-11-02T00:00:00Z", apiVersion: "gateway.networking.k8s.io/v1", resource: "gateways" }],
+    routes: [{ kind: "HTTPRoute", name: "web", namespace: "default", hostnames: ["web.example.test"], parentRefs: [{ name: "edge", namespace: "default", kind: "Gateway" }], rules: [{ matches: [{ path: "/", pathType: "PathPrefix" }], backends: [{ name: "web", port: "80" }] }], status: "Ready", createdAt: "2026-11-02T00:00:00Z", apiVersion: "gateway.networking.k8s.io/v1", resource: "httproutes" }],
+    generatedAt: "2026-11-02T00:00:00Z",
+  })),
+  http.get("/api/v1/network/policies", () => HttpResponse.json({
+    items: [{
+      name: "web-policy", namespace: "default", podSelector: { app: "web" }, policyTypes: ["Ingress", "Egress"], matchedPods: 1,
+      ingress: [{ peers: [{ namespaceSelector: { team: "platform" } }], ports: [{ protocol: "TCP", port: "80" }] }],
+      egress: [{ peers: [{ podSelector: { tier: "db" } }], ports: [] }],
+      warnings: ["出站策略未明确放行 DNS 53/TCP 或 UDP；源 Pod 的域名解析可能失败"],
+      createdAt: "2026-11-02T00:00:00Z", apiVersion: "networking.k8s.io/v1", resource: "networkpolicies",
+    }],
+    generatedAt: "2026-11-02T00:00:00Z",
+  })),
+  http.get("/api/v1/network/connectivity", () => HttpResponse.json({
+    verdict: "blocked", summary: "目标 Pod Ingress 策略拒绝该流量",
+    source: { name: "web-abcdef-12345", namespace: "default", ip: "10.244.1.10", status: "Running" },
+    destination: { name: "web", namespace: "default", type: "ClusterIP", clusterIP: "10.96.0.10", headless: false },
+    dns: { name: "web.default.svc.cluster.local", clusterIP: "10.96.0.10", headless: false, explanation: "ClusterIP Service 通过 kube-proxy 转发" },
+    port: { servicePort: 80, targetPort: "8080", protocol: "TCP" },
+    endpoints: [{ pod: "web-abcdef-12345", podIP: "10.244.1.10", ready: true, egressAllowed: true, ingressAllowed: false, allowed: "blocked", reasons: ["ingress policy web-policy did not allow the peer"] }],
+    checks: [{ id: "service-port", label: "Service 端口映射", status: "pass", message: "TCP/80 → 8080" }],
+    egressPolicies: [], ingressPolicies: [{ name: "web-policy", namespace: "default", direction: "Ingress", selected: true, allowed: false, reason: "没有匹配的允许规则" }],
+    findings: [], warnings: [], generatedAt: "2026-11-02T00:00:00Z",
+  })),
   http.get("/api/v1/persistentvolumes", () => HttpResponse.json({ items: [], meta: { total: 0, page: 1, pageSize: 20, totalPages: 0, filters: {} } })),
   http.get("/api/v1/storageclasses/data-standard", () => HttpResponse.json(storageClassDetail)),
   http.get("/api/v1/persistentvolumes/pv-data", () => HttpResponse.json(persistentVolumeDetail)),
@@ -2231,6 +2260,42 @@ describe("dosh application", () => {
     fireEvent.mouseDown(ingressTab);
     fireEvent.click(ingressTab);
     expect(await screen.findByText("没有访问权限")).toBeInTheDocument();
+  });
+
+  it("explains NetworkPolicy, discovers Gateway API and diagnoses Service connectivity", async () => {
+    server.use(http.get("/api/v1/services", () => HttpResponse.json({
+      items: [{ name: "web", namespace: "default", type: "ClusterIP", headless: false, clusterIP: "10.96.0.10", externalIP: "", ports: serviceDetail.ports, selector: { app: "web" }, endpointCount: 1, createdAt: "2026-11-02T00:00:00Z" }],
+      meta: { total: 1, totalKnown: true, page: 1, pageSize: 200, totalPages: 1, hasMore: false },
+    })));
+    renderRoute("/network?namespace=default&tab=policies");
+
+    expect(await screen.findByText("default/web-policy")).toBeInTheDocument();
+    expect(screen.getByText(/DNS 53\/TCP/)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "编辑 YAML" })).toHaveAttribute("href", "/resources/networking.k8s.io/v1/networkpolicies/web-policy?namespace=default");
+
+    const gatewayTab = screen.getByRole("tab", { name: "Gateway API" });
+    fireEvent.mouseDown(gatewayTab);
+    fireEvent.click(gatewayTab);
+    expect((await screen.findAllByText("public")).length).toBeGreaterThan(0);
+    expect(screen.getByText("default/edge")).toBeInTheDocument();
+    expect(screen.getByText("HTTPRoute default/web")).toBeInTheDocument();
+
+    const connectivityTab = screen.getByRole("tab", { name: "连通性诊断" });
+    fireEvent.mouseDown(connectivityTab);
+    fireEvent.click(connectivityTab);
+    const sourcePodSelect = await screen.findByRole("combobox", { name: "源 Pod" });
+    await waitFor(() => expect(sourcePodSelect).toBeEnabled());
+    fireEvent.click(sourcePodSelect);
+    fireEvent.click(await screen.findByRole("option", { name: "web-abcdef-12345" }));
+    const targetServiceSelect = screen.getByRole("combobox", { name: "目标 Service" });
+    await waitFor(() => expect(targetServiceSelect).toBeEnabled());
+    fireEvent.click(targetServiceSelect);
+    fireEvent.click(await screen.findByRole("option", { name: "web" }));
+    fireEvent.click(screen.getByRole("button", { name: "开始诊断" }));
+
+    expect(await screen.findByText("目标 Pod Ingress 策略拒绝该流量")).toBeInTheDocument();
+    expect(screen.getByText("被阻断")).toBeInTheDocument();
+    expect(screen.getByText(/ingress policy web-policy/)).toBeInTheDocument();
   });
 
   it("edits and deletes an Ingress from its detail page", async () => {

@@ -22,6 +22,11 @@ type Repository interface {
 	DeleteIngress(ctx context.Context, namespace, name, resourceVersion string) error
 	ListIngressClasses(ctx context.Context, query domain.ListQuery) ([]domain.IngressClassSummary, error)
 	ListIngressClassesPage(ctx context.Context, query domain.ListQuery, page domain.PageRequest) (domain.PageResult[domain.IngressClassSummary], error)
+	GatewayAPIOverview(ctx context.Context, namespace string) (domain.GatewayAPIOverview, error)
+	ListNetworkPolicies(ctx context.Context, namespace string) ([]domain.NetworkPolicySummary, []string, error)
+	GetNamespaceMetadata(ctx context.Context, name string) (domain.Namespace, error)
+	GetPod(ctx context.Context, namespace, name string) (domain.PodDetail, error)
+	ListPods(ctx context.Context, query domain.ListQuery) ([]domain.PodSummary, error)
 }
 
 type Service struct {

@@ -1316,6 +1316,10 @@ async function installApiMocks(page: Page, options: { authenticated?: boolean; a
         { group: "rbac.authorization.k8s.io", version: "v1", resource: "clusterroles", kind: "ClusterRole", namespaced: false, verbs: ["get", "list"] },
         { group: "rbac.authorization.k8s.io", version: "v1", resource: "clusterrolebindings", kind: "ClusterRoleBinding", namespaced: false, verbs: ["get", "list"] },
         { group: "networking.k8s.io", version: "v1", resource: "networkpolicies", kind: "NetworkPolicy", namespaced: true, verbs: ["get", "list"] },
+        { group: "gateway.networking.k8s.io", version: "v1", resource: "gatewayclasses", kind: "GatewayClass", namespaced: false, preferred: true, verbs: ["get", "list"] },
+        { group: "gateway.networking.k8s.io", version: "v1", resource: "gateways", kind: "Gateway", namespaced: true, preferred: true, verbs: ["get", "list"] },
+        { group: "gateway.networking.k8s.io", version: "v1", resource: "httproutes", kind: "HTTPRoute", namespaced: true, preferred: true, verbs: ["get", "list"] },
+        { group: "networking.istio.io", version: "v1", resource: "virtualservices", kind: "VirtualService", namespaced: true, preferred: true, verbs: ["get", "list"] },
         { group: "policy", version: "v1", resource: "poddisruptionbudgets", kind: "PodDisruptionBudget", namespaced: true, verbs: ["get", "list"] },
         { group: "autoscaling", version: "v2", resource: "horizontalpodautoscalers", kind: "HorizontalPodAutoscaler", namespaced: true, verbs: ["get", "list"] },
         { group: "", version: "v1", resource: "resourcequotas", kind: "ResourceQuota", namespaced: true, verbs: ["get", "list"] },
@@ -1872,6 +1876,35 @@ async function installApiMocks(page: Page, options: { authenticated?: boolean; a
       }].filter((item) => item.name.includes(q) || item.controller.includes(q));
       return json(route, list(items));
     }
+    if (path === "/api/v1/network/gateway-api" && method === "GET") return json(route, {
+      available: true,
+      version: "v1",
+      classes: [{ name: "public-gateway", controller: "example.net/gateway", status: "Ready", conditions: [{ type: "Accepted", status: "True", reason: "Accepted" }], createdAt: "2026-11-02T00:00:00Z", apiVersion: "gateway.networking.k8s.io/v1", resource: "gatewayclasses" }],
+      gateways: [{ name: "edge", namespace: "default", className: "public-gateway", addresses: [{ type: "IPAddress", value: "192.0.2.10" }], listeners: [{ name: "http", protocol: "HTTP", port: 80, hostname: "web.example.test" }], status: "Ready", createdAt: "2026-11-02T00:00:00Z", apiVersion: "gateway.networking.k8s.io/v1", resource: "gateways" }],
+      routes: [{ kind: "HTTPRoute", name: "web", namespace: "default", hostnames: ["web.example.test"], parentRefs: [{ name: "edge", namespace: "default", kind: "Gateway" }], rules: [{ matches: [{ path: "/", pathType: "PathPrefix" }], backends: [{ name: "web", port: "80" }] }], status: "Ready", createdAt: "2026-11-02T00:00:00Z", apiVersion: "gateway.networking.k8s.io/v1", resource: "httproutes" }],
+      generatedAt: "2026-11-02T00:00:00Z",
+    });
+    if (path === "/api/v1/network/policies" && method === "GET") return json(route, {
+      items: [{
+        name: "web-policy", namespace: "default", podSelector: { app: "web" }, policyTypes: ["Ingress", "Egress"], matchedPods: 1,
+        ingress: [{ peers: [{ namespaceSelector: { team: "platform" } }], ports: [{ protocol: "TCP", port: "80" }] }],
+        egress: [{ peers: [{ podSelector: { tier: "db" } }], ports: [] }],
+        warnings: ["出站策略未明确放行 DNS 53/TCP 或 UDP；源 Pod 的域名解析可能失败"],
+        createdAt: "2026-11-02T00:00:00Z", apiVersion: "networking.k8s.io/v1", resource: "networkpolicies",
+      }],
+      generatedAt: "2026-11-02T00:00:00Z",
+    });
+    if (path === "/api/v1/network/connectivity" && method === "GET") return json(route, {
+      verdict: "blocked", summary: "目标 Pod Ingress 策略拒绝该流量",
+      source: { name: "web-abcdef-12345", namespace: "default", ip: "10.244.1.10", status: "Running" },
+      destination: { name: "web", namespace: "default", type: "ClusterIP", clusterIP: "10.96.0.10", headless: false },
+      dns: { name: "web.default.svc.cluster.local", clusterIP: "10.96.0.10", headless: false, explanation: "ClusterIP Service 通过 kube-proxy 转发" },
+      port: { servicePort: 80, targetPort: "8080", protocol: "TCP" },
+      endpoints: [{ pod: "web-abcdef-12345", podIP: "10.244.1.10", ready: true, egressAllowed: true, ingressAllowed: false, allowed: "blocked", reasons: ["ingress policy web-policy did not allow the peer"] }],
+      checks: [{ id: "service-port", label: "Service 端口映射", status: "pass", message: "TCP/80 → 8080" }],
+      egressPolicies: [], ingressPolicies: [{ name: "web-policy", namespace: "default", direction: "Ingress", selected: true, allowed: false, reason: "没有匹配的允许规则" }],
+      findings: [], warnings: [], generatedAt: "2026-11-02T00:00:00Z",
+    });
     if (path === "/api/v1/configmaps") return json(route, list([{
       name: "app-config", namespace: "default", keys: ["mode"], dataBytes: 12, createdAt: "2026-11-02T00:00:00Z",
     }]));
@@ -4798,6 +4831,9 @@ const layoutAuditRoutes = [
     { path: "/pods/default/web-abcdef-12345?tab=yaml", name: "pod-yaml" },
     { path: "/network", name: "network" },
     { path: "/network?tab=ingresses", name: "network-ingresses" },
+    { path: "/network?namespace=default&tab=gateway", name: "network-gateway" },
+    { path: "/network?namespace=default&tab=policies", name: "network-policies" },
+    { path: "/network?namespace=default&tab=connectivity", name: "network-connectivity" },
     { path: "/network/services/default/web", name: "service-detail" },
     { path: "/network/ingresses/default/web", name: "ingress-detail" },
     { path: "/configuration", name: "configuration" },
@@ -5865,6 +5901,41 @@ test("网络标签写入 URL 并在刷新后保持", async ({ page }) => {
   await expect(page.getByRole("tab", { name: /Ingress/ })).toHaveAttribute("aria-selected", "true");
   await expect(page.getByRole("cell", { name: "web", exact: true }).first()).toBeVisible();
   await expect(page.getByText("Ready", { exact: true })).toBeVisible();
+});
+
+test("Gateway API、NetworkPolicy 与连通性诊断在桌面和移动端可用", async ({ page }) => {
+  test.setTimeout(180_000);
+  await installApiMocks(page);
+  for (const viewport of [{ width: 1440, height: 900 }, { width: 768, height: 1024 }, { width: 390, height: 844 }, { width: 320, height: 720 }]) {
+    await page.setViewportSize(viewport);
+
+    await page.goto("/network?namespace=default&tab=gateway");
+    await expect(page.getByRole("heading", { name: "public-gateway" })).toBeVisible();
+    await expect(page.getByText("default/edge", { exact: true })).toBeVisible();
+    await expect(page.getByText("HTTPRoute default/web", { exact: true })).toBeVisible();
+    await expect(page.getByText(/networking\.istio\.io\/virtualservices/)).toBeVisible();
+    await expectNoPageOverflow(page, `${viewport.width}px network-gateway`);
+
+    await page.goto("/network?namespace=default&tab=policies");
+    await expect(page.getByText("default/web-policy", { exact: true })).toBeVisible();
+    await expect(page.getByText(/DNS 53\/TCP/)).toBeVisible();
+    await expect(page.getByRole("link", { name: "编辑 YAML" })).toHaveAttribute("href", "/resources/networking.k8s.io/v1/networkpolicies/web-policy?namespace=default");
+    await expectNoPageOverflow(page, `${viewport.width}px network-policies`);
+
+    await page.goto("/network?namespace=default&tab=connectivity");
+    const sourcePod = page.getByRole("combobox", { name: "源 Pod" });
+    await expect(sourcePod).toBeEnabled();
+    await sourcePod.click();
+    await page.getByRole("option", { name: "web-abcdef-12345" }).click();
+    const targetService = page.getByRole("combobox", { name: "目标 Service" });
+    await expect(targetService).toBeEnabled();
+    await targetService.click();
+    await page.getByRole("option", { name: "web" }).click();
+    await page.getByRole("button", { name: "开始诊断" }).click();
+    await expect(page.getByText("目标 Pod Ingress 策略拒绝该流量")).toBeVisible();
+    await expect(page.getByText("被阻断", { exact: true })).toBeVisible();
+    await expectNoPageOverflow(page, `${viewport.width}px network-connectivity-result`);
+  }
 });
 
 test("Service 详情展示 Endpoint 就绪状态并支持事件深链", async ({ page }) => {

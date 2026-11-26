@@ -1586,6 +1586,240 @@ export interface IngressClassSummary {
   createdAt: string;
 }
 
+export interface GatewayAPIAddress {
+  type: string;
+  value: string;
+}
+
+export interface GatewayAPIListener {
+  name: string;
+  protocol: string;
+  port: number;
+  hostname?: string;
+  tlsMode?: string;
+  allowedRoutes?: string;
+  conditions?: Condition[];
+}
+
+export interface GatewayClassSummary {
+  name: string;
+  controller: string;
+  status: string;
+  conditions?: Condition[];
+  createdAt: string;
+  resourceVersion?: string;
+  apiVersion: string;
+  resource: string;
+}
+
+export interface GatewaySummary {
+  name: string;
+  namespace: string;
+  className: string;
+  addresses?: GatewayAPIAddress[];
+  listeners?: GatewayAPIListener[];
+  conditions?: Condition[];
+  status: string;
+  createdAt: string;
+  resourceVersion?: string;
+  apiVersion: string;
+  resource: string;
+}
+
+export interface GatewayParentReference {
+  group?: string;
+  kind?: string;
+  namespace?: string;
+  name: string;
+  sectionName?: string;
+  port?: number;
+}
+
+export interface GatewayRouteBackend {
+  group?: string;
+  kind?: string;
+  namespace?: string;
+  name: string;
+  port?: string;
+  weight?: number;
+}
+
+export interface GatewayRouteMatch {
+  path?: string;
+  pathType?: string;
+  method?: string;
+  headers?: string[];
+  query?: string[];
+}
+
+export interface GatewayRouteRule {
+  matches?: GatewayRouteMatch[];
+  filters?: string[];
+  backends?: GatewayRouteBackend[];
+}
+
+export interface GatewayRouteSummary {
+  kind: string;
+  name: string;
+  namespace: string;
+  hostnames?: string[];
+  parentRefs?: GatewayParentReference[];
+  rules?: GatewayRouteRule[];
+  conditions?: Condition[];
+  status: string;
+  createdAt: string;
+  resourceVersion?: string;
+  apiVersion: string;
+  resource: string;
+}
+
+export interface GatewayAPIOverview {
+  available: boolean;
+  version?: string;
+  warnings?: string[];
+  classes: GatewayClassSummary[];
+  gateways: GatewaySummary[];
+  routes: GatewayRouteSummary[];
+  generatedAt: string;
+}
+
+export interface LabelSelectorRequirement {
+  key: string;
+  operator: string;
+  values?: string[];
+}
+
+export interface NetworkPolicyIPBlock {
+  cidr: string;
+  except?: string[];
+}
+
+export interface NetworkPolicyPeer {
+  podSelector?: Record<string, string>;
+  podSelectorExpressions?: LabelSelectorRequirement[];
+  namespaceSelector?: Record<string, string>;
+  namespaceSelectorExpressions?: LabelSelectorRequirement[];
+  ipBlock?: NetworkPolicyIPBlock;
+}
+
+export interface NetworkPolicyPort {
+  protocol: string;
+  port?: string;
+  endPort?: number;
+}
+
+export interface NetworkPolicyRule {
+  peers?: NetworkPolicyPeer[];
+  ports?: NetworkPolicyPort[];
+}
+
+export interface NetworkPolicySummary {
+  name: string;
+  namespace: string;
+  podSelector: Record<string, string>;
+  podSelectorExpressions?: LabelSelectorRequirement[];
+  policyTypes: string[];
+  ingress: NetworkPolicyRule[];
+  egress: NetworkPolicyRule[];
+  matchedPods: number;
+  warnings?: string[];
+  resourceVersion?: string;
+  createdAt: string;
+  apiVersion: string;
+  resource: string;
+}
+
+export interface NetworkPolicyOverview {
+  items: NetworkPolicySummary[];
+  warnings?: string[];
+  generatedAt: string;
+}
+
+export interface ConnectivityRequest {
+  sourceNamespace: string;
+  sourcePod: string;
+  destinationNamespace: string;
+  destinationService: string;
+  port: number;
+  protocol: string;
+}
+
+export interface ConnectivitySource {
+  name: string;
+  namespace: string;
+  ip?: string;
+  labels?: Record<string, string>;
+  status?: string;
+}
+
+export interface ConnectivityDestination {
+  name: string;
+  namespace: string;
+  type: string;
+  clusterIP: string;
+  headless: boolean;
+  externalName?: string;
+  selector?: Record<string, string>;
+}
+
+export interface ConnectivityDNS {
+  name: string;
+  clusterIP?: string;
+  externalName?: string;
+  headless: boolean;
+  explanation: string;
+}
+
+export interface ConnectivityPortMapping {
+  servicePort: number;
+  targetPort: string;
+  protocol: string;
+}
+
+export interface ConnectivityCheck {
+  id: string;
+  label: string;
+  status: string;
+  message: string;
+}
+
+export interface ConnectivityPolicyDecision {
+  name: string;
+  namespace: string;
+  direction: string;
+  selected: boolean;
+  allowed: boolean;
+  reason: string;
+}
+
+export interface ConnectivityEndpoint {
+  pod?: string;
+  podIP?: string;
+  ready: boolean;
+  egressAllowed?: boolean;
+  ingressAllowed?: boolean;
+  allowed: string;
+  reasons?: string[];
+}
+
+export type ConnectivityVerdict = "allowed" | "degraded" | "blocked" | "unknown";
+
+export interface ConnectivityDiagnosis {
+  verdict: ConnectivityVerdict;
+  summary: string;
+  source: ConnectivitySource;
+  destination: ConnectivityDestination;
+  dns: ConnectivityDNS;
+  port: ConnectivityPortMapping;
+  endpoints: ConnectivityEndpoint[];
+  checks: ConnectivityCheck[];
+  egressPolicies: ConnectivityPolicyDecision[];
+  ingressPolicies: ConnectivityPolicyDecision[];
+  findings: DiagnosisFinding[];
+  warnings?: string[];
+  generatedAt: string;
+}
+
 export interface IngressPathInput {
   host?: string;
   path: string;

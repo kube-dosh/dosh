@@ -2,6 +2,8 @@ package networkhttp
 
 import (
 	stdhttp "net/http"
+	"strconv"
+	"strings"
 
 	"dosh/internal/domain"
 	networkapp "dosh/internal/modules/network/app"
@@ -168,6 +170,43 @@ func (h *Handler) IngressClasses(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	httpx.JSONList(w, result.Items, meta)
 }
 
+func (h *Handler) GatewayAPI(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	overview, err := h.service.GatewayAPI(r.Context(), httpx.Query(r, "namespace"), httpx.Query(r, "q"))
+	if err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	httpx.JSON(w, stdhttp.StatusOK, overview)
+}
+
+func (h *Handler) NetworkPolicies(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	overview, err := h.service.NetworkPolicies(r.Context(), httpx.Query(r, "namespace"), httpx.Query(r, "q"))
+	if err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	httpx.JSON(w, stdhttp.StatusOK, overview)
+}
+
+func (h *Handler) Connectivity(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	portValue, err := strconv.ParseInt(strings.TrimSpace(httpx.Query(r, "port")), 10, 32)
+	if err != nil {
+		httpx.Error(w, r, &domain.ValidationError{Field: "port", Message: "port must be an integer between 1 and 65535"})
+		return
+	}
+	actor, _ := domain.ActorFromContext(r.Context())
+	result, err := h.service.DiagnoseConnectivity(r.Context(), actor, domain.ConnectivityRequest{
+		SourceNamespace: httpx.Query(r, "sourceNamespace"), SourcePod: httpx.Query(r, "sourcePod"),
+		DestinationNamespace: httpx.Query(r, "destinationNamespace"), DestinationService: httpx.Query(r, "destinationService"),
+		Port: int32(portValue), Protocol: httpx.Query(r, "protocol"),
+	})
+	if err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	httpx.JSON(w, stdhttp.StatusOK, result)
+}
+
 func (h *Handler) Mount(r chi.Router) {
 	r.Get("/services", h.Services)
 	r.Post("/services", h.CreateService)
@@ -180,4 +219,7 @@ func (h *Handler) Mount(r chi.Router) {
 	r.Put("/ingresses/{namespace}/{name}", h.UpdateIngress)
 	r.Delete("/ingresses/{namespace}/{name}", h.DeleteIngress)
 	r.Get("/ingressclasses", h.IngressClasses)
+	r.Get("/network/gateway-api", h.GatewayAPI)
+	r.Get("/network/policies", h.NetworkPolicies)
+	r.Get("/network/connectivity", h.Connectivity)
 }

@@ -20,7 +20,10 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useCapabilities } from "@/features/auth/use-session";
+import { ConnectivityDiagnosisPanel } from "@/features/network/connectivity-diagnosis-panel";
+import { GatewayAPIPanel } from "@/features/network/gateway-api-panel";
 import { IngressFormDialog } from "@/features/network/ingress-form-dialog";
+import { NetworkPoliciesPanel } from "@/features/network/network-policies-panel";
 import { ServiceFormDialog } from "@/features/workloads/service-form-dialog";
 import { cursorPaginationProps, retryListQuery, useCursorPagination } from "@/hooks/use-cursor-pagination";
 import { resourceCapabilities } from "@/lib/capabilities";
@@ -29,6 +32,12 @@ import { formatAge } from "@/lib/utils";
 const serviceColumn = createColumnHelper<ServiceSummary>();
 const ingressColumn = createColumnHelper<IngressSummary>();
 const EMPTY_SELECTOR: Record<string, string> = {};
+const NETWORK_TABS = ["services", "ingresses", "gateway", "policies", "connectivity"] as const;
+type NetworkTab = (typeof NETWORK_TABS)[number];
+
+function isNetworkTab(value: string | undefined): value is NetworkTab {
+  return Boolean(value) && NETWORK_TABS.includes(value as NetworkTab);
+}
 
 type YamlTarget = { type: "service" | "ingress"; namespace: string; name: string };
 
@@ -37,7 +46,7 @@ export function NetworkPage() {
   const navigate = useNavigate();
   const namespace = search.namespace ?? "";
   const q = search.q ?? "";
-  const tab = search.tab === "ingresses" ? "ingresses" : "services";
+  const tab = isNetworkTab(search.tab) ? search.tab : "services";
   const servicePager = useCursorPagination(`services|${namespace}|${q}`, 20);
   const ingressPager = useCursorPagination(`ingresses|${namespace}|${q}`, 20);
   const [serviceFormOpen, setServiceFormOpen] = useState(false);
@@ -102,16 +111,16 @@ export function NetworkPage() {
       <PageHeader
         title="服务与路由"
         breadcrumb="网络 / 服务与路由"
-        description="管理集群内 Service、ClusterIP、NodePort 和 Ingress 路由规则。"
+        description="管理 Service、Ingress、Gateway API、NetworkPolicy，并静态推演 Pod 到 Service 的连通路径。"
         actions={tab === "services" ? (
           <ActionTooltip content={serviceCreateHint}><Button onClick={() => { setEditingService(undefined); setServiceFormOpen(true); }} disabled={Boolean(serviceCreateHint)}><Plus className="h-4 w-4" />创建 Service</Button></ActionTooltip>
-        ) : (
+        ) : tab === "ingresses" ? (
           <ActionTooltip content={ingressCreateHint}><Button onClick={() => { setEditingIngress(undefined); setIngressFormOpen(true); }} disabled={Boolean(ingressCreateHint)}><Plus className="h-4 w-4" />创建 Ingress</Button></ActionTooltip>
-        )}
+        ) : undefined}
       />
-      <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center"><SearchInput value={q} onChange={(value) => updateSearch({ q: value || undefined })} placeholder="搜索名称" /><NamespaceSelect value={namespace} onChange={(value) => updateSearch({ namespace: value || undefined })} /></div>
+      <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">{tab === "connectivity" ? null : <SearchInput value={q} onChange={(value) => updateSearch({ q: value || undefined })} placeholder="搜索名称、地址或规则" />}<NamespaceSelect value={namespace} onChange={(value) => updateSearch({ namespace: value || undefined })} /></div>
       <Tabs value={tab} onValueChange={(value) => updateSearch({ tab: value === "services" ? undefined : value })}>
-        <TabsList><TabsTrigger value="services">Service ({services.data?.meta.totalKnown ? services.data.meta.total : services.data?.items.length ?? 0})</TabsTrigger><TabsTrigger value="ingresses">Ingress ({ingresses.data?.meta.totalKnown ? ingresses.data.meta.total : ingresses.data?.items.length ?? 0})</TabsTrigger></TabsList>
+        <TabsList aria-label="网络能力"><TabsTrigger value="services">Service ({services.data?.meta.totalKnown ? services.data.meta.total : services.data?.items.length ?? 0})</TabsTrigger><TabsTrigger value="ingresses">Ingress ({ingresses.data?.meta.totalKnown ? ingresses.data.meta.total : ingresses.data?.items.length ?? 0})</TabsTrigger><TabsTrigger value="gateway">Gateway API</TabsTrigger><TabsTrigger value="policies">NetworkPolicy</TabsTrigger><TabsTrigger value="connectivity">连通性诊断</TabsTrigger></TabsList>
         <TabsContent value="services">
           {services.isError ? <ErrorState error={services.error} onRetry={() => retryListQuery(servicePager, services.error, services.refetch)} /> : <DataTable
             columns={[
@@ -154,6 +163,15 @@ export function NetworkPage() {
               empty={<div className="flex flex-col items-center gap-2"><Route className="h-6 w-6" /><span>没有 Ingress</span></div>}
             />
           )}
+        </TabsContent>
+        <TabsContent value="gateway">
+          <GatewayAPIPanel namespace={namespace} q={q} />
+        </TabsContent>
+        <TabsContent value="policies">
+          <NetworkPoliciesPanel namespace={namespace} q={q} />
+        </TabsContent>
+        <TabsContent value="connectivity">
+          <ConnectivityDiagnosisPanel namespace={namespace} />
         </TabsContent>
       </Tabs>
       <ServiceFormDialog
