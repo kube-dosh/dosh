@@ -4787,49 +4787,80 @@ const layoutAuditRoutes = [
     { path: "/helm/repositories", name: "helm-repositories" },
 ];
 
-test("移动端逐页布局无页面级横向溢出", async ({ page }) => {
-  test.setTimeout(360_000);
-  await installApiMocks(page);
-  await page.setViewportSize({ width: 390, height: 844 });
+const layoutAuditChunkSize = 24;
+const layoutAuditChunks = Array.from(
+  { length: Math.ceil(layoutAuditRoutes.length / layoutAuditChunkSize) },
+  (_, index) => layoutAuditRoutes.slice(index * layoutAuditChunkSize, (index + 1) * layoutAuditChunkSize),
+);
 
-  for (const route of layoutAuditRoutes) {
-    await page.goto(route.path);
-    await page.locator("main h1").waitFor({ state: "visible" });
-    await page.waitForTimeout(250);
-    await expectNoPageOverflow(page, route.name);
-    await page.screenshot({ path: `test-results/mobile-audit/${route.name}.png`, fullPage: true });
+test("移动端逐页布局无页面级横向溢出", async ({ page, context }) => {
+  test.setTimeout(600_000);
+  let currentPage = page;
+  await installApiMocks(currentPage);
+  await currentPage.setViewportSize({ width: 390, height: 844 });
+
+  for (const [index, routes] of layoutAuditChunks.entries()) {
+    if (index > 0) {
+      await currentPage.close();
+      currentPage = await context.newPage();
+      await installApiMocks(currentPage);
+      await currentPage.setViewportSize({ width: 390, height: 844 });
+    }
+
+    for (const route of routes) {
+      await currentPage.goto(route.path);
+      await currentPage.locator("main h1").waitFor({ state: "visible" });
+      await currentPage.waitForTimeout(250);
+      await expectNoPageOverflow(currentPage, route.name);
+      await currentPage.screenshot({ path: `test-results/mobile-audit/${route.name}.png`, fullPage: true });
+    }
   }
 });
 
-test("桌面与平板逐页布局稳定且无控制台异常", async ({ page }) => {
-  test.setTimeout(600_000);
-  await installApiMocks(page);
+test("桌面与平板逐页布局稳定且无控制台异常", async ({ page, context }) => {
+  test.setTimeout(900_000);
+  let currentPage = page;
+  let firstPage = true;
   const runtimeErrors: string[] = [];
-  page.on("pageerror", (error) => runtimeErrors.push(`pageerror: ${error.message}`));
-  page.on("console", (message) => {
-    if (message.type() === "error") runtimeErrors.push(`console: ${message.text()}`);
-  });
+  const watchRuntimeErrors = (target: Page) => {
+    target.on("pageerror", (error) => runtimeErrors.push(`pageerror: ${error.message}`));
+    target.on("console", (message) => {
+      if (message.type() === "error") runtimeErrors.push(`console: ${message.text()}`);
+    });
+  };
+  watchRuntimeErrors(currentPage);
+  await installApiMocks(currentPage);
 
   for (const viewport of [{ width: 1440, height: 900 }, { width: 768, height: 1024 }]) {
     const layoutName = viewport.width === 1440 ? "desktop-audit" : "tablet-audit";
-    await page.setViewportSize(viewport);
 
-    for (const route of layoutAuditRoutes) {
-      await page.goto(route.path);
-      await page.locator("main h1").waitFor({ state: "visible" });
-      await waitForVisualStability(page);
-      await expectNoPageOverflow(page, `${viewport.width}px ${route.name}`);
+    for (const routes of layoutAuditChunks) {
+      if (!firstPage) {
+        await currentPage.close();
+        currentPage = await context.newPage();
+        watchRuntimeErrors(currentPage);
+        await installApiMocks(currentPage);
+      }
+      firstPage = false;
+      await currentPage.setViewportSize(viewport);
 
-      const bounds = await page.evaluate(() => {
-        const main = document.querySelector("main")!.getBoundingClientRect();
-        const heading = document.querySelector("main h1")!.getBoundingClientRect();
-        return { mainLeft: main.left, mainRight: main.right, headingLeft: heading.left, headingRight: heading.right };
-      });
-      expect(bounds.mainLeft, `${viewport.width}px ${route.name} main starts inside viewport`).toBeGreaterThanOrEqual(-1);
-      expect(bounds.mainRight, `${viewport.width}px ${route.name} main ends inside viewport`).toBeLessThanOrEqual(viewport.width + 1);
-      expect(bounds.headingLeft, `${viewport.width}px ${route.name} heading starts inside main`).toBeGreaterThanOrEqual(bounds.mainLeft - 1);
-      expect(bounds.headingRight, `${viewport.width}px ${route.name} heading ends inside main`).toBeLessThanOrEqual(bounds.mainRight + 1);
-      await page.screenshot({ path: `test-results/${layoutName}/${route.name}.png`, fullPage: true });
+      for (const route of routes) {
+        await currentPage.goto(route.path);
+        await currentPage.locator("main h1").waitFor({ state: "visible" });
+        await waitForVisualStability(currentPage);
+        await expectNoPageOverflow(currentPage, `${viewport.width}px ${route.name}`);
+
+        const bounds = await currentPage.evaluate(() => {
+          const main = document.querySelector("main")!.getBoundingClientRect();
+          const heading = document.querySelector("main h1")!.getBoundingClientRect();
+          return { mainLeft: main.left, mainRight: main.right, headingLeft: heading.left, headingRight: heading.right };
+        });
+        expect(bounds.mainLeft, `${viewport.width}px ${route.name} main starts inside viewport`).toBeGreaterThanOrEqual(-1);
+        expect(bounds.mainRight, `${viewport.width}px ${route.name} main ends inside viewport`).toBeLessThanOrEqual(viewport.width + 1);
+        expect(bounds.headingLeft, `${viewport.width}px ${route.name} heading starts inside main`).toBeGreaterThanOrEqual(bounds.mainLeft - 1);
+        expect(bounds.headingRight, `${viewport.width}px ${route.name} heading ends inside main`).toBeLessThanOrEqual(bounds.mainRight + 1);
+        await currentPage.screenshot({ path: `test-results/${layoutName}/${route.name}.png`, fullPage: true });
+      }
     }
   }
 

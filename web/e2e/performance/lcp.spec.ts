@@ -41,6 +41,7 @@ test("生产构建首屏 LCP 小于 2.5 秒", async ({ page }) => {
     const path = new URL(route.request().url()).pathname;
     if (path === "/api/v1/auth/config") return route.fulfill({ json: { mode: "local", providerName: "", loginURL: "" } });
     if (path === "/api/v1/session") return route.fulfill({ json: session });
+    if (path === "/api/v1/preferences") return route.fulfill({ json: { favorites: [], recent: [], savedViews: {}, hiddenColumns: {} } });
     if (path === "/api/v1/overview") return route.fulfill({ json: overview });
     if (path === "/api/v1/nodes") return route.fulfill({ json: { items: [node], meta: { total: 1 } } });
     if (path === "/api/v1/events") return route.fulfill({ json: { items: [], meta: { total: 0 } } });
