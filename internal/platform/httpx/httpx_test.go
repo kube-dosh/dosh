@@ -83,6 +83,7 @@ func TestErrorMapsStableProblemCodes(t *testing.T) {
 		{name: "conflict", err: domain.ErrConflict, status: http.StatusConflict, code: "conflict"},
 		{name: "already exists", err: domain.ErrAlreadyExists, status: http.StatusConflict, code: "already_exists"},
 		{name: "unavailable", err: domain.ErrUnavailable, status: http.StatusServiceUnavailable, code: "dependency_unavailable"},
+		{name: "dependency unauthorized", err: domain.ErrDependencyUnauthorized, status: http.StatusBadGateway, code: "dependency_unauthorized"},
 		{name: "unsupported", err: domain.ErrUnsupported, status: http.StatusNotImplemented, code: "not_supported"},
 		{name: "rate limited", err: domain.ErrRateLimited, status: http.StatusTooManyRequests, code: "rate_limited"},
 		{name: "internal", err: errors.New("database details must not leak"), status: http.StatusInternalServerError, code: "internal_error"},
@@ -118,6 +119,22 @@ func TestErrorPreservesStableCodeAndSafeDependencyDetail(t *testing.T) {
 	}
 	body := response.Body.String()
 	if !strings.Contains(body, `"code":"dependency_unavailable"`) || !strings.Contains(body, `"message":"registry returned HTTP 400; use https://"`) {
+		t.Fatalf("body = %s", body)
+	}
+}
+
+func TestErrorMapsDependencyAuthenticationToBadGateway(t *testing.T) {
+	err := domain.WithPublicMessage(domain.ErrDependencyUnauthorized, "镜像仓要求认证，请补充配置凭据")
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/container-registries/protected/repositories", nil)
+	response := httptest.NewRecorder()
+
+	Error(response, request, err)
+
+	if response.Code != http.StatusBadGateway {
+		t.Fatalf("status = %d, want 502", response.Code)
+	}
+	body := response.Body.String()
+	if !strings.Contains(body, `"code":"dependency_unauthorized"`) || !strings.Contains(body, `"message":"镜像仓要求认证，请补充配置凭据"`) {
 		t.Fatalf("body = %s", body)
 	}
 }

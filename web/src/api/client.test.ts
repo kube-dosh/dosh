@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ApiError, api } from "@/api/client";
+import { ApiError, api, onUnauthorized } from "@/api/client";
 
 describe("api request errors", () => {
   afterEach(() => {
@@ -42,6 +42,45 @@ describe("api request errors", () => {
       detail: "operation is not permitted",
       requestId: "req-403",
     } satisfies Partial<ApiError>);
+  });
+
+  it("keeps the Dosh session when an upstream registry rejects authentication", async () => {
+    const unauthorizedHandler = vi.fn();
+    const unsubscribe = onUnauthorized(unauthorizedHandler);
+    try {
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+        code: "dependency_unauthorized",
+        message: "镜像仓要求认证或当前凭证无效",
+        requestId: "req-registry-auth",
+      }), { status: 401, headers: { "Content-Type": "application/json" } })));
+
+      await expect(api.containerRegistryRepositories("protected")).rejects.toMatchObject({
+        status: 401,
+        code: "dependency_unauthorized",
+        message: "镜像仓认证失败，请检查镜像仓凭证配置",
+        detail: "镜像仓要求认证或当前凭证无效",
+        requestId: "req-registry-auth",
+      } satisfies Partial<ApiError>);
+      expect(unauthorizedHandler).not.toHaveBeenCalled();
+    } finally {
+      unsubscribe();
+    }
+  });
+
+  it("signals an expired session only for a genuine Dosh unauthorized response", async () => {
+    const unauthorizedHandler = vi.fn();
+    const unsubscribe = onUnauthorized(unauthorizedHandler);
+    try {
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+        code: "unauthorized",
+        message: "authentication required",
+      }), { status: 401, headers: { "Content-Type": "application/json" } })));
+
+      await expect(api.nodes()).rejects.toMatchObject({ status: 401, code: "unauthorized" });
+      expect(unauthorizedHandler).toHaveBeenCalledTimes(1);
+    } finally {
+      unsubscribe();
+    }
   });
 
   it("keeps actionable not-supported guidance returned by the API", async () => {

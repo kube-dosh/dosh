@@ -455,6 +455,7 @@ export interface paths {
                 403: components["responses"]["Forbidden"];
                 404: components["responses"]["NotFound"];
                 501: components["responses"]["NotSupported"];
+                502: components["responses"]["DependencyUnauthorized"];
                 503: components["responses"]["DependencyUnavailable"];
             };
         };
@@ -505,6 +506,7 @@ export interface paths {
                 401: components["responses"]["Unauthorized"];
                 403: components["responses"]["Forbidden"];
                 404: components["responses"]["NotFound"];
+                502: components["responses"]["DependencyUnauthorized"];
                 503: components["responses"]["DependencyUnavailable"];
             };
         };
@@ -10871,6 +10873,15 @@ export interface components {
         };
         /** @description Kubernetes API unavailable */
         DependencyUnavailable: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["Problem"];
+            };
+        };
+        /** @description Upstream dependency rejected authentication */
+        DependencyUnauthorized: {
             headers: {
                 [name: string]: unknown;
             };

@@ -25,6 +25,7 @@ const (
 	maxRegistryPages     = 8
 	maxRegistryItems     = 5000
 	registryPageSize     = 1000
+	registryAuthMessage  = "镜像仓认证失败：镜像仓要求认证或当前凭证无效，请编辑镜像仓并检查认证方式、用户名/密码或 Token。"
 )
 
 var challengeParamPattern = regexp.MustCompile(`([A-Za-z][A-Za-z0-9_-]*)="([^"]*)"`)
@@ -191,12 +192,12 @@ func (c *Client) do(ctx context.Context, registry domain.ContainerRegistry, path
 	_ = response.Body.Close()
 	parsed, ok := parseChallenge(header)
 	if !ok {
-		return nil, fmt.Errorf("%w: registry authentication challenge is not supported", domain.ErrUnauthorized)
+		return nil, registryAuthenticationError("registry authentication challenge is not supported")
 	}
 	switch parsed.scheme {
 	case "basic":
 		if registry.Credentials.Username == "" {
-			return nil, fmt.Errorf("%w: registry requires basic authentication", domain.ErrUnauthorized)
+			return nil, registryAuthenticationError("registry requires basic authentication")
 		}
 		response, err = c.request(ctx, client, requestURL, basicAuthorization(registry))
 	case "bearer":
@@ -206,7 +207,7 @@ func (c *Client) do(ctx context.Context, registry domain.ContainerRegistry, path
 		}
 		response, err = c.request(ctx, client, requestURL, "Bearer "+token)
 	default:
-		return nil, fmt.Errorf("%w: registry authentication scheme %q is not supported", domain.ErrUnauthorized, parsed.scheme)
+		return nil, registryAuthenticationError("registry authentication scheme %q is not supported", parsed.scheme)
 	}
 	if err != nil {
 		return nil, err
@@ -220,7 +221,7 @@ func finishResponse(response *http.Response) (*http.Response, error) {
 	}
 	if response.StatusCode == http.StatusUnauthorized || response.StatusCode == http.StatusForbidden {
 		_ = response.Body.Close()
-		return nil, fmt.Errorf("%w: registry authentication failed", domain.ErrUnauthorized)
+		return nil, registryAuthenticationError("registry authentication failed")
 	}
 	if response.StatusCode == http.StatusNotFound {
 		_ = response.Body.Close()
@@ -267,7 +268,7 @@ func (c *Client) bearerToken(ctx context.Context, client *http.Client, registry 
 		if strings.TrimSpace(registry.Credentials.Token) != "" {
 			return registry.Credentials.Token, nil
 		}
-		return "", fmt.Errorf("%w: registry bearer challenge has no realm", domain.ErrUnauthorized)
+		return "", registryAuthenticationError("registry bearer challenge has no realm")
 	}
 	scope := strings.TrimSpace(auth.params["scope"])
 	if scope == "" {
@@ -283,7 +284,7 @@ func (c *Client) bearerToken(ctx context.Context, client *http.Client, registry 
 
 	tokenURL, err := url.Parse(realm)
 	if err != nil || tokenURL.Scheme == "" || tokenURL.Host == "" {
-		return "", fmt.Errorf("%w: registry token realm is invalid", domain.ErrUnauthorized)
+		return "", registryAuthenticationError("registry token realm is invalid")
 	}
 	values := tokenURL.Query()
 	if service := auth.params["service"]; service != "" {
@@ -310,7 +311,7 @@ func (c *Client) bearerToken(ctx context.Context, client *http.Client, registry 
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		status := response.StatusCode
 		_ = response.Body.Close()
-		return "", fmt.Errorf("%w: registry token endpoint returned HTTP %d", domain.ErrUnauthorized, status)
+		return "", registryAuthenticationError("registry token endpoint returned HTTP %d", status)
 	}
 	var payload struct {
 		Token       string `json:"token"`
@@ -325,7 +326,7 @@ func (c *Client) bearerToken(ctx context.Context, client *http.Client, registry 
 		payload.Token = payload.AccessToken
 	}
 	if payload.Token == "" {
-		return "", fmt.Errorf("%w: registry token endpoint returned no token", domain.ErrUnauthorized)
+		return "", registryAuthenticationError("registry token endpoint returned no token")
 	}
 	expiresIn := time.Duration(payload.ExpiresIn) * time.Second
 	if expiresIn <= 0 {
@@ -447,8 +448,8 @@ func sanitizeTransportError(err error) string {
 
 func catalogErrorMessage(err error) string {
 	switch {
-	case errors.Is(err, domain.ErrUnauthorized):
-		return "镜像仓认证失败或凭证无权读取 catalog"
+	case errors.Is(err, domain.ErrDependencyUnauthorized):
+		return "镜像仓要求认证、当前凭证无效或无权读取 catalog"
 	case errors.Is(err, domain.ErrNotFound):
 		return "镜像仓未提供 catalog API"
 	case errors.Is(err, domain.ErrUnsupported):
@@ -459,4 +460,11 @@ func catalogErrorMessage(err error) string {
 		return "未知错误"
 	}
 	return message
+}
+
+func registryAuthenticationError(format string, args ...any) error {
+	return domain.WithPublicMessage(
+		fmt.Errorf("%w: %s", domain.ErrDependencyUnauthorized, fmt.Sprintf(format, args...)),
+		registryAuthMessage,
+	)
 }

@@ -163,6 +163,7 @@ const problemMessages: Record<string, string> = {
   conflict: "资源已发生变化，请刷新后重试",
   already_exists: "资源已存在，请更换名称",
   dependency_unavailable: "集群服务暂不可用，请稍后重试",
+  dependency_unauthorized: "镜像仓认证失败，请检查镜像仓凭证配置",
   not_supported: "当前资源或操作不受支持",
   rate_limited: "操作过于频繁，请稍后重试",
   stale_cursor: "列表数据已更新，请刷新后重试",
@@ -190,7 +191,8 @@ export function onUnauthorized(handler: () => void): () => void {
   };
 }
 
-function notifyUnauthorized() {
+function notifyUnauthorized(status: number, problem: Partial<Problem>) {
+  if (status !== 401 || (problem.code && problem.code !== "unauthorized")) return;
   setCSRFToken("");
   unauthorizedHandlers.forEach((handler) => handler());
 }
@@ -380,7 +382,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
       } catch {
         problem = { code: "request_failed", message: response.statusText };
       }
-      if (response.status === 401) notifyUnauthorized();
+      notifyUnauthorized(response.status, problem);
       throw new ApiError(response.status, problem);
     }
     if (response.status === 204) return undefined as T;
@@ -415,7 +417,7 @@ async function download(path: string): Promise<{ blob: Blob; filename: string }>
     } catch {
       problem = { code: "request_failed", message: response.statusText };
     }
-    if (response.status === 401) notifyUnauthorized();
+    notifyUnauthorized(response.status, problem);
     throw new ApiError(response.status, problem);
   }
   const disposition = response.headers.get("Content-Disposition") ?? "";
@@ -906,7 +908,7 @@ export async function streamLogs(
   if (!response.ok || !response.body) {
     let problem: Partial<Problem> = {};
     try { problem = (await response.json()) as Problem; } catch { /* noop */ }
-    if (response.status === 401) notifyUnauthorized();
+    notifyUnauthorized(response.status, problem);
     throw new ApiError(response.status, problem);
   }
   return response.body.getReader();
@@ -932,7 +934,7 @@ export async function streamWorkloadLogs(
   if (!response.ok || !response.body) {
     let problem: Partial<Problem> = {};
     try { problem = (await response.json()) as Problem; } catch { /* noop */ }
-    if (response.status === 401) notifyUnauthorized();
+    notifyUnauthorized(response.status, problem);
     throw new ApiError(response.status, problem);
   }
   return response.body.getReader();

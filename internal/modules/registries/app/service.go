@@ -132,6 +132,7 @@ func (s *Service) Test(ctx context.Context, actor domain.Actor, id string) (doma
 		return domain.ContainerRegistry{}, err
 	}
 	capabilities, testErr := s.remote.Test(ctx, registry)
+	testErr = normalizeRegistryRemoteError(testErr)
 	message := "连接成功"
 	if testErr != nil {
 		message = testErr.Error()
@@ -164,7 +165,7 @@ func (s *Service) Repositories(ctx context.Context, actor domain.Actor, id, sear
 	}
 	repositories, err := s.remote.Repositories(ctx, registry)
 	if err != nil {
-		return domain.PageResult[domain.ContainerRegistryRepository]{}, err
+		return domain.PageResult[domain.ContainerRegistryRepository]{}, normalizeRegistryRemoteError(err)
 	}
 	prefix := strings.Trim(registry.RepositoryPrefix, "/")
 	normalizedSearch := strings.ToLower(strings.TrimSpace(search))
@@ -200,7 +201,7 @@ func (s *Service) Tags(ctx context.Context, actor domain.Actor, id, repository, 
 	}
 	tags, err := s.remote.Tags(ctx, registry, repository)
 	if err != nil {
-		return domain.PageResult[domain.ContainerRegistryTag]{}, err
+		return domain.PageResult[domain.ContainerRegistryTag]{}, normalizeRegistryRemoteError(err)
 	}
 	normalizedSearch := strings.ToLower(strings.TrimSpace(search))
 	items := make([]domain.ContainerRegistryTag, 0, len(tags))
@@ -485,4 +486,21 @@ func (s *Service) record(ctx context.Context, actor domain.Actor, action, id str
 		Action: action + "-container-registry", Resource: "container-registry", Name: id,
 		Result: result, Details: details, Err: err,
 	})
+}
+
+func normalizeRegistryRemoteError(err error) error {
+	if err == nil || errors.Is(err, domain.ErrDependencyUnauthorized) {
+		return err
+	}
+	if !errors.Is(err, domain.ErrUnauthorized) {
+		return err
+	}
+	message := domain.PublicDetail(err)
+	if message == "" {
+		message = "镜像仓认证失败，请检查镜像仓认证配置。"
+	}
+	return domain.WithPublicMessage(
+		fmt.Errorf("%w: upstream registry authentication failed: %v", domain.ErrDependencyUnauthorized, err),
+		message,
+	)
 }

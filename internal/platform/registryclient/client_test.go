@@ -2,6 +2,7 @@ package registryclient
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -11,6 +12,58 @@ import (
 
 	"dosh/internal/domain"
 )
+
+func TestClientReportsRegistryAuthenticationAsDependencyFailure(t *testing.T) {
+	t.Parallel()
+	t.Run("missing basic credentials", func(t *testing.T) {
+		t.Parallel()
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("WWW-Authenticate", `Basic realm="registry"`)
+			w.WriteHeader(http.StatusUnauthorized)
+		}))
+		defer server.Close()
+
+		client := New(5 * time.Second)
+		registry := domain.ContainerRegistry{Endpoint: server.URL, AuthType: domain.RegistryAuthAnonymous}
+		_, err := client.Repositories(context.Background(), registry)
+		assertDependencyAuthenticationError(t, err)
+	})
+
+	t.Run("bearer token rejected", func(t *testing.T) {
+		t.Parallel()
+		var server *httptest.Server
+		server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/token" {
+				w.WriteHeader(http.StatusUnauthorized)
+				return
+			}
+			w.Header().Set("WWW-Authenticate", fmt.Sprintf(`Bearer realm="%s/token",service="registry.test"`, server.URL))
+			w.WriteHeader(http.StatusUnauthorized)
+		}))
+		defer server.Close()
+
+		client := New(5 * time.Second)
+		registry := domain.ContainerRegistry{Endpoint: server.URL, AuthType: domain.RegistryAuthAnonymous}
+		_, err := client.Repositories(context.Background(), registry)
+		assertDependencyAuthenticationError(t, err)
+	})
+}
+
+func assertDependencyAuthenticationError(t *testing.T, err error) {
+	t.Helper()
+	if err == nil {
+		t.Fatal("request succeeded, want dependency authentication error")
+	}
+	if !errors.Is(err, domain.ErrDependencyUnauthorized) {
+		t.Fatalf("error = %v, want ErrDependencyUnauthorized", err)
+	}
+	if errors.Is(err, domain.ErrUnauthorized) {
+		t.Fatalf("error = %v, must not be reported as a Dosh session ErrUnauthorized", err)
+	}
+	if message := domain.PublicDetail(err); message == "" {
+		t.Fatalf("error = %v, want an actionable public message", err)
+	}
+}
 
 func TestClientSupportsAnonymousBearerAndPagination(t *testing.T) {
 	t.Parallel()

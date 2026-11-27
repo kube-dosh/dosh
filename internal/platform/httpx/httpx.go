@@ -368,6 +368,8 @@ func ProblemFor(err error, requestID string) (int, Problem) {
 		}
 	case errors.Is(err, domain.ErrInvalid):
 		status, code, message = http.StatusBadRequest, "invalid_request", "invalid request"
+	case errors.Is(err, domain.ErrDependencyUnauthorized):
+		status, code, message = http.StatusBadGateway, "dependency_unauthorized", "dependency authentication required"
 	case errors.Is(err, domain.ErrUnauthorized):
 		status, code, message = http.StatusUnauthorized, "unauthorized", "authentication required"
 	case errors.Is(err, domain.ErrForbidden), errors.Is(err, domain.ErrReadOnly):

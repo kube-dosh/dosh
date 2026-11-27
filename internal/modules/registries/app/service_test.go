@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -52,9 +53,11 @@ func (r *memoryRepository) DeleteContainerRegistry(_ context.Context, id, _ stri
 }
 
 type fakeRemote struct {
-	repositories []string
-	tags         []string
-	testErr      error
+	repositories    []string
+	tags            []string
+	testErr         error
+	repositoriesErr error
+	tagsErr         error
 }
 
 func (r fakeRemote) Test(context.Context, domain.ContainerRegistry) (domain.ContainerRegistryCapabilities, error) {
@@ -62,11 +65,11 @@ func (r fakeRemote) Test(context.Context, domain.ContainerRegistry) (domain.Cont
 }
 
 func (r fakeRemote) Repositories(context.Context, domain.ContainerRegistry) ([]string, error) {
-	return append([]string(nil), r.repositories...), nil
+	return append([]string(nil), r.repositories...), r.repositoriesErr
 }
 
 func (r fakeRemote) Tags(context.Context, domain.ContainerRegistry, string) ([]string, error) {
-	return append([]string(nil), r.tags...), nil
+	return append([]string(nil), r.tags...), r.tagsErr
 }
 
 func testActor() domain.Actor { return domain.Actor{Username: "admin", Admin: true} }
@@ -185,6 +188,45 @@ func TestServiceUsesMostSpecificRegistryAndRecordsFailedTest(t *testing.T) {
 	}
 	if tested.LastTest == nil || tested.LastTest.OK || !strings.Contains(tested.LastTest.Message, "authentication") {
 		t.Fatalf("Test() result = %#v", tested.LastTest)
+	}
+}
+
+func TestServiceMapsUpstreamRegistryAuthenticationToDependencyFailure(t *testing.T) {
+	t.Parallel()
+	repository := &memoryRepository{items: []domain.ContainerRegistry{{
+		ID: "reg-1", Name: "Protected", Endpoint: "https://registry.example.com",
+		AuthType: domain.RegistryAuthAnonymous,
+	}}}
+	service := New(repository, fakeRemote{
+		testErr:         domain.ErrUnauthorized,
+		repositoriesErr: domain.ErrUnauthorized,
+		tagsErr:         fmt.Errorf("%w: invalid bearer token", domain.ErrUnauthorized),
+	}, authz.NewLocal(false), nil)
+
+	_, err := service.Repositories(context.Background(), testActor(), "reg-1", "", domain.PageRequest{Number: 1, Size: 20})
+	assertDependencyAuthError(t, err)
+	_, err = service.Tags(context.Background(), testActor(), "reg-1", "platform/api", "", domain.PageRequest{Number: 1, Size: 20})
+	assertDependencyAuthError(t, err)
+
+	tested, err := service.Test(context.Background(), testActor(), "reg-1")
+	if err != nil {
+		t.Fatalf("Test() error = %v", err)
+	}
+	if tested.LastTest == nil || tested.LastTest.OK || tested.LastTest.Message == "" {
+		t.Fatalf("Test() result = %#v", tested.LastTest)
+	}
+}
+
+func assertDependencyAuthError(t *testing.T, err error) {
+	t.Helper()
+	if !errors.Is(err, domain.ErrDependencyUnauthorized) {
+		t.Fatalf("error = %v, want ErrDependencyUnauthorized", err)
+	}
+	if errors.Is(err, domain.ErrUnauthorized) {
+		t.Fatalf("error = %v, must not be reported as a Dosh session ErrUnauthorized", err)
+	}
+	if domain.PublicDetail(err) == "" {
+		t.Fatalf("error = %v, want an actionable public message", err)
 	}
 }
 
